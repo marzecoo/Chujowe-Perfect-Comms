@@ -1,4 +1,4 @@
-# Perfect Comms
+<h1 align="center">Perfect Comms</h1>
 
 <p align="center">
   <strong>Proximity chat that feels built into TOU-Mira.</strong><br>
@@ -63,6 +63,11 @@ For GitHub release uploads, use `PerfectComms.dll` for Windows and `PerfectComms
 ## Notice
 
 Perfect Comms is an unofficial mod. It is not affiliated with Innersloth, Among Us, BepInEx, MiraAPI, Reactor, or TOU-Mira.
+
+## Credits
+
+- Original repo: [FangkuaiYa/AmongUs-VoiceChat](https://github.com/FangkuaiYa/AmongUs-VoiceChat)
+- Special thanks to [idkimneil](https://github.com/idkimneil) — the reason I made this.
 
 <p align="center">
   <img src="assets/brand/divider.svg" alt="divider" width="900">
