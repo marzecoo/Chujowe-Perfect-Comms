@@ -1,0 +1,69 @@
+using System;
+
+namespace VoiceChatPlugin.VoiceChat;
+
+internal enum VoicePacketType : byte
+{
+    Audio = 0,
+    Profile = 1,
+    JailVoice = 2,
+}
+
+[Flags]
+internal enum VoiceFrameFlags : byte
+{
+    None = 0,
+    ImpostorRadio = 1 << 0,
+    BundledAudio = 1 << 7,
+}
+
+internal static class VoiceProtocol
+{
+    public const byte HandshakeRpcId = 198;
+    public const byte AudioRpcId = 203;
+
+    public const int ProtocolVersion = 3;
+    public const int MinCompatibleVersion = 3;
+
+    public const int MaxEncodedAudioBytes = 4096;
+    public const int AudioSequenceBytes = 4;
+    public const int AudioFlagsBytes = 1;
+    public const int AudioHeaderBytes = AudioSequenceBytes + AudioFlagsBytes;
+    public const int AudioBundleCountBytes = 1;
+    public const int AudioBundleLengthBytes = 2;
+    public const int MaxBundledAudioFrames = 2;
+    public const double MaxAudioBundleWaitSeconds = 0.02;
+    public const int MaxAudioPayloadBytes = AudioHeaderBytes + MaxEncodedAudioBytes;
+    public const int MaxProfileNameChars = 64;
+    public const int MaxQueuedSendFrames = 12;
+    public const int MaxQueuedReceivePackets = 160;
+    public const int JitterBufferDelayFrames = 1;
+    public const int MaxJitterBufferFrames = 16;
+    public const int MaxJitterFramesPerUpdate = 6;
+    public const int MaxDecodedAudioFramesPerUpdate = 48;
+    public const double MaxJitterBufferDelayMilliseconds = 25;
+    public const int MaxSenderPacketsPerSecond = 80;
+    public const int MaxSenderBytesPerSecond = 320_000;
+    public const double MaxQueuedFrameAgeSeconds = 0.50;
+    public const double MaxHttpQueuedFrameAgeSeconds = 0.50;
+    public static readonly TimeSpan StatsLogInterval = TimeSpan.FromSeconds(5);
+
+    public const VoiceFeatureFlags CurrentFeatures =
+        VoiceFeatureFlags.ReliableAudio |
+        VoiceFeatureFlags.UnreliableAudio |
+        VoiceFeatureFlags.BundledAudio |
+        VoiceFeatureFlags.ProfilePackets |
+        VoiceFeatureFlags.CompatibilityHandshake |
+        VoiceFeatureFlags.AudioFrameFlags;
+
+    internal const VoiceFrameFlags AllowedFrameFlags =
+        VoiceFrameFlags.ImpostorRadio |
+        VoiceFrameFlags.BundledAudio;
+
+    public static bool IsCompatible(int remoteProtocolVersion, int remoteMinCompatibleVersion)
+        => remoteProtocolVersion >= MinCompatibleVersion &&
+           ProtocolVersion >= remoteMinCompatibleVersion;
+
+    public static bool IsValidAudioPayloadLength(int length)
+        => length > AudioHeaderBytes && length <= MaxAudioPayloadBytes;
+}

@@ -1,0 +1,524 @@
+using System;
+using System.Collections.Generic;
+using NAudio.Wave;
+
+namespace VoiceChatPlugin.Audio;
+
+internal class BufferedSampleProvider : ISampleProvider
+{
+    private const int EdgeFadeSamples = AudioHelpers.PlaybackEdgeFadeSamples;
+
+    private CircularFloatBuffer? _ring;
+    private readonly object _stateLock = new();
+    private readonly WaveFormat  _format;
+    private int _prebufferSamples;
+    private bool _isPrebuffering;
+    private long _writtenSamples;
+    private long _discardedSamples;
+    private long _readRequests;
+    private long _requestedSamples;
+    private long _actualReadSamples;
+    private long _underruns;
+    private long _prebufferSilenceReads;
+    private DateTime _lastBufferEventLogUtc = DateTime.MinValue;
+    private DateTime _lastBufferWriteLogUtc = DateTime.MinValue;
+    private float _lastOutputSample;
+    private bool _lastReadEndedSilent = true;
+    private bool _hasPlayedAudio;
+    private DateTime _prebufferFirstSampleUtc = DateTime.MinValue;
+
+    public bool ReadFully              { get; set; } = true;
+    public int  BufferLength           { get; set; }
+    public int  BufferCutSize          { get; set; } = int.MaxValue;
+    public int  BufferCutToSize        { get; set; } = int.MaxValue;
+    public bool DiscardOnBufferOverflow{ get; set; }
+    public int DebugGroupId            { get; set; } = -1;
+    public int PrebufferSamples
+    {
+        get { lock (_stateLock) return _prebufferSamples; }
+        set
+        {
+            lock (_stateLock)
+            {
+                _prebufferSamples = Math.Max(0, value);
+                _isPrebuffering = _prebufferSamples > 0;
+            }
+        }
+    }
+
+    public WaveFormat WaveFormat  => _format;
+    public int  BufferedSamples   { get { lock (_stateLock) return _ring?.Count ?? 0; } }
+    // Legacy name kept for compatibility
+    public int  BufferedBytes     => BufferedSamples;
+
+    public BufferedSampleProvider(WaveFormat waveFormat, int? bufferLength = null)
+    {
+        _format      = waveFormat;
+        BufferLength = bufferLength ?? waveFormat.SampleRate * waveFormat.Channels * 8;
+    }
+
+    public void AddSamples(float[] buffer, int offset, int count)
+    {
+        lock (_stateLock)
+            AddSamplesLocked(buffer, offset, count);
+    }
+
+    private void AddSamplesLocked(float[] buffer, int offset, int count)
+    {
+        _ring ??= new CircularFloatBuffer(BufferLength);
+
+        if (DiscardOnBufferOverflow && count > _ring.MaxLength)
+        {
+            System.Threading.Interlocked.Add(ref _discardedSamples, count - _ring.MaxLength);
+            LogBufferEvent("audio.buffer.discard", $"reason=oversized incoming={count} max={_ring.MaxLength} buffered={_ring.Count}");
+            offset += count - _ring.MaxLength;
+            count = _ring.MaxLength;
+        }
+
+        if (DiscardOnBufferOverflow && _ring.Count + count > _ring.MaxLength)
+        {
+            int discard = _ring.Count + count - _ring.MaxLength;
+            _ring.Discard(discard);
+            System.Threading.Interlocked.Add(ref _discardedSamples, discard);
+            LogBufferEvent("audio.buffer.discard", $"reason=overflow discard={discard} incoming={count} buffered={_ring.Count} max={_ring.MaxLength}");
+        }
+
+        int beforeWrite = _ring.Count;
+        int written = _ring.Write(buffer, offset, count);
+        System.Threading.Interlocked.Add(ref _writtenSamples, written);
+        int afterWrite = _ring.Count;
+        if (_isPrebuffering && beforeWrite == 0 && afterWrite > 0)
+            _prebufferFirstSampleUtc = DateTime.UtcNow;
+        LogBufferWrite(beforeWrite, afterWrite, written, count);
+        if (written < count && !DiscardOnBufferOverflow)
+            throw new InvalidOperationException("Buffer full");
+        if (_ring.Count > BufferCutSize && BufferCutSize > BufferCutToSize)
+            _ring.Discard(_ring.Count - BufferCutToSize);
+        if (_prebufferSamples > 0 && _isPrebuffering)
+        {
+            int target = _hasPlayedAudio
+                ? AudioHelpers.PlaybackRecoveryPrebufferSamples
+                : _prebufferSamples;
+            if (_ring.Count < target) return;
+
+            _isPrebuffering = false;
+            _prebufferFirstSampleUtc = DateTime.MinValue;
+            LogBufferEvent("audio.buffer.prebufferRelease", $"reason=target-reached buffered={_ring.Count} target={target} startup={!_hasPlayedAudio}");
+        }
+    }
+
+    public void Clear()
+    {
+        lock (_stateLock)
+        {
+            _ring?.Reset();
+            _isPrebuffering = _prebufferSamples > 0;
+            _lastOutputSample = 0f;
+            _lastReadEndedSilent = true;
+            _hasPlayedAudio = false;
+            _prebufferFirstSampleUtc = DateTime.MinValue;
+        }
+    }
+
+    public int Read(float[] buffer, int offset, int count)
+    {
+        lock (_stateLock)
+            return ReadLocked(buffer, offset, count);
+    }
+
+    private int ReadLocked(float[] buffer, int offset, int count)
+    {
+        if (_ring == null)
+        {
+            System.Threading.Interlocked.Increment(ref _readRequests);
+            System.Threading.Interlocked.Add(ref _requestedSamples, count);
+            System.Threading.Interlocked.Increment(ref _prebufferSilenceReads);
+            LogBufferEvent("audio.buffer.prebuffer", $"requested={count} buffered={_ring?.Count ?? 0} prebuffer={_prebufferSamples}");
+            return CompleteRead(buffer, offset, count, 0);
+        }
+
+        if (_prebufferSamples > 0 && _isPrebuffering)
+        {
+            int buffered = _ring.Count;
+            int target = _hasPlayedAudio
+                ? AudioHelpers.PlaybackRecoveryPrebufferSamples
+                : _prebufferSamples;
+            bool waitExpired = buffered > 0 &&
+                _prebufferFirstSampleUtc != DateTime.MinValue &&
+                (DateTime.UtcNow - _prebufferFirstSampleUtc).TotalMilliseconds >= AudioHelpers.PlaybackMaxPrebufferWaitMilliseconds;
+            if (buffered < target && !waitExpired)
+            {
+                System.Threading.Interlocked.Increment(ref _readRequests);
+                System.Threading.Interlocked.Add(ref _requestedSamples, count);
+                System.Threading.Interlocked.Increment(ref _prebufferSilenceReads);
+                LogBufferEvent("audio.buffer.prebuffer", $"requested={count} buffered={buffered} prebuffer={target} startup={!_hasPlayedAudio}");
+                return CompleteRead(buffer, offset, count, 0);
+            }
+
+            _isPrebuffering = false;
+            _prebufferFirstSampleUtc = DateTime.MinValue;
+            LogBufferEvent("audio.buffer.prebufferRelease", $"requested={count} buffered={buffered} target={target} waitExpired={waitExpired} startup={!_hasPlayedAudio}");
+        }
+
+        System.Threading.Interlocked.Increment(ref _readRequests);
+        System.Threading.Interlocked.Add(ref _requestedSamples, count);
+        int bufferedBeforeRead = _ring.Count;
+        int num = _ring.Read(buffer, offset, count);
+        System.Threading.Interlocked.Add(ref _actualReadSamples, num);
+        if (_prebufferSamples > 0 && num < count)
+        {
+            System.Threading.Interlocked.Increment(ref _underruns);
+            _isPrebuffering = true;
+            _prebufferFirstSampleUtc = (_ring?.Count ?? 0) > 0 ? DateTime.UtcNow : DateTime.MinValue;
+            LogBufferEvent("audio.buffer.underrun",
+                $"requested={count} actual={num} bufferedBefore={bufferedBeforeRead} buffered={_ring?.Count ?? 0} prebuffer={_prebufferSamples} hasPlayed={_hasPlayedAudio} readEndedSilent={_lastReadEndedSilent}");
+        }
+        return CompleteRead(buffer, offset, count, num);
+    }
+
+    public string ConsumeDebugStats()
+        => $"written={System.Threading.Interlocked.Exchange(ref _writtenSamples, 0)} " +
+           $"discarded={System.Threading.Interlocked.Exchange(ref _discardedSamples, 0)} " +
+           $"readCalls={System.Threading.Interlocked.Exchange(ref _readRequests, 0)} " +
+           $"requested={System.Threading.Interlocked.Exchange(ref _requestedSamples, 0)} " +
+           $"actual={System.Threading.Interlocked.Exchange(ref _actualReadSamples, 0)} " +
+           $"underruns={System.Threading.Interlocked.Exchange(ref _underruns, 0)} " +
+           $"prebufferSilence={System.Threading.Interlocked.Exchange(ref _prebufferSilenceReads, 0)}";
+
+    private int CompleteRead(float[] buffer, int offset, int count, int num)
+    {
+        if (num > 0)
+        {
+            if (_lastReadEndedSilent)
+            {
+                int fadeIn = Math.Min(num, EdgeFadeSamples);
+                for (int i = 0; i < fadeIn; i++)
+                    buffer[offset + i] *= (i + 1f) / fadeIn;
+            }
+
+            _lastOutputSample = buffer[offset + num - 1];
+            _lastReadEndedSilent = false;
+            _hasPlayedAudio = true;
+        }
+
+        if (ReadFully && num < count)
+        {
+            int missing = count - num;
+            int fadeOut = Math.Min(missing, EdgeFadeSamples);
+            float start = num > 0 ? buffer[offset + num - 1] : _lastOutputSample;
+            for (int i = 0; i < fadeOut; i++)
+                buffer[offset + num + i] = start * (1f - ((i + 1f) / fadeOut));
+            if (missing > fadeOut)
+                Array.Clear(buffer, offset + num + fadeOut, missing - fadeOut);
+            num = count;
+            _lastOutputSample = 0f;
+            _lastReadEndedSilent = true;
+        }
+        return num;
+    }
+
+    private void LogBufferEvent(string category, string message)
+    {
+        var now = DateTime.UtcNow;
+        if ((now - _lastBufferEventLogUtc).TotalSeconds < 0.5)
+            return;
+
+        _lastBufferEventLogUtc = now;
+        VoiceChatPlugin.VoiceChat.VoiceDiagnostics.Log(category, $"group={DebugGroupId} {message}");
+    }
+
+    private void LogBufferWrite(int before, int after, int written, int requested)
+    {
+        bool important = before == 0 || before < _prebufferSamples || after < _prebufferSamples;
+        if (!important) return;
+
+        var now = DateTime.UtcNow;
+        if ((now - _lastBufferWriteLogUtc).TotalSeconds < 0.25)
+            return;
+
+        _lastBufferWriteLogUtc = now;
+        VoiceChatPlugin.VoiceChat.VoiceDiagnostics.Log("audio.buffer.write",
+            $"group={DebugGroupId} before={before} after={after} written={written} requested={requested} prebuffer={_prebufferSamples} readEndedSilent={_lastReadEndedSilent}");
+    }
+}
+
+internal class MonoToStereoSampleProvider : ISampleProvider
+{
+    private static readonly WaveFormat _fmt =
+        WaveFormat.CreateIeeeFloatWaveFormat(AudioHelpers.ClockRate, 2);
+
+    private readonly ISampleProvider _src;
+    private float[] _mono = Array.Empty<float>();
+
+    public WaveFormat WaveFormat => _fmt;
+    public MonoToStereoSampleProvider(ISampleProvider mono) => _src = mono;
+
+    public int Read(float[] buffer, int offset, int count)
+    {
+        int monoCount = count / 2;
+        if (_mono.Length < monoCount)
+            _mono = new float[monoCount];
+
+        int read = _src.Read(_mono, 0, monoCount);
+
+        // Interleave: L = R = mono sample
+        for (int i = 0; i < read; i++)
+        {
+            buffer[offset + i * 2]     = _mono[i];
+            buffer[offset + i * 2 + 1] = _mono[i];
+        }
+
+        // Zero any unfilled stereo pairs
+        if (read < monoCount)
+            Array.Clear(buffer, offset + read * 2, (monoCount - read) * 2);
+
+        return read * 2;
+    }
+}
+
+internal class StereoSampleProvider : ISampleProvider
+{
+    private readonly ISampleProvider _src;
+    private float[] _temp = Array.Empty<float>();
+    private readonly object _lock = new();
+    private float _pan;
+    private float _volume = 1f;
+
+    public WaveFormat WaveFormat { get; }
+    public float Volume
+    {
+        get { lock (_lock) return _volume; }
+        set { lock (_lock) _volume = Math.Clamp(value, 0f, 4f); }
+    }
+
+    public float Pan
+    {
+        get { lock (_lock) return _pan; }
+        set { lock (_lock) _pan = Math.Clamp(value, -1f, 1f); }
+    }
+
+    public StereoSampleProvider(ISampleProvider src)
+    {
+        _src       = src;
+        WaveFormat = WaveFormat.CreateIeeeFloatWaveFormat(src.WaveFormat.SampleRate, 2);
+    }
+
+    public int Read(float[] buffer, int offset, int count)
+    {
+        int monoCount = count / 2;
+        if (_temp.Length < monoCount) _temp = new float[monoCount];
+
+        int read = _src.Read(_temp, 0, monoCount);
+
+        float pan;
+        float volume;
+        lock (_lock)
+        {
+            pan = _pan;
+            volume = _volume;
+        }
+
+        double angle = (pan + 1.0) * 0.25 * Math.PI;
+        float leftGain = (float)(Math.Cos(angle) * volume);
+        float rightGain = (float)(Math.Sin(angle) * volume);
+
+        for (int i = 0; i < read; i++)
+        {
+            float sample = _temp[i];
+            buffer[offset + i * 2] = sample * leftGain;
+            buffer[offset + i * 2 + 1] = sample * rightGain;
+        }
+
+        if (read < monoCount)
+            Array.Clear(buffer, offset + read * 2, (monoCount - read) * 2);
+
+        return read * 2;
+    }
+}
+
+internal class ReverbSampleProvider : ISampleProvider
+{
+    private readonly ISampleProvider _src;
+    private readonly float[] _delay;
+    private int   _pos;
+    private float _decay, _wet, _dry;
+
+    public float Decay      { get => _decay; set => _decay = Math.Clamp(value, 0f, 1f); }
+    public float WetDryMix  { get => _wet;   set { _wet = Math.Clamp(value, 0f, 1f); _dry = 1f - _wet; } }
+    public WaveFormat WaveFormat => _src.WaveFormat;
+
+    public ReverbSampleProvider(ISampleProvider src, int delayMs, float decay, float wetDry)
+    {
+        _src   = src;
+        int n  = (int)(src.WaveFormat.SampleRate * (delayMs / 1000f)) * src.WaveFormat.Channels;
+        _delay = new float[n];
+        Decay     = decay;
+        WetDryMix = wetDry;
+    }
+
+    public int Read(float[] buffer, int offset, int count)
+    {
+        int read = _src.Read(buffer, offset, count);
+        for (int i = 0; i < read; i++)
+        {
+            float cur     = buffer[offset + i];
+            float delayed = _delay[_pos];
+            _delay[_pos]       = cur + delayed * _decay;
+            buffer[offset + i] = cur * _dry + delayed * _wet;
+            _pos = (_pos + 1) % _delay.Length;
+        }
+        return read;
+    }
+}
+
+internal class AudioBuffer : ISampleProvider
+{
+    private float[]?          _buf;
+    private float[]?          _tmp;
+    private int               _len;
+    private readonly ISampleProvider _src;
+
+    public int        GroupId    { get; }
+    public WaveFormat WaveFormat => _src.WaveFormat;
+
+    public AudioBuffer(ISampleProvider src, int groupId) { _src = src; GroupId = groupId; }
+
+    public void Clear() => _buf = null;
+
+    public int Read(float[] buffer, int offset, int count)
+    {
+        if (_buf == null)
+        {
+            if (_tmp != null && _tmp.Length >= count) _buf = _tmp;
+            else _tmp = _buf = new float[count];
+            int n = _src.Read(_buf, 0, count);
+            if (n < count) Array.Clear(_buf, n, count - n);
+            _len = count;
+        }
+        if (count != _len) throw new InvalidOperationException("Count must be consistent.");
+        Buffer.BlockCopy(_buf, 0, buffer, offset * 4, count * 4);
+        return count;
+    }
+}
+
+internal class AudioMixer : ISampleProvider
+{
+    private record struct Input(ISampleProvider Provider, int GroupId);
+    private readonly List<Input> _inputs = new();
+    private readonly object      _inputsLock = new();
+    private readonly WaveFormat  _fmt;
+    private Input[] _inputSnapshot = Array.Empty<Input>();
+    private float[] _tmp = null!;
+
+    public WaveFormat WaveFormat => _fmt;
+
+    public AudioMixer(int channels)
+        => _fmt = WaveFormat.CreateIeeeFloatWaveFormat(AudioHelpers.ClockRate, channels);
+
+    public int Read(float[] buffer, int offset, int count)
+    {
+        var inputs = _inputSnapshot;
+
+        if (_tmp == null || _tmp.Length < count) _tmp = new float[count];
+        if (inputs.Length == 0) { Array.Clear(buffer, offset, count); return count; }
+        bool first = true;
+        foreach (var inp in inputs)
+        {
+            int r = inp.Provider.Read(_tmp, 0, count);
+            if (first) { for (int i = 0; i < r; i++) buffer[offset + i]  = _tmp[i]; first = false; }
+            else        { for (int i = 0; i < r; i++) buffer[offset + i] += _tmp[i]; }
+        }
+        return count;
+    }
+
+    public void AddInput(ISampleProvider src, int groupId)
+    {
+        Input input;
+        if (src.WaveFormat.Channels == 1 && _fmt.Channels == 2)
+            input = new(new MonoToStereoSampleProvider(src), groupId);
+        else
+            input = new(src, groupId);
+
+        lock (_inputsLock)
+        {
+            _inputs.Add(input);
+            _inputSnapshot = _inputs.ToArray();
+        }
+    }
+
+    public void RemoveInput(int groupId)
+    {
+        lock (_inputsLock)
+        {
+            _inputs.RemoveAll(i => i.GroupId == groupId);
+            _inputSnapshot = _inputs.ToArray();
+        }
+    }
+}
+
+internal class AudioRoutingInstanceNode
+{
+    private readonly AudioMixer?  _mixer;
+    private readonly AudioBuffer? _buf;
+    private readonly ISampleProvider _proc;
+
+    public ISampleProvider Output    => _buf ?? _proc;
+    public ISampleProvider Processor => _proc;
+
+    public AudioRoutingInstanceNode(
+        Action<AudioBuffer>                addBuffer,
+        ISampleProvider                    source,
+        Func<ISampleProvider, ISampleProvider> ctor,
+        bool hasMultipleInput,
+        bool hasMultipleOutput,
+        int  channels,
+        int  groupId)
+    {
+        if (hasMultipleInput)
+        {
+            _mixer = new AudioMixer(channels);
+            if (source != null) _mixer.AddInput(source, -1);
+        }
+        else
+        {
+            _mixer = null;
+            if (source.WaveFormat.Channels == 1 && channels == 2)
+                source = new MonoToStereoSampleProvider(source);
+        }
+        _proc = ctor((_mixer ?? source)!);
+        if (hasMultipleOutput)
+        {
+            _buf = new AudioBuffer(_proc, groupId);
+            addBuffer(_buf);
+        }
+    }
+
+    public void AddInput(ISampleProvider src, int groupId) => _mixer?.AddInput(src, groupId);
+    public void RemoveInput(int groupId)                   => _mixer?.RemoveInput(groupId);
+}
+
+
+public class AudioRoutingInstance : IHasAudioPropertyNode
+{
+    private readonly AudioRoutingInstanceNode[] _nodes;
+    private readonly BufferedSampleProvider     _source;
+
+    internal AudioRoutingInstance(
+        AudioRoutingInstanceNode[] nodes,
+        BufferedSampleProvider     source)
+    {
+        _nodes  = nodes;
+        _source = source;
+    }
+
+    public void AddSamples(float[] samples, int offset, int count)
+        => _source.AddSamples(samples, offset, count);
+
+    public void ClearBufferedSamples() => _source.Clear();
+
+    public int BufferedSamples => _source.BufferedSamples;
+
+    public string ConsumeDebugStats() => _source.ConsumeDebugStats();
+
+    AudioRoutingInstanceNode IHasAudioPropertyNode.GetProperty(int id) => _nodes[id];
+}
