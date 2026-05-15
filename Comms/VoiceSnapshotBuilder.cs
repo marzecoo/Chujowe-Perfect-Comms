@@ -19,7 +19,7 @@ internal static class VoiceSnapshotBuilder
             var data = player.Data;
             int clientId = ResolveClientId(player, data);
             string name = data?.PlayerName ?? player.name ?? "Unknown";
-            bool isJailed = VoiceRoleMuteState.TryGetJailorId(player, out byte jailorId);
+            VoiceRoleMuteState.GetPlayerRoleState(player, out bool isBlackmailed, out bool isJailed, out byte jailorId);
 
             players.Add(new VoicePlayerSnapshot(
                 player.PlayerId,
@@ -33,7 +33,7 @@ internal static class VoiceSnapshotBuilder
                 data?.Disconnected == true,
                 player.isDummy || player.notRealPlayer,
                 player.gameObject != null && player.gameObject.activeInHierarchy,
-                VoiceRoleMuteState.IsBlackmailed(player),
+                isBlackmailed,
                 isJailed,
                 jailorId));
         }

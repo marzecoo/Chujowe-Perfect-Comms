@@ -11,13 +11,23 @@ internal static class VoiceRoleMuteState
     private const string BlackmailedModifierName = "TownOfUs.Modifiers.Impostor.BlackmailedModifier";
     private const string JailedModifierName = "TownOfUs.Modifiers.Crewmate.JailedModifier";
     private const string JailorRoleName = "TownOfUs.Roles.Crewmate.JailorRole";
+    private const float RoleStateRefreshInterval = 0.25f;
 
-    private static readonly Dictionary<string, Type?> TypeCache = new();
     private static readonly HashSet<byte> JailVoiceAllowed = new();
+    private static readonly Dictionary<byte, CachedRoleState> RoleStateCache = new();
+    private static Type? _blackmailedModifierType;
+    private static Type? _jailedModifierType;
+    private static bool _supportedModTypesResolved;
+    private static int _resolvedGameId = int.MinValue;
+    private static VoiceGamePhase _resolvedPhase = VoiceGamePhase.Unknown;
+    private static float _nextRoleStateRefreshTime;
     private static bool _wasInMeeting;
+
+    private readonly record struct CachedRoleState(bool IsBlackmailed, bool IsJailed, byte JailorId);
 
     internal static void Update()
     {
+        RefreshRoleStateCacheIfNeeded();
         bool inMeeting = MeetingHud.Instance != null;
         if (!inMeeting)
         {
@@ -43,13 +53,14 @@ internal static class VoiceRoleMuteState
         if (local == null || MeetingHud.Instance == null || local.Data?.IsDead == true)
             return false;
 
-        if (HasModifier(local, BlackmailedModifierName))
+        GetPlayerRoleState(local, out bool isBlackmailed, out bool isJailed, out byte jailorId);
+        if (isBlackmailed)
         {
             reason = "Blackmailed";
             return true;
         }
 
-        if (TryGetJailorId(local, out byte jailorId) && IsJailorValid(jailorId) && !JailVoiceAllowed.Contains(local.PlayerId))
+        if (isJailed && IsJailorValid(jailorId) && !JailVoiceAllowed.Contains(local.PlayerId))
         {
             reason = "Jailed";
             return true;
@@ -73,29 +84,30 @@ internal static class VoiceRoleMuteState
         => player.IsBlackmailed ? VoiceProximityReason.Blackmailed : VoiceProximityReason.Jailed;
 
     internal static bool IsBlackmailed(PlayerControl? player)
-        => HasModifier(player, BlackmailedModifierName);
+    {
+        GetPlayerRoleState(player, out bool isBlackmailed, out _, out _);
+        return isBlackmailed;
+    }
 
     internal static bool TryGetJailorId(PlayerControl? player, out byte jailorId)
     {
+        GetPlayerRoleState(player, out _, out bool isJailed, out jailorId);
+        return isJailed;
+    }
+
+    internal static void GetPlayerRoleState(PlayerControl? player, out bool isBlackmailed, out bool isJailed, out byte jailorId)
+    {
+        isBlackmailed = false;
+        isJailed = false;
         jailorId = byte.MaxValue;
-        var modifier = GetModifier(player, JailedModifierName);
-        if (modifier == null) return false;
+        if (player == null) return;
 
-        try
-        {
-            object? value = modifier.GetType().GetProperty("JailorId")?.GetValue(modifier);
-            if (value is byte id)
-            {
-                jailorId = id;
-                return true;
-            }
-        }
-        catch
-        {
-            // ignored; role integration should fail closed per player, not per frame
-        }
+        RefreshRoleStateCacheIfNeeded();
+        if (!RoleStateCache.TryGetValue(player.PlayerId, out var state)) return;
 
-        return false;
+        isBlackmailed = state.IsBlackmailed;
+        isJailed = state.IsJailed;
+        jailorId = state.JailorId;
     }
 
     internal static bool CanLocalJailorUnmute(out byte jailedPlayerId)
@@ -122,6 +134,7 @@ internal static class VoiceRoleMuteState
 
     internal static void LocalJailorAllowVoice()
     {
+        RefreshRoleStateCacheIfNeeded(force: true);
         if (!CanLocalJailorUnmute(out byte jailedPlayerId)) return;
         SetJailVoiceAllowed(jailedPlayerId, true);
         SendJailVoiceAllowed(jailedPlayerId, true);
@@ -130,6 +143,7 @@ internal static class VoiceRoleMuteState
 
     internal static void ApplyRemoteJailVoice(byte jailorId, byte jailedPlayerId, bool allowed)
     {
+        RefreshRoleStateCacheIfNeeded(force: true);
         var jailed = FindPlayer(jailedPlayerId);
         if (jailed == null || !TryGetJailorId(jailed, out byte actualJailorId) || actualJailorId != jailorId)
             return;
@@ -179,7 +193,7 @@ internal static class VoiceRoleMuteState
     private static bool IsJailor(PlayerControl? player)
     {
         string? roleName = player?.Data?.Role?.GetType().FullName;
-        return roleName == JailorRoleName || roleName?.EndsWith(".JailorRole", StringComparison.Ordinal) == true;
+        return roleName == JailorRoleName;
     }
 
     private static void PruneJailVoiceAllowed()
@@ -194,15 +208,56 @@ internal static class VoiceRoleMuteState
         }
     }
 
-    private static bool HasModifier(PlayerControl? player, string typeName)
-        => GetModifier(player, typeName) != null;
-
-    private static BaseModifier? GetModifier(PlayerControl? player, string typeName)
+    private static void RefreshRoleStateCacheIfNeeded(bool force = false)
     {
-        if (player == null) return null;
-        var type = ResolveType(typeName);
-        if (type == null) return null;
+        RefreshSupportedModTypesIfNeeded();
+        if (_blackmailedModifierType == null && _jailedModifierType == null)
+        {
+            RoleStateCache.Clear();
+            return;
+        }
 
+        if (!force && Time.time < _nextRoleStateRefreshTime)
+            return;
+
+        _nextRoleStateRefreshTime = Time.time + RoleStateRefreshInterval;
+        RoleStateCache.Clear();
+        foreach (var player in PlayerControl.AllPlayerControls)
+        {
+            if (player == null) continue;
+            RoleStateCache[player.PlayerId] = ReadRoleState(player);
+        }
+    }
+
+    private static CachedRoleState ReadRoleState(PlayerControl player)
+    {
+        bool isBlackmailed = GetModifier(player, _blackmailedModifierType) != null;
+        byte jailorId = byte.MaxValue;
+        bool isJailed = false;
+        var modifier = GetModifier(player, _jailedModifierType);
+        if (modifier != null)
+        {
+            try
+            {
+                object? value = modifier.GetType().GetProperty("JailorId")?.GetValue(modifier);
+                if (value is byte id)
+                {
+                    jailorId = id;
+                    isJailed = true;
+                }
+            }
+            catch
+            {
+                // ignored; role integration should fail closed per player, not per frame
+            }
+        }
+
+        return new(isBlackmailed, isJailed, jailorId);
+    }
+
+    private static BaseModifier? GetModifier(PlayerControl player, Type? type)
+    {
+        if (type == null) return null;
         try
         {
             return player.GetModifier(type);
@@ -213,22 +268,41 @@ internal static class VoiceRoleMuteState
         }
     }
 
+    private static void RefreshSupportedModTypesIfNeeded()
+    {
+        VoiceGamePhase phase = VoiceSceneState.ResolvePhase();
+        int gameId = AmongUsClient.Instance?.GameId ?? 0;
+        bool shouldProbe = phase is VoiceGamePhase.Lobby
+            or VoiceGamePhase.Intro
+            or VoiceGamePhase.Tasks
+            or VoiceGamePhase.Meeting;
+        if (!shouldProbe) return;
+
+        bool phaseChanged = phase != _resolvedPhase;
+        bool joinedNewLobby = gameId != 0 && gameId != _resolvedGameId;
+        if (_supportedModTypesResolved && !phaseChanged && !joinedNewLobby)
+            return;
+
+        _resolvedPhase = phase;
+        _resolvedGameId = gameId;
+        _blackmailedModifierType = ResolveType(BlackmailedModifierName);
+        _jailedModifierType = ResolveType(JailedModifierName);
+        _supportedModTypesResolved = true;
+        _nextRoleStateRefreshTime = 0f;
+        RoleStateCache.Clear();
+    }
+
     private static Type? ResolveType(string fullName)
     {
-        if (TypeCache.TryGetValue(fullName, out var cached))
-            return cached;
-
         Type? type = AccessTools.TypeByName(fullName);
-        if (type == null)
+        if (type != null) return type;
+
+        foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
         {
-            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
-            {
-                type = asm.GetType(fullName, false);
-                if (type != null) break;
-            }
+            type = asm.GetType(fullName, false);
+            if (type != null) break;
         }
 
-        TypeCache[fullName] = type;
         return type;
     }
 

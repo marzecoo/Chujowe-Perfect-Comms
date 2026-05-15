@@ -263,7 +263,7 @@ public class VoiceChatLocalSettings : LocalSettingsTab
         DebugVoiceStats = config.Bind("Debug", "DebugVoiceStats", false,
             new ConfigDescription("Log rolling voice network statistics"));
 
-        LobbyBrowserTitle = config.Bind("Lobby Browser", "Title", "TOU Mira + Voice",
+        LobbyBrowserTitle = config.Bind("Lobby Browser", "Title", "Perfect Comms",
             new ConfigDescription("Title shown in the voice lobby browser"));
 
         LobbyBrowserLanguage = config.Bind("Lobby Browser", "Language", "English",
