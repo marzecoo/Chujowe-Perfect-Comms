@@ -64,6 +64,7 @@ public class VoiceChatPluginMain : BasePlugin, IMiraPlugin
     public override void Load()
     {
         Logger = Log;
+        VanillaLobbyDiagnostics.Configure(message => Logger.LogInfo(message), message => Logger.LogWarning(message));
         Logger.LogInfo("[VC] Loading Perfect Comms.");
         ReactorCredits.Register("Perfect Comms", Version, false, ReactorCredits.AlwaysShow);
         VoiceDiagnostics.Init();
@@ -75,6 +76,7 @@ public class VoiceChatPluginMain : BasePlugin, IMiraPlugin
         VoiceChatHudState.Init();
         VoiceChatPatches.RegisterKeybindHandlers();
         Harmony.PatchAll(Assembly.GetExecutingAssembly());
+        VanillaLobbyPatchDiagnostics.LogPatchState(Harmony);
         Logger.LogInfo("[VC] Perfect Comms loaded.");
     }
 }

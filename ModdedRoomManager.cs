@@ -64,36 +64,10 @@ public static class ModdedRoomManager
         public static bool Prefix(InnerNetClient __instance, IGameOptions settings,
             GameFilterOptions filterOpts)
         {
-            try
-            {
-                var msg = MessageWriter.Get(SendOption.Reliable);
-                msg.StartMessage(16); // Tags.GetGameListV2
-
-                filterOpts.Serialize(msg);
-
-                // Append mod filter: type tag "mod" + GUID bytes
-                // Protocol: 1-byte length-prefixed ASCII string then 16 raw GUID bytes
-                byte[] guidBytes = ModGuid.ToByteArray();
-                msg.StartMessage(1); // sub-message tag for extra filters
-                msg.Write("mod");    // filter type string
-                msg.WriteBytesAndSize(guidBytes);
-                msg.EndMessage();
-
-                msg.EndMessage();
-                __instance.SendOrDisconnect(msg);
-                msg.Recycle();
-
-                VoiceChatPluginMain.Logger.LogInfo(
-                    $"[VC] FindGame sent with mod filter GUID {ModGuid}");
-            }
-            catch (Exception ex)
-            {
-                VoiceChatPluginMain.Logger.LogError(
-                    $"[VC] FindGamePatch failed, falling back to vanilla: {ex.Message}");
-                return true;
-            }
-
-            return false;
+            // Let vanilla/Reactor HTTP matchmaking run. Reactor adds Client-Mods and records
+            // Client-Mods-Processed, which is what unlocks public lobbies on compatible servers.
+            VanillaLobbyDiagnostics.Limited("request-game-list", "request", $"InnerNetClient.RequestGameList passthrough state={__instance.GameState} netMode={__instance.NetworkMode} gameId={__instance.GameId}", first: 12, every: 60);
+            return true;
         }
     }
 
