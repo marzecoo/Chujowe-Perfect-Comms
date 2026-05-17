@@ -1,0 +1,173 @@
+{
+  "version": 3,
+  "targets": {
+    "net6.0": {}
+  },
+  "libraries": {},
+  "projectFileDependencyGroups": {
+    "net6.0": [
+      "AllOfUs.MiraAPI >= 0.3.9-ci.904",
+      "AmongUs.GameLibs.Steam >= 2026.3.31",
+      "BepInEx.AutoPlugin >= 1.1.0",
+      "BepInEx.IL2CPP.MSBuild >= 2.1.0-rc.1",
+      "BepInEx.Unity.IL2CPP >= 6.0.0-be.735",
+      "Concentus >= 2.2.2",
+      "NAudio >= 2.3.0",
+      "NAudio.Core >= 2.3.0",
+      "NAudio.Wasapi >= 2.3.0",
+      "Reactor >= 2.5.0-ci.371",
+      "TownOfUsMira >= 1.6.2"
+    ]
+  },
+  "packageFolders": {
+    "/Users/neiljain/.nuget/packages/": {}
+  },
+  "project": {
+    "version": "1.0.2",
+    "restore": {
+      "projectUniqueName": "/Users/neiljain/Documents/GitHub/Perfect-Comms/PerfectComms.csproj",
+      "projectName": "PerfectComms",
+      "projectPath": "/Users/neiljain/Documents/GitHub/Perfect-Comms/PerfectComms.csproj",
+      "packagesPath": "/Users/neiljain/.nuget/packages/",
+      "outputPath": "/Users/neiljain/Documents/GitHub/Perfect-Comms/obj/",
+      "projectStyle": "PackageReference",
+      "configFilePaths": [
+        "/Users/neiljain/Documents/GitHub/Perfect-Comms/NuGet.Config",
+        "/Users/neiljain/.nuget/NuGet/NuGet.Config"
+      ],
+      "originalTargetFrameworks": [
+        "net6.0"
+      ],
+      "sources": {
+        "https://bepinex.dev": {},
+        "https://nuget.org": {},
+        "https://nuget.reactor.gg/v3/index.json": {}
+      },
+      "frameworks": {
+        "net6.0": {
+          "targetAlias": "net6.0",
+          "projectReferences": {}
+        }
+      },
+      "warningProperties": {
+        "warnAsError": [
+          "NU1605"
+        ]
+      },
+      "restoreAuditProperties": {
+        "enableAudit": "true",
+        "auditLevel": "low",
+        "auditMode": "direct"
+      },
+      "SdkAnalysisLevel": "10.0.100"
+    },
+    "frameworks": {
+      "net6.0": {
+        "targetAlias": "net6.0",
+        "dependencies": {
+          "AllOfUs.MiraAPI": {
+            "include": "Compile, Build, Native, ContentFiles, Analyzers, BuildTransitive",
+            "target": "Package",
+            "version": "[0.3.9-ci.904, )"
+          },
+          "AmongUs.GameLibs.Steam": {
+            "suppressParent": "All",
+            "target": "Package",
+            "version": "[2026.3.31, )"
+          },
+          "BepInEx.AutoPlugin": {
+            "suppressParent": "All",
+            "target": "Package",
+            "version": "[1.1.0, )"
+          },
+          "BepInEx.IL2CPP.MSBuild": {
+            "include": "Compile, Build, Native, ContentFiles, Analyzers, BuildTransitive",
+            "suppressParent": "All",
+            "target": "Package",
+            "version": "[2.1.0-rc.1, )"
+          },
+          "BepInEx.Unity.IL2CPP": {
+            "include": "Compile, Build, ContentFiles, Analyzers, BuildTransitive",
+            "target": "Package",
+            "version": "[6.0.0-be.735, )"
+          },
+          "Concentus": {
+            "target": "Package",
+            "version": "[2.2.2, )"
+          },
+          "NAudio": {
+            "target": "Package",
+            "version": "[2.3.0, )"
+          },
+          "NAudio.Core": {
+            "target": "Package",
+            "version": "[2.3.0, )"
+          },
+          "NAudio.Wasapi": {
+            "target": "Package",
+            "version": "[2.3.0, )"
+          },
+          "Reactor": {
+            "include": "Compile, Build, Native, ContentFiles, Analyzers, BuildTransitive",
+            "target": "Package",
+            "version": "[2.5.0-ci.371, )"
+          },
+          "TownOfUsMira": {
+            "target": "Package",
+            "version": "[1.6.2, )"
+          }
+        },
+        "imports": [
+          "net461",
+          "net462",
+          "net47",
+          "net471",
+          "net472",
+          "net48",
+          "net481"
+        ],
+        "assetTargetFallback": true,
+        "warn": true,
+        "downloadDependencies": [
+          {
+            "name": "Microsoft.AspNetCore.App.Ref",
+            "version": "[6.0.36, 6.0.36]"
+          },
+          {
+            "name": "Microsoft.NETCore.App.Ref",
+            "version": "[6.0.36, 6.0.36]"
+          }
+        ],
+        "frameworkReferences": {
+          "Microsoft.NETCore.App": {
+            "privateAssets": "all"
+          }
+        },
+        "runtimeIdentifierGraphPath": "/usr/local/share/dotnet/sdk/10.0.101/RuntimeIdentifierGraph.json"
+      }
+    }
+  },
+  "logs": [
+    {
+      "code": "NU1301",
+      "level": "Error",
+      "message": "Unable to load the service index for source https://nuget.org.\n  The content at 'https://nuget.org' is not a valid JSON object.\n  Unexpected character encountered while parsing value: <. Path '', line 0, position 0."
+    },
+    {
+      "code": "NU1301",
+      "level": "Error",
+      "message": "Unable to load the service index for source https://nuget.org.\n  The content at 'https://nuget.org' is not a valid JSON object.\n  Unexpected character encountered while parsing value: <. Path '', line 0, position 0."
+    },
+    {
+      "code": "NU1301",
+      "level": "Error",
+      "message": "Unable to load the service index for source https://nuget.org.\n  The content at 'https://nuget.org' is not a valid JSON object.\n  Unexpected character encountered while parsing value: <. Path '', line 0, position 0."
+    },
+    {
+      "code": "NU1900",
+      "level": "Warning",
+      "warningLevel": 1,
+      "message": "Error occurred while getting package vulnerability data: Unable to load the service index for source https://nuget.org."
+    }
+  ]
+}

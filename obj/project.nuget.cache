@@ -1,0 +1,45 @@
+{
+  "version": 2,
+  "dgSpecHash": "PsTa0PwfjBE=",
+  "success": false,
+  "projectFilePath": "/Users/neiljain/Documents/GitHub/Perfect-Comms/PerfectComms.csproj",
+  "expectedPackageFiles": [
+    "/Users/neiljain/.nuget/packages/microsoft.netcore.app.ref/6.0.36/microsoft.netcore.app.ref.6.0.36.nupkg.sha512",
+    "/Users/neiljain/.nuget/packages/microsoft.aspnetcore.app.ref/6.0.36/microsoft.aspnetcore.app.ref.6.0.36.nupkg.sha512"
+  ],
+  "logs": [
+    {
+      "code": "NU1301",
+      "level": "Error",
+      "message": "Unable to load the service index for source https://nuget.org.\n  The content at 'https://nuget.org' is not a valid JSON object.\n  Unexpected character encountered while parsing value: <. Path '', line 0, position 0.",
+      "projectPath": "/Users/neiljain/Documents/GitHub/Perfect-Comms/PerfectComms.csproj",
+      "filePath": "/Users/neiljain/Documents/GitHub/Perfect-Comms/PerfectComms.csproj",
+      "targetGraphs": []
+    },
+    {
+      "code": "NU1301",
+      "level": "Error",
+      "message": "Unable to load the service index for source https://nuget.org.\n  The content at 'https://nuget.org' is not a valid JSON object.\n  Unexpected character encountered while parsing value: <. Path '', line 0, position 0.",
+      "projectPath": "/Users/neiljain/Documents/GitHub/Perfect-Comms/PerfectComms.csproj",
+      "filePath": "/Users/neiljain/Documents/GitHub/Perfect-Comms/PerfectComms.csproj",
+      "targetGraphs": []
+    },
+    {
+      "code": "NU1301",
+      "level": "Error",
+      "message": "Unable to load the service index for source https://nuget.org.\n  The content at 'https://nuget.org' is not a valid JSON object.\n  Unexpected character encountered while parsing value: <. Path '', line 0, position 0.",
+      "projectPath": "/Users/neiljain/Documents/GitHub/Perfect-Comms/PerfectComms.csproj",
+      "filePath": "/Users/neiljain/Documents/GitHub/Perfect-Comms/PerfectComms.csproj",
+      "targetGraphs": []
+    },
+    {
+      "code": "NU1900",
+      "level": "Warning",
+      "message": "Error occurred while getting package vulnerability data: Unable to load the service index for source https://nuget.org.",
+      "projectPath": "/Users/neiljain/Documents/GitHub/Perfect-Comms/PerfectComms.csproj",
+      "warningLevel": 1,
+      "filePath": "/Users/neiljain/Documents/GitHub/Perfect-Comms/PerfectComms.csproj",
+      "targetGraphs": []
+    }
+  ]
+}
