@@ -109,11 +109,6 @@ public class VoiceChatLocalSettings : LocalSettingsTab
     public ConfigEntry<SpkDeviceEnum> SpeakerDeviceIndex { get; }
 #endif
 
-    // IndicatorPosition setting kept for config-file compatibility; no longer
-    // drives button placement (grid handles that now).
-    [LocalEnumSetting("Indicator Position")]
-    public ConfigEntry<IndicatorPosition> VoiceIndicatorPosition { get; }
-
     [LocalEnumSetting("Speaking Bar Position")]
     public ConfigEntry<SpeakingBarPosition> SpeakingBarPosition { get; }
 
@@ -248,11 +243,6 @@ public class VoiceChatLocalSettings : LocalSettingsTab
             finally { _correcting = false; }
         };
 #endif
-
-        // Kept for config-file compatibility; no longer drives button placement.
-        VoiceIndicatorPosition = config.Bind("UI", "VoiceIndicatorPosition",
-            IndicatorPosition.BottomRight,
-            new ConfigDescription("(Legacy) Position of the mic/speaker HUD buttons"));
 
         SpeakingBarPosition = config.Bind("UI", "SpeakingBarPosition",
             VoiceChatPlugin.VoiceChat.SpeakingBarPosition.TopMiddle,
