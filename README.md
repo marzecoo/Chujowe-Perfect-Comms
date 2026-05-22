@@ -70,6 +70,8 @@ Perfect Comms is an unofficial mod. It is not affiliated with Innersloth, Among 
 ## Credits
 
 - Original repo: [FangkuaiYa/AmongUs-VoiceChat](https://github.com/FangkuaiYa/AmongUs-VoiceChat)
+- BetterCrewLink: [OhMyGuus/BetterCrewLink](https://github.com/OhMyGuus/BetterCrewLink)
+- Interstellar: [Dolly1016/Interstellar](https://github.com/Dolly1016/Interstellar)
 - Special thanks to [idkimneil](https://github.com/idkimneil) - the reason I made this.
 
 <p align="center">
