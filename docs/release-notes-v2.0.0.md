@@ -4,7 +4,7 @@ This is the biggest Perfect Comms update so far.
 
 Voice no longer rides on Among Us RPCs. Perfect Comms now uses real voice backends, with BetterCrewLink live voice as the main path and Interstellar as an alternate backend. The result is better voice reliability, better lobby support, cleaner directional audio, and much stronger host-synced room behavior.
 
-### Why You Should Update
+### Most Notable Changes
 
 - BetterCrewLink backend + lobby browser is now fully built in.
 - Interstellar backend is now fully supported.
