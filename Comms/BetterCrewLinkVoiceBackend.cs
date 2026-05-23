@@ -176,8 +176,14 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         if (Mute == mute) return;
         Mute = mute;
 #if WINDOWS
-        if (mute) StopMicrophone("muted");
-        else StartMicrophone("unmuted");
+        // Run mic start/stop on a background thread — WaveIn open/close blocks
+        // the calling thread for ~100-300ms which freezes the game if on main thread.
+        var muteCapture = mute;
+        Task.Run(() =>
+        {
+            if (muteCapture) StopMicrophone("muted");
+            else StartMicrophone("unmuted");
+        });
 #elif ANDROID
         if (mute) StopAndroidMicrophone("muted");
         else StartAndroidMicrophone("unmuted");
@@ -212,7 +218,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
 
 #if WINDOWS
         if (restartCapture && !Mute && _microphoneReady)
-            StartMicrophone("capture-options");
+            Task.Run(() => StartMicrophone("capture-options"));
 #elif ANDROID
         if (restartCapture && !Mute && _microphoneReady)
             StartAndroidMicrophone("capture-options");
@@ -228,12 +234,12 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
 #if WINDOWS
         if (Mute)
         {
-            StopMicrophone("set-muted");
+            Task.Run(() => StopMicrophone("set-muted"));
             VoiceDiagnostics.Log("bcl.mic", $"ready=false muted=true device=\"{_lastMicDeviceName}\" callbacks={Volatile.Read(ref _micCallbacks)} bytes={Volatile.Read(ref _micBytes)}");
             return;
         }
 
-        StartMicrophone("settings");
+        Task.Run(() => StartMicrophone("settings"));
 #elif ANDROID
         if (Mute)
         {

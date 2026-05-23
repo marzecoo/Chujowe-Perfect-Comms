@@ -46,7 +46,8 @@ public static class VoiceChatHudState
     // the cell but doesn't affect grid layout).
     private const float IconLocalScale  = 0.55f;   // sprite scale inside cell
     private const float LabelFontSize   = 1.15f;   // matches DraftCancelButton style
-    private const float LabelYOffset    = -0.52f;  // below cell centre
+    private const float LabelYOffset    = -0.15f;  // below cell centre (tightened)
+    private const float RingScale   = 0.48f;
     private const int   ButtonSortOrder = 32760;
 
     // ── Init ──────────────────────────────────────────────────────────────────
@@ -143,8 +144,8 @@ public static class VoiceChatHudState
         iconSr.sortingOrder     = ButtonSortOrder;
         go.transform.localScale = Vector3.one * IconLocalScale;
 
-        // Label child — styled like DraftCancelButton's text: white TMP placed
-        // just below the button cell in local space.
+        // Label child — styled like Among Us' Brooke font: black text with white
+        // outline, placed just below the button cell in local space.
         var labelGO = new GameObject("VCLabel");
         labelGO.transform.SetParent(go.transform, false);
         // Compensate local-scale so the label renders at a readable world size.
@@ -162,10 +163,16 @@ public static class VoiceChatHudState
         tmp.enableWordWrapping = false;
         tmp.sortingLayerID     = SortingLayer.NameToID(VCSorting.Layer);
         tmp.sortingOrder       = ButtonSortOrder + 1;
-        tmp.color              = Color.white;
-        // Outline for readability against any background (mirrors DraftCancelButton style).
-        tmp.outlineColor       = new Color(0f, 0f, 0f, 0.85f);
-        tmp.outlineWidth       = 0.18f;
+        tmp.characterSpacing = 2f;
+        tmp.color     = Color.black;
+        var brookeFont = hud.KillButton?.buttonLabelText?.font;
+        if (brookeFont != null) tmp.font = brookeFont;
+        var mat = Object.Instantiate(tmp.fontMaterial);
+        mat.EnableKeyword("OUTLINE_ON");
+        mat.SetColor(ShaderUtilities.ID_OutlineColor, Color.white);
+        mat.SetFloat(ShaderUtilities.ID_OutlineWidth, 0.15f);
+        mat.SetFloat(ShaderUtilities.ID_FaceDilate,   0.20f);
+        tmp.fontMaterial = mat;
         tmp.rectTransform.sizeDelta = new Vector2(1.8f, 0.45f);
 
         // Wire the click handler.
@@ -202,21 +209,36 @@ public static class VoiceChatHudState
                 {
                     sr.sprite = Sprites.MicOff;
                     sr.color  = new Color(1f, 0.65f, 0.15f);
+                    if(_micLabelTmp != null)
+                    _micLabelTmp.color = new Color(1f, 0.65f, 0.15f);
                 }
                 else if (_micMuted)
                 {
                     sr.sprite = Sprites.MicOff;
                     sr.color  = new Color(1f, 0.4f, 0.4f);
+                    if(_micLabelTmp != null)
+                    _micLabelTmp.color = new Color(1f, 0.4f, 0.4f);
+
                 }
                 else if (IsInImpostorRadioMode())
                 {
                     sr.sprite = Sprites.MicOn;
                     sr.color  = new Color(1f, 0.55f, 0.1f);
+                    if(_micLabelTmp != null)
+                    {
+                        _micLabelTmp.color     = new Color(1f, 0.55f, 0.1f);
+
+                    }
                 }
                 else
                 {
                     sr.sprite = Sprites.MicOn;
                     sr.color  = Color.white;
+                    if(_micLabelTmp != null)
+                    {
+                        _micLabelTmp.color = Color.black;
+                    }
+                    
                 }
             }
 
@@ -232,6 +254,10 @@ public static class VoiceChatHudState
             {
                 sr.sprite = _speakerMuted ? Sprites.SpkOff : Sprites.SpkOn;
                 sr.color  = _speakerMuted ? new Color(1f, 0.4f, 0.4f) : Color.white;
+                if (_spkLabelTmp != null)
+                    {
+                        _spkLabelTmp.color = _speakerMuted ? new Color(1f, 0.4f, 0.4f) : Color.black;
+        }
             }
 
             if (_spkLabelTmp != null)
@@ -259,7 +285,7 @@ public static class VoiceChatHudState
         return _micMuted ? "Unmute" : "Mute";
     }
 
-    private static string SpkLabelText() => _speakerMuted ? "On" : "Off";
+    private static string SpkLabelText() => _speakerMuted ? "Off" : "On";
 
     // ── Public actions ────────────────────────────────────────────────────────
     internal static void ApplyMicState()
