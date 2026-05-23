@@ -6,8 +6,8 @@ using MiraAPI.LocalSettings;
 using MiraAPI.LocalSettings.Attributes;
 using MiraAPI.Utilities.Assets;
 #if WINDOWS
-using NAudio.CoreAudioApi;
 using NAudio.Wave;
+using VoiceChatPlugin.Audio;
 #endif
 
 namespace VoiceChatPlugin.VoiceChat;
@@ -80,6 +80,10 @@ public class VoiceChatLocalSettings : LocalSettingsTab
         displayValue: true, formatString: "0.00")]
     public ConfigEntry<float> MicVolume { get; }
 
+    [LocalSliderSetting("Mic Sensitivity", min: 0.25f, max: 2f,
+        displayValue: true, formatString: "0.00")]
+    public ConfigEntry<float> MicSensitivity { get; }
+
     [LocalSliderSetting("Speaker Volume", min: 0.1f, max: 2f,
         displayValue: true, formatString: "0.00")]
     public ConfigEntry<float> MasterVolume { get; }
@@ -87,12 +91,8 @@ public class VoiceChatLocalSettings : LocalSettingsTab
     [LocalEnumSetting("Mic Mode")]
     public ConfigEntry<VoiceMicMode> MicMode { get; }
 
-    [LocalSliderSetting("Noise Gate", min: 0f, max: 0.10f,
-        displayValue: true, formatString: "0.000")]
     public ConfigEntry<float> NoiseGateThreshold { get; }
 
-    [LocalSliderSetting("VAD Threshold", min: 0.002f, max: 0.080f,
-        displayValue: true, formatString: "0.000")]
     public ConfigEntry<float> VadThreshold { get; }
 
     [LocalToggleSetting("Start Muted")]
@@ -122,10 +122,17 @@ public class VoiceChatLocalSettings : LocalSettingsTab
     [LocalToggleSetting("Debug Voice Stats")]
     public ConfigEntry<bool> DebugVoiceStats { get; }
 
+    public ConfigEntry<bool> SyntheticMicTone { get; }
+    [LocalToggleSetting("Mic Calibration Logs")]
+    public ConfigEntry<bool> MicCalibrationDiagnostics { get; }
+
     public ConfigEntry<string> PerPlayerVolumes { get; }
     public ConfigEntry<string> LobbyBrowserTitle { get; }
     public ConfigEntry<string> LobbyBrowserLanguage { get; }
+    public ConfigEntry<VoiceLobbyBrowserSource> LobbyBrowserSource { get; }
     public ConfigEntry<string> LobbyRegistryUrl { get; }
+    public ConfigEntry<string> BetterCrewLinkServerUrl { get; }
+    public ConfigEntry<string> InterstellarServerUrl { get; }
     public ConfigEntry<bool> UpdateNotificationsEnabled { get; }
     public ConfigEntry<string> UpdateNotificationUrl { get; }
     public ConfigEntry<bool> ShowTestUpdateNotifications { get; }
@@ -165,6 +172,10 @@ public class VoiceChatLocalSettings : LocalSettingsTab
             new ConfigDescription("Mic input volume",
                 new AcceptableValueRange<float>(0.1f, 2f)));
 
+        MicSensitivity = config.Bind("Audio", "MicSensitivity", 1f,
+            new ConfigDescription("How easily the mic is treated as speaking. Higher is more sensitive; lower ignores more room noise.",
+                new AcceptableValueRange<float>(0.25f, 2f)));
+
         MasterVolume = config.Bind("Audio", "MasterVolume", 1f,
             new ConfigDescription("Master output volume",
                 new AcceptableValueRange<float>(0.1f, 2f)));
@@ -172,12 +183,12 @@ public class VoiceChatLocalSettings : LocalSettingsTab
         MicMode = config.Bind("Audio", "MicMode", VoiceMicMode.OpenMic,
             new ConfigDescription("Microphone activation mode"));
 
-        NoiseGateThreshold = config.Bind("Audio", "NoiseGateThreshold", 0f,
-            new ConfigDescription("Input samples below this absolute level are muted before encode",
-                new AcceptableValueRange<float>(0f, 0.10f)));
+        NoiseGateThreshold = config.Bind("Audio.Advanced", "NoiseGateThreshold", 0.003f,
+            new ConfigDescription("Advanced base gate threshold. Effective value is divided by MicSensitivity.",
+                new AcceptableValueRange<float>(0.003f, 0.10f)));
 
-        VadThreshold = config.Bind("Audio", "VadThreshold", 0.012f,
-            new ConfigDescription("Speaking indicator activation threshold",
+        VadThreshold = config.Bind("Audio.Advanced", "VadThreshold", 0.004f,
+            new ConfigDescription("Advanced base speaking indicator threshold. Effective value is divided by MicSensitivity.",
                 new AcceptableValueRange<float>(0.002f, 0.080f)));
 
         StartMuted = config.Bind("Audio", "StartMuted", false,
@@ -250,7 +261,7 @@ public class VoiceChatLocalSettings : LocalSettingsTab
 
         MeetingSpeakingOverlay = config.Bind("UI", "MeetingSpeakingOverlay", true,
             new ConfigDescription(
-                "Show smooth coloured rings and card glows around talking players during meetings"));
+                "Show smooth coloured card glows around talking players during meetings"));
 
         // Kept for config-file compatibility; no longer drives button scale.
         OverlayScale = config.Bind("UI", "OverlayScale", 1f,
@@ -258,7 +269,12 @@ public class VoiceChatLocalSettings : LocalSettingsTab
                 new AcceptableValueRange<float>(0.75f, 1.50f)));
 
         DebugVoiceStats = config.Bind("Debug", "DebugVoiceStats", false,
-            new ConfigDescription("Log rolling voice network statistics"));
+            new ConfigDescription("Enable Perfect Comms diagnostic files and debug log output."));
+
+        SyntheticMicTone = config.Bind("Debug.Advanced", "SyntheticMicTone", false,
+            new ConfigDescription("Transmit a quiet generated 48 kHz mono test tone through the active voice backend instead of relying on physical microphone audio."));
+        MicCalibrationDiagnostics = config.Bind("Debug", "MicCalibrationDiagnostics", false,
+            new ConfigDescription("Log live microphone peak/RMS/gate calibration diagnostics for BetterCrewLink."));
 
         LobbyBrowserTitle = config.Bind("Lobby Browser", "Title", "Perfect Comms",
             new ConfigDescription("Title shown in the voice lobby browser"));
@@ -266,9 +282,21 @@ public class VoiceChatLocalSettings : LocalSettingsTab
         LobbyBrowserLanguage = config.Bind("Lobby Browser", "Language", "English",
             new ConfigDescription("Language shown in the voice lobby browser"));
 
+        LobbyBrowserSource = config.Bind("Lobby Browser", "Source",
+            VoiceLobbyBrowserSource.BetterCrewLink,
+            new ConfigDescription("Main-menu browser view source only. Hosted lobby publishing uses the in-game Lobby Browser Backend option."));
+
         LobbyRegistryUrl = config.Bind("Lobby Browser", "RegistryUrl",
             "https://perfect-comms-lobbies.edgetel.workers.dev",
             new ConfigDescription("Voice lobby registry endpoint"));
+
+        BetterCrewLinkServerUrl = config.Bind("Voice Server", "BetterCrewLinkServerUrl",
+            VoiceEndpointSettings.DefaultBetterCrewLinkServerUrl,
+            new ConfigDescription("BetterCrewLink Socket.IO signaling server URL."));
+
+        InterstellarServerUrl = config.Bind("Voice Server", "InterstellarServerUrl",
+            VoiceEndpointSettings.DefaultInterstellarServerUrl,
+            new ConfigDescription("Interstellar voice server URL. FangkuaiYa's public server is the default fallback."));
 
         UpdateNotificationsEnabled = config.Bind("Updates", "NotificationsEnabled", true,
             new ConfigDescription("Show Perfect Comms update notifications on the main menu"));
@@ -282,6 +310,8 @@ public class VoiceChatLocalSettings : LocalSettingsTab
 
         PerPlayerVolumes = config.Bind("Audio", "PerPlayerVolumes", "",
             "Saved per-player voice volumes keyed by player name");
+
+        VoiceDiagnostics.SetEnabled(DebugVoiceStats.Value);
     }
 
     private static T ResolveDeviceIndex<T>(string savedName, string[] names, T fallback)
@@ -330,10 +360,12 @@ public class VoiceChatLocalSettings : LocalSettingsTab
         var spks = new List<string> { "Default" };
         try
         {
-            using var enumerator = new MMDeviceEnumerator();
-            foreach (var dev in enumerator.EnumerateAudioEndPoints(DataFlow.Render, DeviceState.Active))
+            int count = WinMmOutputDevices.DeviceCount;
+            for (int i = 0; i < count; i++)
             {
-                string n = dev.FriendlyName?.Trim() ?? "";
+                string n = WinMmOutputDevices.GetProductName(i).Trim();
+                if (string.Equals(n, "Microsoft Sound Mapper", StringComparison.OrdinalIgnoreCase))
+                    continue;
                 if (!string.IsNullOrEmpty(n))
                     spks.Add(n);
             }
@@ -349,6 +381,10 @@ public class VoiceChatLocalSettings : LocalSettingsTab
         {
             VoiceChatRoom.Current?.SetMicVolume(MicVolume.Value);
         }
+        else if (configEntry == MicSensitivity)
+        {
+            VoiceChatRoom.Current?.RefreshLocalAudioSettings();
+        }
         else if (configEntry == MasterVolume)
         {
             VoiceChatRoom.Current?.SetMasterVolume(MasterVolume.Value);
@@ -357,7 +393,14 @@ public class VoiceChatLocalSettings : LocalSettingsTab
         {
             VoiceChatHudState.ApplyMicState();
         }
-        else if (configEntry == NoiseGateThreshold || configEntry == VadThreshold)
+        else if (configEntry == DebugVoiceStats)
+        {
+            VoiceDiagnostics.SetEnabled(DebugVoiceStats.Value);
+            VoiceChatRoom.Current?.RefreshLocalAudioSettings();
+        }
+        else if (configEntry == NoiseGateThreshold || configEntry == VadThreshold ||
+                 configEntry == SyntheticMicTone ||
+                 configEntry == MicCalibrationDiagnostics)
         {
             VoiceChatRoom.Current?.RefreshLocalAudioSettings();
         }
@@ -386,9 +429,10 @@ public class VoiceChatLocalSettings : LocalSettingsTab
         {
             VoiceChatHudState.SetSpeakerMuted(StartDeafened.Value);
         }
-        // VoiceIndicatorPosition and OverlayScale are kept in config for
-        // backwards compatibility but no longer drive any runtime behaviour;
-        // button layout is managed by the TOU-Mira GridArrange.
+        else if (configEntry == BetterCrewLinkServerUrl || configEntry == InterstellarServerUrl)
+        {
+            VoiceChatRoom.Current?.Rejoin();
+        }
     }
 }
 
@@ -415,7 +459,7 @@ public static class DeviceLabelPatch
                     System.Reflection.BindingFlags.Instance);
                 if (m != null && m.ReturnType == typeof(string))
                 {
-                    VoiceChatPluginMain.Logger.LogInfo(
+                    VoiceDiagnostics.DebugInfo(
                         $"[VC] DeviceLabelPatch targeting {t.Name}.{name}");
                     return m;
                 }
@@ -429,14 +473,14 @@ public static class DeviceLabelPatch
             {
                 if (m.ReturnType == typeof(string) && m.GetParameters().Length == 0)
                 {
-                    VoiceChatPluginMain.Logger.LogInfo(
+                    VoiceDiagnostics.DebugInfo(
                         $"[VC] DeviceLabelPatch fallback targeting {t.Name}.{m.Name}");
                     return m;
                 }
             }
         }
 
-        VoiceChatPluginMain.Logger.LogWarning(
+        VoiceDiagnostics.DebugWarning(
             "[VC] DeviceLabelPatch: could not find LocalEnumSetting display method.");
         return null;
     }

@@ -1,0 +1,8 @@
+bin/
+obj/
+*.user
+*.lock.json
+.vs/
+.idea/
+.DS_Store
+Libs/*.bak.*
