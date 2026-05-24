@@ -110,10 +110,10 @@
 		<EmbeddedResource Include="$(NuGetPackageRoot)system.diagnostics.diagnosticsource\9.0.0\lib\netstandard2.0\System.Diagnostics.DiagnosticSource.dll">
 			<LogicalName>Lib.System.Diagnostics.DiagnosticSource.dll</LogicalName>
 		</EmbeddedResource>
-		<EmbeddedResource Include="$(NuGetPackageRoot)system.text.encodings.web\7.0.0\lib\net6.0\System.Text.Encodings.Web.dll">
+		<EmbeddedResource Include="$(NuGetPackageRoot)system.text.encodings.web\8.0.0\lib\net6.0\System.Text.Encodings.Web.dll">
 			<LogicalName>Lib.System.Text.Encodings.Web.dll</LogicalName>
 		</EmbeddedResource>
-		<EmbeddedResource Include="$(NuGetPackageRoot)system.text.json\7.0.2\lib\net6.0\System.Text.Json.dll">
+		<EmbeddedResource Include="$(NuGetPackageRoot)system.text.json\8.0.4\lib\net6.0\System.Text.Json.dll">
 			<LogicalName>Lib.System.Text.Json.dll</LogicalName>
 		</EmbeddedResource>
 		<EmbeddedResource Include="$(NuGetPackageRoot)socketioclient\3.1.2\lib\net6.0\SocketIOClient.dll">

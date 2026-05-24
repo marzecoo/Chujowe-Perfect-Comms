@@ -27,10 +27,6 @@ public enum SpkDeviceEnum
     Device9   =  9, Device10  = 10
 }
 
-// IndicatorPosition and SpeakingBarPosition are kept so existing config entries
-// and PingTrackerPatch references continue to compile. The button layout itself
-// is now handled by the TOU-Mira GridArrange; IndicatorPosition is no longer
-// applied to anything at runtime.
 public enum IndicatorPosition
 {
     TopLeft     = 0,
@@ -108,6 +104,9 @@ public class VoiceChatLocalSettings : LocalSettingsTab
     [LocalEnumSetting("Speaker Device")]
     public ConfigEntry<SpkDeviceEnum> SpeakerDeviceIndex { get; }
 #endif
+
+    [LocalEnumSetting("Indicator Position")]
+    public ConfigEntry<IndicatorPosition> VoiceIndicatorPosition { get; }
 
     [LocalEnumSetting("Speaking Bar Position")]
     public ConfigEntry<SpeakingBarPosition> SpeakingBarPosition { get; }
@@ -255,17 +254,21 @@ public class VoiceChatLocalSettings : LocalSettingsTab
         };
 #endif
 
+        VoiceIndicatorPosition = config.Bind("UI", "VoiceIndicatorPosition",
+            IndicatorPosition.BottomRight,
+            new ConfigDescription("Position of the mic/speaker HUD buttons"));
+
         SpeakingBarPosition = config.Bind("UI", "SpeakingBarPosition",
             VoiceChatPlugin.VoiceChat.SpeakingBarPosition.TopMiddle,
             new ConfigDescription("Position of the speaking bar"));
 
+        // Meeting overlay — on by default.
         MeetingSpeakingOverlay = config.Bind("UI", "MeetingSpeakingOverlay", true,
             new ConfigDescription(
                 "Show smooth coloured card glows around talking players during meetings"));
 
-        // Kept for config-file compatibility; no longer drives button scale.
         OverlayScale = config.Bind("UI", "OverlayScale", 1f,
-            new ConfigDescription("(Legacy) Scale for voice HUD buttons",
+            new ConfigDescription("Scale for voice HUD buttons",
                 new AcceptableValueRange<float>(0.75f, 1.50f)));
 
         DebugVoiceStats = config.Bind("Debug", "DebugVoiceStats", false,
@@ -417,9 +420,17 @@ public class VoiceChatLocalSettings : LocalSettingsTab
             VoiceChatRoom.Current?.SetSpeaker(SpeakerDevice);
         }
 #endif
+        else if (configEntry == VoiceIndicatorPosition)
+        {
+            VoiceChatHudState.ApplyIndicatorPosition(VoiceIndicatorPosition.Value);
+        }
         else if (configEntry == SpeakingBarPosition)
         {
             PingTrackerPatch.ApplySpeakingBarPosition(SpeakingBarPosition.Value);
+        }
+        else if (configEntry == OverlayScale)
+        {
+            VoiceChatHudState.ApplyOverlayScale(OverlayScale.Value);
         }
         else if (configEntry == StartMuted)
         {
