@@ -53,14 +53,6 @@ public enum VoiceMicMode
 
 public class VoiceChatLocalSettings : LocalSettingsTab
 {
-    private const IndicatorPosition DefaultVoiceIndicatorPosition = IndicatorPosition.BottomRight;
-    private const VoiceChatPlugin.VoiceChat.SpeakingBarPosition DefaultSpeakingBarPosition =
-        VoiceChatPlugin.VoiceChat.SpeakingBarPosition.TopMiddle;
-    private const bool DefaultDebugVoiceStats = false;
-    private const bool DefaultSyntheticMicTone = false;
-    private const bool DefaultMicCalibrationDiagnostics = false;
-    private const bool DefaultShowTestUpdateNotifications = false;
-
     public static LoadableResourceAsset MicIcon { get; } = new("VoiceChatPlugin.Resources.miclogo.png");
 
     public override string TabName => "Perfect Comms";
@@ -263,11 +255,11 @@ public class VoiceChatLocalSettings : LocalSettingsTab
 #endif
 
         VoiceIndicatorPosition = config.Bind("UI", "VoiceIndicatorPosition",
-            DefaultVoiceIndicatorPosition,
+            IndicatorPosition.BottomRight,
             new ConfigDescription("Position of the mic/speaker HUD buttons"));
 
         SpeakingBarPosition = config.Bind("UI", "SpeakingBarPosition",
-            DefaultSpeakingBarPosition,
+            VoiceChatPlugin.VoiceChat.SpeakingBarPosition.TopMiddle,
             new ConfigDescription("Position of the speaking bar"));
 
         // Meeting overlay — on by default.
@@ -279,12 +271,12 @@ public class VoiceChatLocalSettings : LocalSettingsTab
             new ConfigDescription("Scale for voice HUD buttons",
                 new AcceptableValueRange<float>(0.75f, 1.50f)));
 
-        DebugVoiceStats = config.Bind("Debug", "DebugVoiceStats", DefaultDebugVoiceStats,
+        DebugVoiceStats = config.Bind("Debug", "DebugVoiceStats", false,
             new ConfigDescription("Enable Perfect Comms diagnostic files and debug log output."));
 
-        SyntheticMicTone = config.Bind("Debug.Advanced", "SyntheticMicTone", DefaultSyntheticMicTone,
+        SyntheticMicTone = config.Bind("Debug.Advanced", "SyntheticMicTone", false,
             new ConfigDescription("Transmit a quiet generated 48 kHz mono test tone through the active voice backend instead of relying on physical microphone audio."));
-        MicCalibrationDiagnostics = config.Bind("Debug", "MicCalibrationDiagnostics", DefaultMicCalibrationDiagnostics,
+        MicCalibrationDiagnostics = config.Bind("Debug", "MicCalibrationDiagnostics", false,
             new ConfigDescription("Log live microphone peak/RMS/gate calibration diagnostics for BetterCrewLink."));
 
         LobbyBrowserTitle = config.Bind("Lobby Browser", "Title", "Perfect Comms",
@@ -316,7 +308,7 @@ public class VoiceChatLocalSettings : LocalSettingsTab
             "https://api.github.com/repos/artriy/Perfect-Comms/releases/latest",
             new ConfigDescription("Perfect Comms GitHub latest-release API endpoint"));
 
-        ShowTestUpdateNotifications = config.Bind("Updates", "ShowTestNotifications", DefaultShowTestUpdateNotifications,
+        ShowTestUpdateNotifications = config.Bind("Updates", "ShowTestNotifications", false,
             new ConfigDescription("Reserved for local update notification testing"));
 
         PerPlayerVolumes = config.Bind("Audio", "PerPlayerVolumes", "",
