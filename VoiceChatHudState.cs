@@ -103,8 +103,8 @@ public static class VoiceChatHudState
     private static bool _pushToTalkHeld;
     private static bool _speakerMuted;
     private static float _overlayScale = 1f;
-    public static bool IsMuted           => _micMuted;
-    public static bool IsImpostorRadio   => _impostorHeld && CanUseImpostorRadio();
+    public static bool IsMuted           => IsManualMuteActive();
+    public static bool IsImpostorRadio   => IsInImpostorRadioMode();
     public static bool IsSpeakerMuted    => _speakerMuted;
 
     internal static void Init()
@@ -122,7 +122,7 @@ public static class VoiceChatHudState
         {
             ApplyIndicatorPosition(settings.VoiceIndicatorPosition.Value);
             ApplyOverlayScale(settings.OverlayScale.Value);
-            _micMuted = settings.StartMuted.Value;
+            _micMuted = settings.MicMode.Value == VoiceMicMode.PushToTalk ? false : settings.StartMuted.Value;
             _speakerMuted = settings.StartDeafened.Value;
         }
     }
@@ -145,11 +145,15 @@ public static class VoiceChatHudState
     {
         var settings = LocalSettingsTabSingleton<VoiceChatLocalSettings>.Instance;
         bool radioTransmit = IsInImpostorRadioMode();
-        bool pushToTalkMuted = settings?.MicMode.Value == VoiceMicMode.PushToTalk &&
+        bool pushToTalkMode = settings?.MicMode.Value == VoiceMicMode.PushToTalk;
+        if (pushToTalkMode && _micMuted)
+            _micMuted = false;
+        bool pushToTalkMuted = pushToTalkMode &&
                                !_pushToTalkHeld &&
                                !radioTransmit;
+        bool manualMuted = IsManualMuteActive();
         bool roleMuted = VoiceRoleMuteState.IsLocalMeetingVoiceBlocked();
-        VoiceChatRoom.Current?.SetMute(_micMuted || pushToTalkMuted || roleMuted);
+        VoiceChatRoom.Current?.SetMute(manualMuted || pushToTalkMuted || roleMuted);
     }
 
     internal static void ApplySpeakerState()
@@ -166,16 +170,28 @@ public static class VoiceChatHudState
 
     internal static void TrySyncHostRoomSettings() { }
 
+    internal static bool IsPushToTalkMode()
+        => LocalSettingsTabSingleton<VoiceChatLocalSettings>.Instance?.MicMode.Value == VoiceMicMode.PushToTalk;
+
+    private static bool IsManualMuteActive()
+        => _micMuted && !IsPushToTalkMode();
+
     internal static void ToggleMutePublic()
     {
+        if (IsPushToTalkMode())
+        {
+            SetMuted(false);
+            return;
+        }
+
         SetMuted(!_micMuted);
     }
 
     internal static void SetMuted(bool muted)
     {
-        _micMuted = muted;
+        _micMuted = muted && !IsPushToTalkMode();
         ApplyMicState();
-        if (muted)
+        if (_micMuted)
             MeetingSpeakingIndicatorPatch.ClearLocalIndicator();
         RefreshButtonVisuals();
     }
@@ -204,7 +220,10 @@ public static class VoiceChatHudState
     }
 
     internal static bool IsInImpostorRadioMode()
-        => _impostorHeld && CanUseImpostorRadio() && !_micMuted;
+        => _impostorHeld &&
+           CanUseImpostorRadio() &&
+           !IsManualMuteActive() &&
+           !VoiceRoleMuteState.IsLocalMeetingVoiceBlocked();
 
     internal static void UpdatePushToTalkHeld(bool held)
     {
@@ -399,7 +418,7 @@ public static class VoiceChatHudState
                     sr.sprite = Sprites.MicOff;
                     sr.color  = new Color(1f, 0.65f, 0.15f);
                 }
-                else if (_micMuted)
+                else if (IsManualMuteActive())
                 {
                     sr.sprite = Sprites.MicOff;
                     sr.color  = new Color(1f, 0.4f, 0.4f);
@@ -469,19 +488,23 @@ public static class VoiceChatHudState
     {
         if (_micTooltip == null || _micTooltipTmp == null || _micButtonObj == null) return;
 
-        string status = _micMuted ? "Muted"
-            : IsInImpostorRadioMode() ? "Impostor Radio (held)"
-            : "Active";
-
         var tab = LocalSettingsTabSingleton<VoiceChatLocalSettings>.Instance;
+        bool pushToTalkMode = tab?.MicMode.Value == VoiceMicMode.PushToTalk;
+        string status = VoiceRoleMuteState.TryGetLocalMeetingVoiceBlockReason(out string roleMuteReason) ? roleMuteReason
+            : IsManualMuteActive() ? "Muted"
+            : IsInImpostorRadioMode() ? "Impostor Radio (held)"
+            : pushToTalkMode ? "Push To Talk"
+            : "Active";
         string muteKey  = VoiceChatKeybinds.ToggleMute.CurrentKey.ToString();
         string radioKey = VoiceChatKeybinds.ImpostorRadio.CurrentKey.ToString();
 
         _micTooltipTmp.text =
             "<b>Microphone</b>\n" +
             $"Status: {status}\n" +
-            $"Volume: {(int)(tab.MicVolume.Value * 100f)}%\n" +
-            $"Mute: {muteKey}  |  Imp. Radio: {radioKey} (hold)";
+            $"Volume: {(int)((tab?.MicVolume.Value ?? 1f) * 100f)}%\n" +
+            (pushToTalkMode
+                ? $"Push To Talk active  |  Imp. Radio: {radioKey} (hold)"
+                : $"Mute: {muteKey}  |  Imp. Radio: {radioKey} (hold)");
 
         PositionNear(_micTooltip, _micButtonObj);
         _micTooltip.SetActive(true);
@@ -518,6 +541,9 @@ public static class VoiceChatHudState
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
+    internal static bool CanUseImpostorRadioInput()
+        => CanUseImpostorRadio() && !VoiceRoleMuteState.IsLocalMeetingVoiceBlocked();
+
     private static bool CanUseImpostorRadio()
         => PlayerControl.LocalPlayer != null
         && PlayerControl.LocalPlayer.Data?.Role?.IsImpostor == true

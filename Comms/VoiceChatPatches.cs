@@ -40,11 +40,12 @@ public static class VoiceChatPatches
         bool chatOpen = IsChatOpenOrOpening();
         var player = ReInput.players.GetPlayer(0);
 
+        bool canUseRadio = VoiceChatHudState.CanUseImpostorRadioInput();
         var action = VoiceChatKeybinds.ImpostorRadio.RewiredInputAction;
         bool held = false;
         bool down = false;
         bool up = false;
-        if (action != null)
+        if (action != null && canUseRadio)
         {
             held = ApplyChatHoldGate(
                 player.GetButton(action.id),
@@ -55,12 +56,17 @@ public static class VoiceChatPatches
                 out down,
                 out up);
         }
+        else
+        {
+            _radioChatGate.Reset();
+        }
 
         VoiceChatHudState.UpdateImpostorRadioHold(held, down, up);
 
         var pttAction = VoiceChatKeybinds.PushToTalk.RewiredInputAction;
-        if (pttAction == null)
+        if (pttAction == null || !VoiceChatHudState.IsPushToTalkMode())
         {
+            _pushToTalkChatGate.Reset();
             VoiceChatHudState.UpdatePushToTalkHeld(false);
             return;
         }
@@ -144,9 +150,11 @@ public static class VoiceChatPatches
         if (chat.freeChatField.textArea != textBox)
             return false;
 
-        if (TryCaptureHeldChatKey(VoiceChatKeybinds.PushToTalk, textBox, ref _pushToTalkChatGate))
+        if (VoiceChatHudState.IsPushToTalkMode() &&
+            TryCaptureHeldChatKey(VoiceChatKeybinds.PushToTalk, textBox, ref _pushToTalkChatGate))
             return true;
-        return TryCaptureHeldChatKey(VoiceChatKeybinds.ImpostorRadio, textBox, ref _radioChatGate);
+        return VoiceChatHudState.CanUseImpostorRadioInput() &&
+               TryCaptureHeldChatKey(VoiceChatKeybinds.ImpostorRadio, textBox, ref _radioChatGate);
     }
 
     private static bool TryCaptureHeldChatKey(MiraKeybind keybind, TextBoxTMP textBox, ref ChatHoldGate gate)
