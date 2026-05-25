@@ -7,6 +7,8 @@ using MiraAPI.LocalSettings.Attributes;
 using MiraAPI.Utilities.Assets;
 #if WINDOWS
 using NAudio.Wave;
+#endif
+#if WINDOWS || MACOS
 using VoiceChatPlugin.Audio;
 #endif
 
@@ -69,12 +71,16 @@ public class VoiceChatLocalSettings : LocalSettingsTab
     };
 
     private static string[] _micDeviceNames = Array.Empty<string>();
-#if WINDOWS
+#if MACOS
+    private static string[] _micDeviceSelections = Array.Empty<string>();
+    private static string[] _spkDeviceSelections = Array.Empty<string>();
+#endif
+#if WINDOWS || MACOS
     private static string[] _spkDeviceNames = Array.Empty<string>();
 #endif
 
     public static string[] MicDeviceNames => _micDeviceNames;
-#if WINDOWS
+#if WINDOWS || MACOS
     public static string[] SpkDeviceNames => _spkDeviceNames;
 #endif
 
@@ -119,7 +125,7 @@ public class VoiceChatLocalSettings : LocalSettingsTab
     [LocalEnumSetting("Microphone Device")]
     public ConfigEntry<MicDeviceEnum> MicrophoneDeviceIndex { get; }
 
-#if WINDOWS
+#if WINDOWS || MACOS
     [LocalEnumSetting("Speaker Device")]
     public ConfigEntry<SpkDeviceEnum> SpeakerDeviceIndex { get; }
 #endif
@@ -167,7 +173,7 @@ public class VoiceChatLocalSettings : LocalSettingsTab
     public ConfigEntry<bool> ShowTestUpdateNotifications { get; }
 
     private readonly ConfigEntry<string> _savedMicDeviceName;
-#if WINDOWS
+#if WINDOWS || MACOS
     private readonly ConfigEntry<string> _savedSpkDeviceName;
 #endif
 
@@ -178,17 +184,25 @@ public class VoiceChatLocalSettings : LocalSettingsTab
         get
         {
             int idx = (int)MicrophoneDeviceIndex.Value;
+#if MACOS
+            return idx > 0 && idx < _micDeviceSelections.Length ? _micDeviceSelections[idx] : "";
+#else
             return idx > 0 && idx < _micDeviceNames.Length ? _micDeviceNames[idx] : "";
+#endif
         }
     }
 
-#if WINDOWS
+#if WINDOWS || MACOS
     public string SpeakerDevice
     {
         get
         {
             int idx = (int)SpeakerDeviceIndex.Value;
+#if MACOS
+            return idx > 0 && idx < _spkDeviceSelections.Length ? _spkDeviceSelections[idx] : "";
+#else
             return idx > 0 && idx < _spkDeviceNames.Length ? _spkDeviceNames[idx] : "";
+#endif
         }
     }
 #endif
@@ -246,7 +260,7 @@ public class VoiceChatLocalSettings : LocalSettingsTab
         _savedMicDeviceName = config.Bind("Audio", "MicDeviceName", "",
             "Saved microphone device name (used to restore selection across sessions)");
 
-#if WINDOWS
+#if WINDOWS || MACOS
         _savedSpkDeviceName = config.Bind("Audio", "SpkDeviceName", "",
             "Saved speaker device name (used to restore selection across sessions)");
 #endif
@@ -275,7 +289,7 @@ public class VoiceChatLocalSettings : LocalSettingsTab
             finally { _correcting = false; }
         };
 
-#if WINDOWS
+#if WINDOWS || MACOS
         SpeakerDeviceIndex = config.Bind("Audio", "Speaker",
             SpkDeviceEnum.Default,
             new ConfigDescription("Selected speaker device"));
@@ -382,13 +396,28 @@ public class VoiceChatLocalSettings : LocalSettingsTab
         {
             for (int i = 1; i < names.Length; i++)
             {
-                if (string.Equals(names[i], savedName, StringComparison.OrdinalIgnoreCase))
+                if (DeviceEntryMatches(savedName, names, i))
                     return (T)(object)i;
             }
             return default;
         }
         int idx = (int)(object)fallback;
         return (idx >= 0 && idx < names.Length) ? fallback : default;
+    }
+
+    private static bool DeviceEntryMatches(string savedName, string[] names, int index)
+    {
+        if (string.Equals(names[index], savedName, StringComparison.OrdinalIgnoreCase))
+            return true;
+#if MACOS
+        if (ReferenceEquals(names, _micDeviceNames) && index < _micDeviceSelections.Length &&
+            string.Equals(_micDeviceSelections[index], savedName, StringComparison.Ordinal))
+            return true;
+        if (ReferenceEquals(names, _spkDeviceNames) && index < _spkDeviceSelections.Length &&
+            string.Equals(_spkDeviceSelections[index], savedName, StringComparison.Ordinal))
+            return true;
+#endif
+        return false;
     }
 
     public static void RefreshDeviceLists()
@@ -412,6 +441,19 @@ public class VoiceChatLocalSettings : LocalSettingsTab
                 if (!string.IsNullOrEmpty(n))
                     mics.Add(n);
             }
+#elif MACOS
+            var micSelections = new List<string> { MacOsAudioDeviceSelection.Default };
+            MacOsUnityMicrophonePermissionProbe.LogPermissionProbe();
+            foreach (var dev in MacOsAudioBridge.EnumerateInputs())
+            {
+                string n = dev.DisplayName.Trim();
+                if (!string.IsNullOrEmpty(n))
+                {
+                    mics.Add(n);
+                    micSelections.Add(MacOsAudioDeviceSelection.Encode(dev));
+                }
+            }
+            _micDeviceSelections = micSelections.ToArray();
 #endif
         }
         catch { }
@@ -433,6 +475,24 @@ public class VoiceChatLocalSettings : LocalSettingsTab
         }
         catch { }
         _spkDeviceNames = spks.ToArray();
+#elif MACOS
+        var spks = new List<string> { "Default" };
+        var spkSelections = new List<string> { MacOsAudioDeviceSelection.Default };
+        try
+        {
+            foreach (var dev in MacOsAudioBridge.EnumerateOutputs())
+            {
+                string n = dev.DisplayName.Trim();
+                if (!string.IsNullOrEmpty(n))
+                {
+                    spks.Add(n);
+                    spkSelections.Add(MacOsAudioDeviceSelection.Encode(dev));
+                }
+            }
+        }
+        catch { }
+        _spkDeviceNames = spks.ToArray();
+        _spkDeviceSelections = spkSelections.ToArray();
 #endif
     }
 
@@ -472,7 +532,7 @@ public class VoiceChatLocalSettings : LocalSettingsTab
             VoiceChatRoom.Current?.SetMicrophone(MicrophoneDevice);
             VoiceChatRoom.Current?.SetMicVolume(MicVolume.Value);
         }
-#if WINDOWS
+#if WINDOWS || MACOS
         else if (configEntry == SpeakerDeviceIndex)
         {
             _savedSpkDeviceName.Value = SpeakerDevice;
@@ -608,7 +668,7 @@ public static class DeviceLabelPatch
                          : idx < names.Length ? names[idx]
                          : "Default";
             }
-#if WINDOWS
+#if WINDOWS || MACOS
             else if (entry.SettingType == typeof(SpkDeviceEnum))
             {
                 var names = VoiceChatLocalSettings.SpkDeviceNames;

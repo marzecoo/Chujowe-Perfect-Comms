@@ -110,6 +110,11 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
     private AndroidMicrophone? _androidMicrophone;
     private AndroidSampleProviderSpeaker? _androidSpeaker;
 #endif
+#if MACOS
+    private MacOsFullDuplexAudioEngine? _macAudioEngine;
+    private bool _macSpeakerConfigured;
+    private string _lastSpeakerDeviceName = string.Empty;
+#endif
     private OpusEncoder _encoder = CreateEncoder();
     private Timer? _syntheticMicTimer;
     private string _lastMicDeviceName = string.Empty;
@@ -185,6 +190,9 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
 #elif ANDROID
         if (mute) StopAndroidMicrophone("muted");
         else StartAndroidMicrophone("unmuted");
+#elif MACOS
+        if (!mute)
+            RestartMacAudio("unmuted");
 #endif
         VoiceDiagnostics.Log("bcl.mute", $"mute={Mute} micReady={_microphoneReady} callbacks={Volatile.Read(ref _micCallbacks)} bytes={Volatile.Read(ref _micBytes)}");
     }
@@ -222,6 +230,12 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
 #elif ANDROID
         if (restartCapture && !Mute && _microphoneReady)
             StartAndroidMicrophone("capture-options");
+#elif MACOS
+        _micPreprocessor.SetNoiseSuppressionEnabled(false);
+        if (restartCapture && _microphoneReady)
+            RestartMacAudio("capture-options");
+        if (options.NoiseSuppressionEnabled)
+            VoiceDiagnostics.Log("mac.rnnoise", "state=disabled reason=macos-native-library-not-shipped windowsRnnoise=false");
 #endif
         VoiceDiagnostics.Log("bcl.capture-options",
             $"capture={DescribeCaptureMode()} syntheticTone={options.SyntheticMicToneEnabled} noiseSuppression={options.NoiseSuppressionEnabled} calibration={options.MicCalibrationDiagnostics} sensitivity={options.MicSensitivity:0.00}");
@@ -249,10 +263,94 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         }
 
         StartAndroidMicrophone("settings");
+#elif MACOS
+        RestartMacAudio("settings");
 #else
         _microphoneReady = false;
 #endif
     }
+
+#if MACOS
+    private void RestartMacAudio(string reason)
+    {
+        if (_disposed) return;
+        if (!_macSpeakerConfigured)
+        {
+            VoiceDiagnostics.Log("mac.bcl.audio", $"ready=false stage=waiting-for-speaker reason={reason} input=\"{MacOsAudioDeviceSelection.Describe(_lastMicDeviceName)}\"");
+            return;
+        }
+
+        try
+        {
+            StopSyntheticMicTone();
+            _macAudioEngine ??= new MacOsFullDuplexAudioEngine("BetterCrewLink");
+            var result = _macAudioEngine.Start(
+                new MacOsVoiceAudioConfig(
+                    "BetterCrewLink",
+                    _lastMicDeviceName,
+                    _lastSpeakerDeviceName,
+                    AudioHelpers.ClockRate,
+                    AudioHelpers.Channels,
+                    2),
+                OnMacMicrophoneData,
+                ReadMacPlayback);
+
+            _microphoneReady = result.Success;
+            _speakerReady = result.Success;
+            if (result.Success)
+            {
+                VoiceDiagnostics.Log("mac.bcl.audio",
+                    $"ready=true reason={reason} sampleRate={AudioHelpers.ClockRate} inputChannels={AudioHelpers.Channels} outputChannels=2 input=\"{MacOsAudioDeviceSelection.Describe(_lastMicDeviceName)}\" output=\"{MacOsAudioDeviceSelection.Describe(_lastSpeakerDeviceName)}\" nativeBackend=CoreAudio");
+            }
+            else
+            {
+                VoiceDiagnostics.Log("mac.bcl.audio",
+                    $"ready=false reason={reason} stage={result.Stage} code={result.Code} error=\"{result.Message}\"");
+            }
+        }
+        catch (Exception ex)
+        {
+            StopMacAudio($"failed:{reason}");
+            VoiceDiagnostics.Log("mac.bcl.audio", $"ready=false reason={reason} stage=managed-start error=\"{ex.Message}\"");
+        }
+    }
+
+    private void StopMacAudio(string reason)
+    {
+        var hadAudio = _microphoneReady || _speakerReady || _macAudioEngine != null;
+        try { _macAudioEngine?.Stop(reason); } catch { }
+        _microphoneReady = false;
+        _speakerReady = false;
+        lock (_captureFrameSync)
+            _captureFrameSamples = 0;
+        _micPreprocessor.Reset();
+        _localLevel = 0f;
+        _localSpeaking = false;
+        if (hadAudio)
+            VoiceDiagnostics.Log("mac.bcl.audio", $"ready=false reason={reason} callbacks={Volatile.Read(ref _micCallbacks)} bytes={Volatile.Read(ref _micBytes)} samples={Volatile.Read(ref _micSamples)}");
+    }
+
+    private void OnMacMicrophoneData(float[] buffer, int samples)
+    {
+        if (_disposed || buffer.Length == 0) return;
+        Interlocked.Increment(ref _micCallbacks);
+        samples = Math.Min(Math.Max(samples, 0), buffer.Length);
+        Interlocked.Add(ref _micBytes, samples * sizeof(float));
+        if (Mute)
+        {
+            Interlocked.Increment(ref _micMutedDrops);
+            return;
+        }
+        if (samples <= 0) return;
+        for (var i = 0; i < samples; i++)
+            buffer[i] = Math.Clamp(buffer[i] * _micVolume, -1f, 1f);
+        Interlocked.Add(ref _micSamples, samples);
+        ProcessMicrophoneCaptureSamples(buffer, samples);
+    }
+
+    private int ReadMacPlayback(float[] buffer, int count)
+        => _playbackProvider.Read(buffer, 0, count);
+#endif
 
 #if WINDOWS
     private void QueueMicrophoneTransition(bool shouldRun, string reason)
@@ -646,6 +744,10 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             _speakerReady = false;
             VoiceDiagnostics.Log("bcl.speaker", $"ready=false device=\"{deviceName}\" error=\"{ex.Message}\"");
         }
+#elif MACOS
+        _lastSpeakerDeviceName = deviceName ?? string.Empty;
+        _macSpeakerConfigured = true;
+        RestartMacAudio("speaker");
 #else
         _speakerReady = false;
 #endif
@@ -825,6 +927,10 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         StopAndroidMicrophone("dispose");
         try { _androidSpeaker?.Dispose(); } catch { }
         _androidSpeaker = null;
+#elif MACOS
+        StopMacAudio("dispose");
+        try { _macAudioEngine?.Dispose(); } catch { }
+        _macAudioEngine = null;
 #endif
         _micPreprocessor.Dispose();
         try { _socket?.DisconnectAsync(); } catch { }
@@ -1939,6 +2045,10 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             $"syntheticTone={_captureOptions.SyntheticMicToneEnabled} noiseSuppression={_captureOptions.NoiseSuppressionEnabled} {rnnoiseSummary} syntheticFrames={Volatile.Read(ref _syntheticFrames)} capture={DescribeCaptureMode()} calibration={_captureOptions.MicCalibrationDiagnostics} sensitivity={_captureOptions.MicSensitivity:0.00} micReady={_microphoneReady} speakerReady={_speakerReady}");
         if (_captureOptions.NoiseSuppressionEnabled || rnnoise.Attempts > 0 || rnnoise.UnavailableFrames > 0)
             LogNoiseSuppressionStats(rnnoiseSummary);
+#if MACOS
+        if (_macAudioEngine != null)
+            MacOsAudioDiagnostics.LogStats("BetterCrewLink", _macAudioEngine.GetDiagnosticsSnapshot());
+#endif
     }
 
     private static void LogNoiseSuppressionStats(string message)
@@ -1958,6 +2068,8 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         if (_captureOptions.SyntheticMicToneEnabled) return "synthetic";
 #if ANDROID
         return "android-unity-microphone";
+#elif MACOS
+        return "macos-coreaudio";
 #else
         return "wavein-only";
 #endif

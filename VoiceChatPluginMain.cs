@@ -20,7 +20,11 @@ using VoiceChatPlugin.VoiceChat;
 namespace VoiceChatPlugin;
 
 [BepInPlugin(Id, "Perfect Comms", Version)]
+#if MACOS
+[BepInProcess("Among Us")]
+#else
 [BepInProcess("Among Us.exe")]
+#endif
 [BepInDependency(ReactorPlugin.Id)]
 [BepInDependency(MiraApiPlugin.Id)]
 [ReactorModFlags(ModFlags.RequireOnAllClients)]
@@ -77,6 +81,10 @@ public class VoiceChatPluginMain : BasePlugin, IMiraPlugin
         VoiceDiagnostics.DebugInfo("[VC] Loading Perfect Comms.");
         ReactorCredits.Register("Perfect Comms", Version, false, ReactorCredits.AlwaysShow);
         VoiceDiagnostics.Init();
+#if MACOS
+        if (VoiceDiagnostics.IsEnabled)
+            VoiceChatPlugin.Audio.MacOsAudioDiagnostics.LogPlatform(Version);
+#endif
         if (VoiceDiagnostics.IsEnabled && !string.IsNullOrEmpty(VoiceDiagnostics.Path))
             VoiceDiagnostics.DebugInfo($"[VC] Diagnostics log: {VoiceDiagnostics.Path}");
         ResidentObject = new GameObject("PerfectComms_ResidentObject");
