@@ -1,5 +1,7 @@
+using System;
 using HarmonyLib;
 using MiraAPI.Keybinds;
+using MiraAPI.LocalSettings;
 using Rewired;
 using System.Reflection;
 using UnityEngine;
@@ -14,40 +16,30 @@ public static class VoiceChatPatches
     private static readonly MethodInfo? TextBoxSetCaretPositionMethod = AccessTools.Method(typeof(TextBoxTMP), "SetCaretPosition");
     private static ChatHoldGate _pushToTalkChatGate;
     private static ChatHoldGate _radioChatGate;
+    private static bool _pushToTalkInputHeld;
+    private static bool _radioInputHeld;
+    private static int _lastMuteToggleFrame = -1;
+    private static int _lastSpeakerToggleFrame = -1;
+    private static int _lastVolumeToggleFrame = -1;
+    private static int _lastLocalRefreshFrame = -1;
+    private static int _lastHostRefreshFrame = -1;
 
     internal static void RegisterKeybindHandlers()
     {
-        VoiceChatKeybinds.ToggleMute.OnActivate(() =>
-        {
-            if (ShouldIgnoreToggleKeybinds()) return;
-            VoiceChatHudState.ToggleMutePublic();
-        });
-        VoiceChatKeybinds.ToggleSpeaker.OnActivate(() =>
-        {
-            if (ShouldIgnoreToggleKeybinds()) return;
-            VoiceChatHudState.ToggleSpeakerPublic();
-        });
-        VoiceChatKeybinds.VolumeMenu.OnActivate(() =>
-        {
-            if (ShouldIgnoreToggleKeybinds()) return;
-            VoiceVolumeMenu.Toggle();
-        });
-        VoiceChatKeybinds.LocalVoiceRefresh.OnActivate(() =>
-        {
-            if (ShouldIgnoreToggleKeybinds()) return;
-            VoiceChatRoom.RequestLocalVoiceRefreshFromKeybind();
-        });
-        VoiceChatKeybinds.HostVoiceRefresh.OnActivate(() =>
-        {
-            if (ShouldIgnoreToggleKeybinds()) return;
-            VoiceChatRoom.RequestHostVoiceRefreshFromKeybind();
-        });
+        VoiceChatKeybinds.ToggleMute.OnActivate(ToggleMuteFromInput);
+        VoiceChatKeybinds.ToggleSpeaker.OnActivate(ToggleSpeakerFromInput);
+        VoiceChatKeybinds.VolumeMenu.OnActivate(ToggleVolumeMenuFromInput);
+        VoiceChatKeybinds.LocalVoiceRefresh.OnActivate(RequestLocalRefreshFromInput);
+        VoiceChatKeybinds.HostVoiceRefresh.OnActivate(RequestHostRefreshFromInput);
     }
 
     [HarmonyPostfix, HarmonyPatch(typeof(KeyboardJoystick), nameof(KeyboardJoystick.Update))]
     static void KeyboardUpdate_Post()
     {
         bool chatOpen = IsChatOpenOrOpening();
+        var settings = LocalSettingsTabSingleton<VoiceChatLocalSettings>.Instance;
+        PollMouseToggleBinds(settings);
+
         var player = ReInput.players.GetPlayer(0);
 
         bool canUseRadio = VoiceChatHudState.CanUseImpostorRadioInput();
@@ -55,40 +47,57 @@ public static class VoiceChatPatches
         bool held = false;
         bool down = false;
         bool up = false;
-        if (action != null && canUseRadio)
+        if (canUseRadio)
         {
-            held = ApplyChatHoldGate(
-                player.GetButton(action.id),
-                player.GetButtonDown(action.id),
-                player.GetButtonUp(action.id),
+            var radioInput = ReadHoldInput(
+                player,
+                action?.id,
+                settings?.ImpostorRadioMouseBind.Value ?? VoiceMouseBind.Off);
+
+            bool keyboardHeld = ApplyChatHoldGate(
+                radioInput.KeyboardHeld,
+                radioInput.KeyboardDown,
+                radioInput.KeyboardUp,
                 chatOpen,
                 ref _radioChatGate,
-                out down,
-                out up);
+                out _,
+                out _);
+            var radioHold = CombineImmediateMouseHold(keyboardHeld, radioInput.MouseHeld, ref _radioInputHeld);
+            held = radioHold.Held;
+            down = radioHold.Down;
+            up = radioHold.Up;
         }
         else
         {
             _radioChatGate.Reset();
+            _radioInputHeld = false;
         }
 
         VoiceChatHudState.UpdateImpostorRadioHold(held, down, up);
 
         var pttAction = VoiceChatKeybinds.PushToTalk.RewiredInputAction;
-        if (pttAction == null || !VoiceChatHudState.IsPushToTalkMode())
+        if (!VoiceChatHudState.IsPushToTalkMode())
         {
             _pushToTalkChatGate.Reset();
+            _pushToTalkInputHeld = false;
             VoiceChatHudState.UpdatePushToTalkHeld(false);
             return;
         }
 
-        bool pttHeld = ApplyChatHoldGate(
-            player.GetButton(pttAction.id),
-            player.GetButtonDown(pttAction.id),
-            player.GetButtonUp(pttAction.id),
+        var pttInput = ReadHoldInput(
+            player,
+            pttAction?.id,
+            settings?.PushToTalkMouseBind.Value ?? VoiceMouseBind.Off);
+
+        bool keyboardPttHeld = ApplyChatHoldGate(
+            pttInput.KeyboardHeld,
+            pttInput.KeyboardDown,
+            pttInput.KeyboardUp,
             chatOpen,
             ref _pushToTalkChatGate,
             out _,
             out _);
+        bool pttHeld = CombineImmediateMouseHold(keyboardPttHeld, pttInput.MouseHeld, ref _pushToTalkInputHeld).Held;
         VoiceChatHudState.UpdatePushToTalkHeld(pttHeld);
     }
 
@@ -99,6 +108,99 @@ public static class VoiceChatPatches
         var chat = HudManager.Instance.Chat;
         return chat != null && chat.IsOpenOrOpening;
     }
+
+    private static void ToggleMuteFromInput()
+    {
+        if (ShouldIgnoreToggleKeybinds()) return;
+        if (!TryConsumeToggleFrame(ref _lastMuteToggleFrame)) return;
+        VoiceChatHudState.ToggleMutePublic();
+    }
+
+    private static void ToggleSpeakerFromInput()
+    {
+        if (ShouldIgnoreToggleKeybinds()) return;
+        if (!TryConsumeToggleFrame(ref _lastSpeakerToggleFrame)) return;
+        VoiceChatHudState.ToggleSpeakerPublic();
+    }
+
+    private static void ToggleVolumeMenuFromInput()
+    {
+        if (ShouldIgnoreToggleKeybinds()) return;
+        if (!TryConsumeToggleFrame(ref _lastVolumeToggleFrame)) return;
+        VoiceVolumeMenu.Toggle();
+    }
+
+    private static void RequestLocalRefreshFromInput()
+    {
+        if (ShouldIgnoreToggleKeybinds()) return;
+        if (!TryConsumeToggleFrame(ref _lastLocalRefreshFrame)) return;
+        VoiceChatRoom.RequestLocalVoiceRefreshFromKeybind();
+    }
+
+    private static void RequestHostRefreshFromInput()
+    {
+        if (ShouldIgnoreToggleKeybinds()) return;
+        if (!TryConsumeToggleFrame(ref _lastHostRefreshFrame)) return;
+        VoiceChatRoom.RequestHostVoiceRefreshFromKeybind();
+    }
+
+    private static bool TryConsumeToggleFrame(ref int lastFrame)
+    {
+        int frame = Time.frameCount;
+        if (lastFrame == frame) return false;
+
+        lastFrame = frame;
+        return true;
+    }
+
+    private static void PollMouseToggleBinds(VoiceChatLocalSettings? settings)
+    {
+        TryRunMouseToggle(settings?.MuteMouseBind.Value ?? VoiceMouseBind.Off, ToggleMuteFromInput);
+        TryRunMouseToggle(settings?.SpeakerMouseBind.Value ?? VoiceMouseBind.Off, ToggleSpeakerFromInput);
+    }
+
+    private static void TryRunMouseToggle(VoiceMouseBind bind, Action action)
+    {
+        if (IsMouseBindDown(bind))
+            action();
+    }
+
+    private static HoldInputSources ReadHoldInput(Player player, int? keyboardActionId, VoiceMouseBind mouseBind)
+    {
+        bool keyboardHeld = keyboardActionId.HasValue && player.GetButton(keyboardActionId.Value);
+        bool keyboardDown = keyboardActionId.HasValue && player.GetButtonDown(keyboardActionId.Value);
+        bool keyboardUp = keyboardActionId.HasValue && player.GetButtonUp(keyboardActionId.Value);
+        return new HoldInputSources(keyboardHeld, keyboardDown, keyboardUp, IsMouseBindHeld(mouseBind));
+    }
+
+    private static HoldInputState CombineImmediateMouseHold(bool keyboardHeld, bool mouseHeld, ref bool previousHeld)
+    {
+        bool held = keyboardHeld || mouseHeld;
+        bool down = held && !previousHeld;
+        bool up = !held && previousHeld;
+        previousHeld = held;
+        return new HoldInputState(held, down, up);
+    }
+
+    private static bool IsMouseBindDown(VoiceMouseBind bind)
+    {
+        int button = GetMouseButtonIndex(bind);
+        return button >= 0 && Input.GetMouseButtonDown(button);
+    }
+
+    private static bool IsMouseBindHeld(VoiceMouseBind bind)
+    {
+        int button = GetMouseButtonIndex(bind);
+        return button >= 0 && Input.GetMouseButton(button);
+    }
+
+    private static int GetMouseButtonIndex(VoiceMouseBind bind)
+        => bind switch
+        {
+            VoiceMouseBind.MB4 => 3,
+            VoiceMouseBind.MB5 => 4,
+            _ => -1,
+        };
 
     private static bool ApplyChatHoldGate(
         bool rawHeld,
@@ -290,5 +392,35 @@ public static class VoiceChatPatches
             PendingTextBox = null;
             PendingChar = '\0';
         }
+    }
+
+    private readonly struct HoldInputSources
+    {
+        public HoldInputSources(bool keyboardHeld, bool keyboardDown, bool keyboardUp, bool mouseHeld)
+        {
+            KeyboardHeld = keyboardHeld;
+            KeyboardDown = keyboardDown;
+            KeyboardUp = keyboardUp;
+            MouseHeld = mouseHeld;
+        }
+
+        public bool KeyboardHeld { get; }
+        public bool KeyboardDown { get; }
+        public bool KeyboardUp { get; }
+        public bool MouseHeld { get; }
+    }
+
+    private readonly struct HoldInputState
+    {
+        public HoldInputState(bool held, bool down, bool up)
+        {
+            Held = held;
+            Down = down;
+            Up = up;
+        }
+
+        public bool Held { get; }
+        public bool Down { get; }
+        public bool Up { get; }
     }
 }

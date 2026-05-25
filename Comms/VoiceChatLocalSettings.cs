@@ -51,6 +51,13 @@ public enum VoiceMicMode
     PushToTalk = 1,
 }
 
+public enum VoiceMouseBind
+{
+    Off = 0,
+    MB4 = 1,
+    MB5 = 2,
+}
+
 public class VoiceChatLocalSettings : LocalSettingsTab
 {
     public static LoadableResourceAsset MicIcon { get; } = new("VoiceChatPlugin.Resources.miclogo.png");
@@ -96,6 +103,18 @@ public class VoiceChatLocalSettings : LocalSettingsTab
 
     [LocalToggleSetting("Start Deafened")]
     public ConfigEntry<bool> StartDeafened { get; }
+
+    [LocalEnumSetting("Mute Mouse Bind")]
+    public ConfigEntry<VoiceMouseBind> MuteMouseBind { get; }
+
+    [LocalEnumSetting("Speaker Mouse Bind")]
+    public ConfigEntry<VoiceMouseBind> SpeakerMouseBind { get; }
+
+    [LocalEnumSetting("Push To Talk Mouse Bind")]
+    public ConfigEntry<VoiceMouseBind> PushToTalkMouseBind { get; }
+
+    [LocalEnumSetting("Radio Mouse Bind")]
+    public ConfigEntry<VoiceMouseBind> ImpostorRadioMouseBind { get; }
 
     [LocalEnumSetting("Microphone Device")]
     public ConfigEntry<MicDeviceEnum> MicrophoneDeviceIndex { get; }
@@ -206,6 +225,23 @@ public class VoiceChatLocalSettings : LocalSettingsTab
 
         StartDeafened = config.Bind("Audio", "StartDeafened", false,
             new ConfigDescription("Start each session with speaker muted"));
+
+        MuteMouseBind = config.Bind("Input", "MuteMouseBind", VoiceMouseBind.Off,
+            new ConfigDescription("Optional mouse button for mute / unmute"));
+
+        SpeakerMouseBind = config.Bind("Input", "SpeakerMouseBind", VoiceMouseBind.Off,
+            new ConfigDescription("Optional mouse button for speaker mute / unmute"));
+
+        PushToTalkMouseBind = config.Bind("Input", "PushToTalkMouseBind", VoiceMouseBind.Off,
+            new ConfigDescription("Optional mouse button to hold for push to talk"));
+
+        ImpostorRadioMouseBind = config.Bind("Input", "ImpostorRadioMouseBind", VoiceMouseBind.Off,
+            new ConfigDescription("Optional mouse button to hold for impostor radio"));
+
+        NormalizeMouseBind(MuteMouseBind);
+        NormalizeMouseBind(SpeakerMouseBind);
+        NormalizeMouseBind(PushToTalkMouseBind);
+        NormalizeMouseBind(ImpostorRadioMouseBind);
 
         _savedMicDeviceName = config.Bind("Audio", "MicDeviceName", "",
             "Saved microphone device name (used to restore selection across sessions)");
@@ -467,6 +503,16 @@ public class VoiceChatLocalSettings : LocalSettingsTab
         else if (configEntry == BetterCrewLinkServerUrl || configEntry == InterstellarServerUrl)
         {
             VoiceChatRoom.Current?.Rejoin();
+        }
+    }
+
+    private static void NormalizeMouseBind(ConfigEntry<VoiceMouseBind> entry)
+    {
+        int value = Convert.ToInt32(entry.Value);
+        if (value < (int)VoiceMouseBind.Off || value > (int)VoiceMouseBind.MB5 ||
+            !Enum.IsDefined(typeof(VoiceMouseBind), entry.Value))
+        {
+            entry.Value = VoiceMouseBind.Off;
         }
     }
 }
