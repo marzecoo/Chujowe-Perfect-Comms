@@ -16,17 +16,18 @@ public static class VoiceVolumeMenu
 {
     // ── Singleton window ──────────────────────────────────────────────────────
     private static GameObject?            _window;
-    private static ToggleButtonBehaviour? _btnPrefab;
     private static float                  _scrollOffset;    // vertical scroll
 
     private const float WindowW    = 5.6f;
     private const float WindowH    = 4.6f;
     private const float RowH       = 0.68f;
     private const float SliderW    = 1.80f;
-    private const float IconScale  = 0.38f;
+    private const float SliderHitH  = 0.50f;
     private const float VMin       = 0f;
     private const float VMax       = 2f;
     private static readonly Dictionary<string, float> _savedVolumes = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly List<PlayerVolumeSlider> _sliders = new();
+    private static PlayerVolumeSlider? _activeSlider;
     private static bool _savedVolumesLoaded;
 
 
@@ -39,6 +40,7 @@ public static class VoiceVolumeMenu
         else
         {
             bool next = !_window.activeSelf;
+            if (!next) CommitActiveSlider();
             _window.SetActive(next);
             if (next) RebuildRows();
         }
@@ -46,16 +48,21 @@ public static class VoiceVolumeMenu
 
     public static void Close()
     {
-        if (_window != null) _window.SetActive(false);
+        if (_window != null)
+        {
+            CommitActiveSlider();
+            _window.SetActive(false);
+        }
     }
 
 
     private static void Build()
     {
-        if (HudManager.Instance == null) return;
-
-        _btnPrefab ??= FindButtonPrefab();
-        if (_btnPrefab == null) return;
+        if (HudManager.Instance == null)
+        {
+            VoiceDiagnostics.DebugWarning("[VC] Volume menu not opened: HUD is not ready.");
+            return;
+        }
 
         _window = new GameObject("VC_VolumeMenu");
         _window.transform.SetParent(HudManager.Instance.transform, false);
@@ -81,9 +88,8 @@ public static class VoiceVolumeMenu
         titleTmp.color        = new Color32(175, 215, 255, 255);
         titleTmp.rectTransform.sizeDelta = new Vector2(WindowW - 0.4f, 0.5f);
 
-        // Close button  (top-right 'X')
-        var closeBtn = CreateSmallTextButton("✕", new Vector3(WindowW * 0.5f - 0.3f, WindowH * 0.5f - 0.28f, -0.2f),
-            () => _window!.SetActive(false));
+        CreateCloseButton(new Vector3(WindowW * 0.5f - 0.3f, WindowH * 0.5f - 0.28f, -0.2f),
+            Close);
 
         // Scroll up / down arrows
         CreateSmallTextButton("▲", new Vector3(WindowW * 0.5f - 0.28f, 0.5f, -0.2f),
@@ -119,6 +125,8 @@ public static class VoiceVolumeMenu
         if (content == null) return;
         for (int i = content.childCount - 1; i >= 0; i--)
             Object.Destroy(content.GetChild(i).gameObject);
+        _sliders.Clear();
+        _activeSlider = null;
 
         // Collect players
         var players = CollectPlayers();
@@ -155,10 +163,9 @@ public static class VoiceVolumeMenu
     // ── One player row ────────────────────────────────────────────────────────
     //
     //  X offset:
-    //   -2.4   icon
-    //   -1.55  name
-    //    0.35  slider track (centre)
-    //    1.40  vol% label
+    //   -2.05  name
+    //    0.45  slider track (centre)
+    //    1.75  vol% label
     // ─────────────────────────────────────────────────────────────────────────
 
     private static void BuildRow(Transform parent, PlayerEntry entry, float y)
@@ -168,51 +175,19 @@ public static class VoiceVolumeMenu
         rowGO.transform.localPosition = new Vector3(0f, y, 0f);
 
         // ── PlayerIcon ────────────────────────────────────────────────────────
-        bool gotIcon = false;
-        if (MeetingHud.Instance != null)
-        {
-            foreach (var state in MeetingHud.Instance.playerStates)
-            {
-                if (state == null || state.TargetPlayerId != entry.PlayerId) continue;
-                if (state.PlayerIcon == null) break;
-                var clone = Object.Instantiate(state.PlayerIcon.gameObject, rowGO.transform);
-                clone.SetActive(true);
-                clone.transform.localPosition = new Vector3(-2.4f, 0.08f, -0.1f);
-                clone.transform.localScale    = Vector3.one * IconScale;
-                foreach (var sr in clone.GetComponentsInChildren<SpriteRenderer>())
-                    sr.maskInteraction = SpriteMaskInteraction.VisibleInsideMask;
-                gotIcon = true;
-                break;
-            }
-        }
-
-        if (!gotIcon)
-        {
-            // Fallback coloured circle
-            var circleGO = new GameObject("Circle");
-            circleGO.transform.SetParent(rowGO.transform, false);
-            circleGO.transform.localPosition = new Vector3(-2.4f, 0.08f, -0.1f);
-            circleGO.transform.localScale    = Vector3.one * (IconScale * 0.6f);
-            var sr        = circleGO.AddComponent<SpriteRenderer>();
-            sr.sprite     = GetCircleSprite();
-            sr.color      = entry.Color;
-            sr.sortingOrder = 23;
-            sr.maskInteraction = SpriteMaskInteraction.VisibleInsideMask;
-        }
-
         // ── Player name ───────────────────────────────────────────────────────
         var nameGO   = new GameObject("Name");
         nameGO.transform.SetParent(rowGO.transform, false);
-        nameGO.transform.localPosition = new Vector3(-1.50f, 0f, -0.1f);
+        nameGO.transform.localPosition = new Vector3(-2.05f, 0f, -0.1f);
         var nameTmp  = nameGO.AddComponent<TextMeshPro>();
-        nameTmp.text = entry.Name.Length > 14 ? entry.Name[..12] + "…" : entry.Name;
+        nameTmp.text = entry.Name.Length > 13 ? entry.Name[..11] + "…" : entry.Name;
         nameTmp.fontSize     = 1.25f;
         nameTmp.alignment    = TextAlignmentOptions.Left;
         nameTmp.sortingOrder = 23;
         nameTmp.color        = Color.white;
         nameTmp.enableWordWrapping  = false;
         //nameTmp.maskInteraction     = TMP_SpriteAsset.defaultSpriteAsset ? 0 : 0;
-        nameTmp.rectTransform.sizeDelta = new Vector2(1.5f, 0.4f);
+        nameTmp.rectTransform.sizeDelta = new Vector2(1.20f, 0.4f);
 
         // ── Volume % label (updated by slider) ────────────────────────────────
         var volGO   = new GameObject("VolLabel");
@@ -233,7 +208,7 @@ public static class VoiceVolumeMenu
         // ── Slider track ──────────────────────────────────────────────────────
         var trackGO = new GameObject("SliderTrack");
         trackGO.transform.SetParent(rowGO.transform, false);
-        trackGO.transform.localPosition = new Vector3(0.35f, 0f, -0.1f);
+        trackGO.transform.localPosition = new Vector3(0.45f, 0f, -0.1f);
 
         var trackSr         = trackGO.AddComponent<SpriteRenderer>();
         trackSr.sprite      = Create1x1Sprite(new Color32(55, 65, 100, 200));
@@ -283,34 +258,14 @@ public static class VoiceVolumeMenu
         }
         PositionSlider(current);
 
-        // Box collider for drag
-        var col   = trackGO.AddComponent<BoxCollider2D>();
-        col.size  = new Vector2(SliderW, 0.40f);
-
-        var pb    = trackGO.AddComponent<PassiveButton>();
-        pb.OnClick     = new ButtonClickedEvent();
-        pb.OnMouseOut  = new UnityEvent();
-        pb.OnMouseOver = new UnityEvent();
-
-        pb.OnClick.AddListener((Action)(() =>
-        {
-            var cam    = Camera.main;
-            if (cam == null) return;
-            var mWorld = cam.ScreenToWorldPoint(Input.mousePosition);
-            var mLocal = trackGO.transform.InverseTransformPoint(mWorld);
-            float t    = Mathf.InverseLerp(-SliderW * 0.5f, SliderW * 0.5f, mLocal.x);
-            float v    = (float)Math.Round(Mathf.Lerp(VMin, VMax, t), 2);
-            current = ApplyVolume(entry, v, PositionSlider, SetVolLabel);
-        }));
-
-        var upd = trackGO.AddComponent<PlayerSliderDragUpdater>();
-        upd.Init(trackGO, SliderW, VMin, VMax,
+        _sliders.Add(new PlayerVolumeSlider(trackGO.transform, SliderW,
             v =>
             {
                 v = (float)Math.Round(v, 2);
-                current = ApplyVolume(entry, v, PositionSlider, SetVolLabel);
+                current = ApplyVolume(entry, v, PositionSlider, SetVolLabel, persist: false);
             },
-            () => current);
+            () => current,
+            () => SaveVolume(entry, current)));
 
         CreateRowResetButton(rowGO, new Vector3(2.45f, 0f, -0.1f),
             () => current = ApplyVolume(entry, 1f, PositionSlider, SetVolLabel));
@@ -330,12 +285,13 @@ public static class VoiceVolumeMenu
     // ── Apply volume to remote Interstellar peers + config ───────────────────
 
     private static float ApplyVolume(PlayerEntry entry, float v,
-        Action<float> positionSlider, Action<float> setLabel)
+        Action<float> positionSlider, Action<float> setLabel, bool persist = true)
     {
         v = Mathf.Clamp(v, VMin, VMax);
         positionSlider(v);
         setLabel(v);
-        SaveVolume(entry, v);
+        if (persist)
+            SaveVolume(entry, v);
 
         VoiceChatRoom.Current?.TrySetRemoteVolume(entry.PlayerId, entry.Name, v);
 
@@ -348,14 +304,15 @@ public static class VoiceVolumeMenu
     [HarmonyPostfix]
     static void HudStart(HudManager __instance)
     {
+        CommitActiveSlider();
+        _sliders.Clear();
         if (_window != null) { Object.Destroy(_window); _window = null; }
-        _btnPrefab    = null;
         _scrollOffset = 0f;
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    private record PlayerEntry(byte PlayerId, string Name, Color Color);
+    private record PlayerEntry(byte PlayerId, string Name);
 
     private static float GetSavedVolume(PlayerEntry entry)
     {
@@ -435,11 +392,6 @@ public static class VoiceVolumeMenu
         var list = new List<PlayerEntry>();
         if (AmongUsClient.Instance == null) return list;
 
-        var playersById = new Dictionary<byte, PlayerControl>();
-        foreach (var pc in PlayerControl.AllPlayerControls)
-            if (pc != null && !playersById.ContainsKey(pc.PlayerId))
-                playersById.Add(pc.PlayerId, pc);
-
         var seen = new HashSet<byte>();
         // Prefer active Interstellar peers (they have confirmed voice profiles)
         if (VoiceChatRoom.Current != null)
@@ -447,9 +399,7 @@ public static class VoiceVolumeMenu
             {
                 if (c.PlayerId == byte.MaxValue) continue;
                 if (!seen.Add(c.PlayerId)) continue;
-                playersById.TryGetValue(c.PlayerId, out var pc);
-                var col = GetPaletteColor(pc);
-                list.Add(new PlayerEntry(c.PlayerId, c.PlayerName, col));
+                list.Add(new PlayerEntry(c.PlayerId, c.PlayerName));
             }
 
         // Fill any remaining in-game players from AllPlayerControls
@@ -458,32 +408,112 @@ public static class VoiceVolumeMenu
             if (pc == null || pc.Data == null) continue;
             if (pc == PlayerControl.LocalPlayer) continue;  // skip self
             if (!seen.Add(pc.PlayerId)) continue;
-            var col = GetPaletteColor(pc);
-            list.Add(new PlayerEntry(pc.PlayerId, pc.Data.PlayerName, col));
+            list.Add(new PlayerEntry(pc.PlayerId, pc.Data.PlayerName));
         }
 
         return list;
     }
 
-    private static Color GetPaletteColor(PlayerControl? pc)
+    [HarmonyPatch(typeof(HudManager), nameof(HudManager.Update))]
+    [HarmonyPostfix]
+    static void HudUpdate()
     {
-        if (pc?.Data == null) return new Color(0.18f, 0.80f, 0.44f, 1f);
-        int cid = pc.Data.DefaultOutfit.ColorId;
-        if (cid >= 0 && cid < Palette.PlayerColors.Length) return Palette.PlayerColors[cid];
-        return Color.white;
+        HandleSliderInput();
     }
 
-    private static ToggleButtonBehaviour? FindButtonPrefab()
+    private static void HandleSliderInput()
     {
-        // Re-use the cached prefab from VoiceChatOptionsPatches if available,
-        // otherwise clone from OptionsMenuBehaviour.
-        var optMenu = Object.FindObjectOfType<OptionsMenuBehaviour>();
-        if (optMenu?.CensorChatButton == null) return null;
-        var prefab = Object.Instantiate(optMenu.CensorChatButton);
-        Object.DontDestroyOnLoad(prefab);
-        prefab.name = "VC_VolumeMenu_BtnPrefab";
-        prefab.gameObject.SetActive(false);
-        return prefab;
+        if (_window == null || !_window.activeSelf)
+        {
+            CommitActiveSlider();
+            return;
+        }
+
+        if (!Input.GetMouseButton(0))
+        {
+            CommitActiveSlider();
+            return;
+        }
+
+        if (Input.GetMouseButtonDown(0))
+            _activeSlider = FindSliderAtMouse();
+
+        if (_activeSlider != null)
+            ApplySliderFromMouse(_activeSlider);
+    }
+
+    private static PlayerVolumeSlider? FindSliderAtMouse()
+    {
+        if (!TryGetMouseWorld(out var mouseWorld)) return null;
+        for (int i = _sliders.Count - 1; i >= 0; i--)
+        {
+            var slider = _sliders[i];
+            if (slider.Track == null)
+            {
+                _sliders.RemoveAt(i);
+                continue;
+            }
+
+            var local = slider.Track.InverseTransformPoint(mouseWorld);
+            if (Mathf.Abs(local.x) <= slider.TrackW * 0.5f && Mathf.Abs(local.y) <= SliderHitH * 0.5f)
+                return slider;
+        }
+        return null;
+    }
+
+    private static void ApplySliderFromMouse(PlayerVolumeSlider slider)
+    {
+        if (!TryGetMouseWorld(out var mouseWorld)) return;
+        var local = slider.Track.InverseTransformPoint(mouseWorld);
+        float t = Mathf.Clamp01(Mathf.InverseLerp(-slider.TrackW * 0.5f, slider.TrackW * 0.5f, local.x));
+        float value = Mathf.Lerp(VMin, VMax, t);
+        if (Math.Abs(value - slider.GetCurrent()) <= 0.001f) return;
+
+        slider.OnChange(value);
+        slider.Changed = true;
+    }
+
+    private static void CommitActiveSlider()
+    {
+        if (_activeSlider == null) return;
+        if (_activeSlider.Changed)
+        {
+            _activeSlider.OnCommit();
+            _activeSlider.Changed = false;
+        }
+        _activeSlider = null;
+    }
+
+    private static bool TryGetMouseWorld(out Vector3 mouseWorld)
+    {
+        var cam = Camera.main;
+        if (cam == null)
+        {
+            mouseWorld = default;
+            return false;
+        }
+
+        mouseWorld = cam.ScreenToWorldPoint(Input.mousePosition);
+        return true;
+    }
+
+    private sealed class PlayerVolumeSlider
+    {
+        public readonly Transform Track;
+        public readonly float TrackW;
+        public readonly Action<float> OnChange;
+        public readonly Func<float> GetCurrent;
+        public readonly Action OnCommit;
+        public bool Changed;
+
+        public PlayerVolumeSlider(Transform track, float trackW, Action<float> onChange, Func<float> getCurrent, Action onCommit)
+        {
+            Track = track;
+            TrackW = trackW;
+            OnChange = onChange;
+            GetCurrent = getCurrent;
+            OnCommit = onCommit;
+        }
     }
 
     private static GameObject CreateSmallTextButton(string label, Vector3 pos, Action onClick)
@@ -492,8 +522,11 @@ public static class VoiceVolumeMenu
         go.transform.SetParent(_window!.transform, false);
         go.transform.localPosition = pos;
 
+        var baseColor = new Color32(52, 64, 98, 220);
+        var hoverColor = new Color32(75, 90, 130, 255);
         var sr         = go.AddComponent<SpriteRenderer>();
-        sr.sprite      = Create1x1Sprite(new Color32(52, 64, 98, 220));
+        sr.sprite      = Create1x1Sprite(Color.white);
+        sr.color       = baseColor;
         sr.drawMode    = SpriteDrawMode.Sliced;
         sr.size        = new Vector2(0.34f, 0.34f);
         sr.sortingOrder = 25;
@@ -516,9 +549,51 @@ public static class VoiceVolumeMenu
         pb.OnClick.AddListener((Action)(() => onClick()));
         pb.OnMouseOut  = new UnityEvent();
         pb.OnMouseOver = new UnityEvent();
-        pb.OnMouseOver.AddListener((Action)(() => sr.color = new Color32(75, 90, 130, 255)));
-        pb.OnMouseOut.AddListener((Action)(() => sr.color  = Color.white));
+        pb.OnMouseOver.AddListener((Action)(() => sr.color = hoverColor));
+        pb.OnMouseOut.AddListener((Action)(() => sr.color  = baseColor));
         return go;
+    }
+
+    private static GameObject CreateCloseButton(Vector3 pos, Action onClick)
+    {
+        var go = new GameObject("Btn_Close");
+        go.transform.SetParent(_window!.transform, false);
+        go.transform.localPosition = pos;
+
+        var baseColor = new Color32(196, 55, 66, 245);
+        var hoverColor = new Color32(232, 74, 86, 255);
+        var sr = go.AddComponent<SpriteRenderer>();
+        sr.sprite = GetCircleSprite();
+        sr.color = baseColor;
+        sr.sortingOrder = 25;
+        go.transform.localScale = Vector3.one * 0.42f;
+
+        CreateButtonLine(go.transform, "CloseLineA", 45f);
+        CreateButtonLine(go.transform, "CloseLineB", -45f);
+
+        var col = go.AddComponent<BoxCollider2D>();
+        col.size = new Vector2(1f, 1f);
+        var pb = go.AddComponent<PassiveButton>();
+        pb.OnClick = new ButtonClickedEvent();
+        pb.OnClick.AddListener((Action)(() => onClick()));
+        pb.OnMouseOut = new UnityEvent();
+        pb.OnMouseOver = new UnityEvent();
+        pb.OnMouseOver.AddListener((Action)(() => sr.color = hoverColor));
+        pb.OnMouseOut.AddListener((Action)(() => sr.color = baseColor));
+        return go;
+    }
+
+    private static void CreateButtonLine(Transform parent, string name, float rotationZ)
+    {
+        var lineGO = new GameObject(name);
+        lineGO.transform.SetParent(parent, false);
+        lineGO.transform.localPosition = new Vector3(0f, 0f, -0.1f);
+        lineGO.transform.localRotation = Quaternion.Euler(0f, 0f, rotationZ);
+        var sr = lineGO.AddComponent<SpriteRenderer>();
+        sr.sprite = Create1x1Sprite(Color.white);
+        sr.drawMode = SpriteDrawMode.Sliced;
+        sr.size = new Vector2(0.62f, 0.10f);
+        sr.sortingOrder = 26;
     }
 
     private static void CreateRowResetButton(GameObject parent, Vector3 pos, Action onClick)
@@ -527,23 +602,24 @@ public static class VoiceVolumeMenu
         go.transform.SetParent(parent.transform, false);
         go.transform.localPosition = pos;
 
+        var baseColor = new Color32(52, 64, 98, 220);
+        var hoverColor = new Color32(75, 90, 130, 255);
         var sr = go.AddComponent<SpriteRenderer>();
-        sr.sprite = Create1x1Sprite(new Color32(52, 64, 98, 220));
+        sr.sprite = Create1x1Sprite(Color.white);
+        sr.color = baseColor;
         sr.drawMode = SpriteDrawMode.Sliced;
         sr.size = new Vector2(0.34f, 0.30f);
         sr.sortingOrder = 23;
         sr.maskInteraction = SpriteMaskInteraction.VisibleInsideMask;
 
-        var textGO = new GameObject("T");
-        textGO.transform.SetParent(go.transform, false);
-        textGO.transform.localPosition = new Vector3(0f, 0f, -0.1f);
-        var tmp = textGO.AddComponent<TextMeshPro>();
-        tmp.text = "R";
-        tmp.fontSize = 1.0f;
-        tmp.alignment = TextAlignmentOptions.Center;
-        tmp.sortingOrder = 24;
-        tmp.color = Color.white;
-        tmp.rectTransform.sizeDelta = new Vector2(0.34f, 0.30f);
+        var iconGO = new GameObject("ResetIcon");
+        iconGO.transform.SetParent(go.transform, false);
+        iconGO.transform.localPosition = new Vector3(0f, 0f, -0.1f);
+        iconGO.transform.localScale = Vector3.one * 3.0f;
+        var iconSr = iconGO.AddComponent<SpriteRenderer>();
+        iconSr.sprite = ResetIconSprite;
+        iconSr.sortingOrder = 24;
+        iconSr.maskInteraction = SpriteMaskInteraction.VisibleInsideMask;
 
         var col = go.AddComponent<BoxCollider2D>();
         col.size = new Vector2(0.34f, 0.30f);
@@ -552,7 +628,13 @@ public static class VoiceVolumeMenu
         pb.OnClick.AddListener((Action)(() => onClick()));
         pb.OnMouseOut = new UnityEvent();
         pb.OnMouseOver = new UnityEvent();
+        pb.OnMouseOver.AddListener((Action)(() => sr.color = hoverColor));
+        pb.OnMouseOut.AddListener((Action)(() => sr.color = baseColor));
     }
+
+    private static Sprite? _resetIconSprite;
+    private static Sprite ResetIconSprite
+        => _resetIconSprite ??= VoiceChatHudState.LoadSprite("VoiceChatPlugin.Resources.VolumeResetIcon.png", highQuality: true);
 
     private static Sprite? _circleSprite;
     private static Sprite GetCircleSprite()
@@ -579,43 +661,5 @@ public static class VoiceVolumeMenu
         tex.SetPixel(0, 0, c);
         tex.Apply();
         return Sprite.Create(tex, new Rect(0, 0, 1, 1), new Vector2(0.5f, 0.5f));
-    }
-}
-
-/// <summary>
-/// Per-slider drag MonoBehaviour for the volume menu.
-/// Separate from SliderDragUpdater so it doesn't pollute VoiceChatOptionsPatches.
-/// </summary>
-public class PlayerSliderDragUpdater : MonoBehaviour
-{
-    private float       _min, _max, _trackW;
-    private bool        _dragging;
-    private Action<float>? _onChange;
-    private Func<float>?   _getCurrent;
-
-    public void Init(GameObject track, float trackW, float min, float max,
-        Action<float> onChange, Func<float> getCurrent)
-    {
-        _trackW     = trackW;
-        _min        = min;
-        _max        = max;
-        _onChange   = onChange;
-        _getCurrent = getCurrent;
-    }
-
-    void OnMouseDown() => _dragging = true;
-    void OnMouseUp()   => _dragging = false;
-
-    void Update()
-    {
-        if (!_dragging) return;
-        var cam = Camera.main;
-        if (cam == null) return;
-        var mWorld = cam.ScreenToWorldPoint(Input.mousePosition);
-        var mLocal = transform.InverseTransformPoint(mWorld);
-        float t    = Mathf.InverseLerp(-_trackW * 0.5f, _trackW * 0.5f, mLocal.x);
-        float v    = Mathf.Lerp(_min, _max, t);
-        if (Math.Abs(v - (_getCurrent?.Invoke() ?? v)) > 0.005f)
-            _onChange?.Invoke(v);
     }
 }
