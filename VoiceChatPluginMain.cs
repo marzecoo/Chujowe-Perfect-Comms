@@ -83,6 +83,7 @@ public class VoiceChatPluginMain : BasePlugin, IMiraPlugin
         GameObject.DontDestroyOnLoad(ResidentObject);
         ResidentObject.hideFlags |= HideFlags.DontUnloadUnusedAsset | HideFlags.HideAndDontSave;
         VCManager.RegisterSceneHook();
+        VoiceChatHudState.Init();
         VoiceChatPatches.RegisterKeybindHandlers();
         Harmony.PatchAll(Assembly.GetExecutingAssembly());
         VanillaLobbyPatchDiagnostics.LogPatchState(Harmony);

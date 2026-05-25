@@ -100,6 +100,11 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
 #if WINDOWS
     private IWaveIn? _waveIn;
     private IWavePlayer? _waveOut;
+    private readonly object _captureWorkerSync = new();
+    private Task _captureWorker = Task.CompletedTask;
+    private bool _captureDesiredRunning;
+    private string _captureDesiredReason = "init";
+    private int _captureTransitionVersion;
 #endif
 #if ANDROID
     private AndroidMicrophone? _androidMicrophone;
@@ -176,14 +181,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         if (Mute == mute) return;
         Mute = mute;
 #if WINDOWS
-        // Run mic start/stop on a background thread — WaveIn open/close blocks
-        // the calling thread for ~100-300ms which freezes the game if on main thread.
-        var muteCapture = mute;
-        Task.Run(() =>
-        {
-            if (muteCapture) StopMicrophone("muted");
-            else StartMicrophone("unmuted");
-        });
+        QueueMicrophoneTransition(!mute, mute ? "muted" : "unmuted");
 #elif ANDROID
         if (mute) StopAndroidMicrophone("muted");
         else StartAndroidMicrophone("unmuted");
@@ -218,7 +216,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
 
 #if WINDOWS
         if (restartCapture && !Mute && _microphoneReady)
-            Task.Run(() => StartMicrophone("capture-options"));
+            QueueMicrophoneTransition(true, "capture-options");
 #elif ANDROID
         if (restartCapture && !Mute && _microphoneReady)
             StartAndroidMicrophone("capture-options");
@@ -234,12 +232,12 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
 #if WINDOWS
         if (Mute)
         {
-            Task.Run(() => StopMicrophone("set-muted"));
+            QueueMicrophoneTransition(false, "set-muted");
             VoiceDiagnostics.Log("bcl.mic", $"ready=false muted=true device=\"{_lastMicDeviceName}\" callbacks={Volatile.Read(ref _micCallbacks)} bytes={Volatile.Read(ref _micBytes)}");
             return;
         }
 
-        Task.Run(() => StartMicrophone("settings"));
+        QueueMicrophoneTransition(true, "settings");
 #elif ANDROID
         if (Mute)
         {
@@ -255,6 +253,73 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
     }
 
 #if WINDOWS
+    private void QueueMicrophoneTransition(bool shouldRun, string reason)
+    {
+        lock (_captureWorkerSync)
+        {
+            _captureDesiredRunning = shouldRun && !_disposed;
+            _captureDesiredReason = reason;
+            _captureTransitionVersion++;
+
+            if (!_captureWorker.IsCompleted) return;
+            _captureWorker = Task.Run(ProcessMicrophoneTransitions);
+        }
+    }
+
+    private void ProcessMicrophoneTransitions()
+    {
+        while (true)
+        {
+            bool shouldRun;
+            string reason;
+            int version;
+            lock (_captureWorkerSync)
+            {
+                shouldRun = _captureDesiredRunning && !_disposed;
+                reason = _captureDesiredReason;
+                version = _captureTransitionVersion;
+            }
+
+            try
+            {
+                if (shouldRun) StartMicrophone(reason);
+                else StopMicrophone(reason);
+            }
+            catch (Exception ex)
+            {
+                VoiceDiagnostics.Log("bcl.mic.worker", $"reason={reason} start={shouldRun} err=\"{ex.Message}\"");
+            }
+
+            lock (_captureWorkerSync)
+            {
+                if (version != _captureTransitionVersion) continue;
+                _captureWorker = Task.CompletedTask;
+                return;
+            }
+        }
+    }
+
+    private void StopMicrophoneWorkerForDispose()
+    {
+        Task worker;
+        lock (_captureWorkerSync)
+        {
+            _captureDesiredRunning = false;
+            _captureDesiredReason = "dispose";
+            _captureTransitionVersion++;
+
+            if (_captureWorker.IsCompleted)
+                _captureWorker = Task.Run(ProcessMicrophoneTransitions);
+            worker = _captureWorker;
+        }
+
+        var stopped = false;
+        try { stopped = worker.Wait(TimeSpan.FromSeconds(2)); }
+        catch (Exception ex) { VoiceDiagnostics.Log("bcl.mic.worker", $"reason=dispose err=\"{ex.Message}\""); }
+        if (stopped) StopMicrophone("dispose");
+        else VoiceDiagnostics.Log("bcl.mic.worker", "reason=dispose err=\"timed out waiting for capture worker\"");
+    }
+
     private void StartMicrophone(string reason)
     {
         try
@@ -750,7 +815,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
     {
         _disposed = true;
 #if WINDOWS
-        StopMicrophone("dispose");
+        StopMicrophoneWorkerForDispose();
         try { _waveOut?.Stop(); } catch { }
         try { _waveOut?.Dispose(); } catch { }
         _waveOut = null;

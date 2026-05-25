@@ -37,6 +37,7 @@ public static class VoiceChatHudState
     private static bool _impostorHeld;
     private static bool _pushToTalkHeld;
     private static bool _speakerMuted;
+    private static bool _initialized;
     private static float _overlayScale = 1f;
 
     public static bool IsMuted        => IsManualMuteActive();
@@ -44,6 +45,9 @@ public static class VoiceChatHudState
     public static bool IsSpeakerMuted => _speakerMuted;
     internal static void Init()
     {
+        if (_initialized) return;
+        _initialized = true;
+
         SceneManager.sceneLoaded +=
             (UnityEngine.Events.UnityAction<Scene, LoadSceneMode>)((_, __) =>
             {
