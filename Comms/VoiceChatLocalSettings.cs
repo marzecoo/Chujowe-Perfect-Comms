@@ -27,14 +27,6 @@ public enum SpkDeviceEnum
     Device9   =  9, Device10  = 10
 }
 
-public enum IndicatorPosition
-{
-    TopLeft     = 0,
-    TopRight    = 1,
-    BottomLeft  = 2,
-    BottomRight = 3,
-}
-
 public enum SpeakingBarPosition
 {
     TopLeft      = 0,
@@ -43,6 +35,8 @@ public enum SpeakingBarPosition
     BottomLeft   = 3,
     BottomMiddle = 4,
     BottomRight  = 5,
+    MiddleLeft   = 6,
+    MiddleRight  = 7,
 }
 
 public enum VoiceMicMode
@@ -105,8 +99,13 @@ public class VoiceChatLocalSettings : LocalSettingsTab
     public ConfigEntry<SpkDeviceEnum> SpeakerDeviceIndex { get; }
 #endif
 
-    [LocalEnumSetting("Indicator Position")]
-    public ConfigEntry<IndicatorPosition> VoiceIndicatorPosition { get; }
+    [LocalSliderSetting("Button Position X", min: 0f, max: 1f,
+        displayValue: true, formatString: "0.00")]
+    public ConfigEntry<float> ButtonPositionX { get; }
+
+    [LocalSliderSetting("Button Position Y", min: 0f, max: 1f,
+        displayValue: true, formatString: "0.00")]
+    public ConfigEntry<float> ButtonPositionY { get; }
 
     [LocalEnumSetting("Speaking Bar Position")]
     public ConfigEntry<SpeakingBarPosition> SpeakingBarPosition { get; }
@@ -254,9 +253,13 @@ public class VoiceChatLocalSettings : LocalSettingsTab
         };
 #endif
 
-        VoiceIndicatorPosition = config.Bind("UI", "VoiceIndicatorPosition",
-            IndicatorPosition.BottomRight,
-            new ConfigDescription("Position of the mic/speaker HUD buttons"));
+        ButtonPositionX = config.Bind("UI", "ButtonPositionX", 0.08f,
+            new ConfigDescription("Horizontal position of voice buttons (0 = left edge, 1 = right edge)",
+                new AcceptableValueRange<float>(0f, 1f)));
+
+        ButtonPositionY = config.Bind("UI", "ButtonPositionY", 0.90f,
+            new ConfigDescription("Vertical position of voice buttons (0 = bottom, 1 = top)",
+                new AcceptableValueRange<float>(0f, 1f)));
 
         SpeakingBarPosition = config.Bind("UI", "SpeakingBarPosition",
             VoiceChatPlugin.VoiceChat.SpeakingBarPosition.TopMiddle,
@@ -420,9 +423,9 @@ public class VoiceChatLocalSettings : LocalSettingsTab
             VoiceChatRoom.Current?.SetSpeaker(SpeakerDevice);
         }
 #endif
-        else if (configEntry == VoiceIndicatorPosition)
+        else if (configEntry == ButtonPositionX || configEntry == ButtonPositionY)
         {
-            VoiceChatHudState.ApplyIndicatorPosition(VoiceIndicatorPosition.Value);
+            VoiceChatHudState.RefreshButtonLayout();
         }
         else if (configEntry == SpeakingBarPosition)
         {
