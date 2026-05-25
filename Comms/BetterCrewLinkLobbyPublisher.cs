@@ -6,7 +6,7 @@ namespace VoiceChatPlugin.VoiceChat;
 
 internal static class BetterCrewLinkLobbyPublisher
 {
-    private const int RepublishIntervalSeconds = 15;
+    private static readonly TimeSpan FailureRetryDelay = TimeSpan.FromSeconds(5);
     private static SocketIOClient.SocketIO? _socket;
     private static string _serverUrl = "";
     private static bool _connected;
@@ -15,8 +15,9 @@ internal static class BetterCrewLinkLobbyPublisher
     private static string? _lastStandaloneSignature;
     private static string? _lastBackendSignature;
     private static string? _backendPublishedCode;
-    private static DateTime _nextStandalonePublishUtc = DateTime.MinValue;
-    private static DateTime _nextBackendPublishUtc = DateTime.MinValue;
+    private static int _lastBackendJoinEpoch = -1;
+    private static DateTime _nextStandaloneRetryUtc = DateTime.MinValue;
+    private static bool _publishDirty = true;
     private static Task? _pending;
 
     internal static void Update(string serverUrl, VoiceLobbyPublishRequest request)
@@ -26,34 +27,28 @@ internal static class BetterCrewLinkLobbyPublisher
         if (room?.IsBetterCrewLinkBackendActive == true)
         {
             ClearStandalone();
-            if (!string.IsNullOrEmpty(_backendPublishedCode)
-                && !string.Equals(_backendPublishedCode, request.Code, StringComparison.Ordinal))
-                room.TryRemoveBetterCrewLinkLobby(_backendPublishedCode);
-
-            var now = DateTime.UtcNow;
-            if (string.Equals(_lastBackendSignature, signature, StringComparison.Ordinal)
-                && now < _nextBackendPublishUtc)
-                return;
-
-            if (room.TryPublishBetterCrewLinkLobby(request))
-            {
-                _backendPublishedCode = request.Code;
-                _lastBackendSignature = signature;
-                _nextBackendPublishUtc = now.AddSeconds(RepublishIntervalSeconds);
-            }
+            PublishThroughBackendSocket(room, request, signature);
             return;
         }
 
         _backendPublishedCode = null;
         _lastBackendSignature = null;
+        _lastBackendJoinEpoch = -1;
         if (_pending is { IsCompleted: false }) return;
 
         EnsureStandaloneSocket(serverUrl);
         if (_socket?.Connected != true || !_connected)
             return;
 
-        if (string.Equals(_lastStandaloneSignature, signature, StringComparison.Ordinal)
-            && DateTime.UtcNow < _nextStandalonePublishUtc)
+        var signatureChanged = !string.Equals(_lastStandaloneSignature, signature, StringComparison.Ordinal);
+        var codeChanged = !string.Equals(_joinedCode, request.Code, StringComparison.Ordinal);
+        if (signatureChanged || codeChanged)
+            _publishDirty = true;
+
+        if (!_publishDirty)
+            return;
+
+        if (DateTime.UtcNow < _nextStandaloneRetryUtc)
             return;
 
         _pending = PublishStandaloneAsync(request, signature);
@@ -66,10 +61,34 @@ internal static class BetterCrewLinkLobbyPublisher
             VoiceChatRoom.Current?.TryRemoveBetterCrewLinkLobby(_backendPublishedCode);
             _backendPublishedCode = null;
             _lastBackendSignature = null;
-            _nextBackendPublishUtc = DateTime.MinValue;
+            _lastBackendJoinEpoch = -1;
         }
 
         ClearStandalone();
+    }
+
+    private static void PublishThroughBackendSocket(VoiceChatRoom room, VoiceLobbyPublishRequest request, string signature)
+    {
+        var joinEpoch = room.BetterCrewLinkPublicLobbyJoinEpoch;
+        var signatureChanged = !string.Equals(_lastBackendSignature, signature, StringComparison.Ordinal);
+        var codeChanged = !string.Equals(_backendPublishedCode, request.Code, StringComparison.Ordinal);
+        var rejoined = _lastBackendJoinEpoch != joinEpoch;
+
+        if (!string.IsNullOrEmpty(_backendPublishedCode) && codeChanged)
+        {
+            room.TryRemoveBetterCrewLinkLobby(_backendPublishedCode);
+            _backendPublishedCode = null;
+        }
+
+        if (!signatureChanged && !codeChanged && !rejoined)
+            return;
+
+        if (room.TryPublishBetterCrewLinkLobby(request))
+        {
+            _backendPublishedCode = request.Code;
+            _lastBackendSignature = signature;
+            _lastBackendJoinEpoch = joinEpoch;
+        }
     }
 
     private static void EnsureStandaloneSocket(string serverUrl)
@@ -84,6 +103,8 @@ internal static class BetterCrewLinkLobbyPublisher
         socket.OnConnected += async (_, _) =>
         {
             _connected = true;
+            _publishDirty = true;
+            _nextStandaloneRetryUtc = DateTime.MinValue;
             await Task.CompletedTask;
         };
         socket.OnDisconnected += (_, _) =>
@@ -92,7 +113,8 @@ internal static class BetterCrewLinkLobbyPublisher
             _joinedCode = null;
             _joinedClientId = -1;
             _lastStandaloneSignature = null;
-            _nextStandalonePublishUtc = DateTime.MinValue;
+            _publishDirty = true;
+            _nextStandaloneRetryUtc = DateTime.MinValue;
         };
         socket.On("clientPeerConfig", _ => { });
 
@@ -102,20 +124,31 @@ internal static class BetterCrewLinkLobbyPublisher
         _joinedCode = null;
         _joinedClientId = -1;
         _lastStandaloneSignature = null;
-        _nextStandalonePublishUtc = DateTime.MinValue;
+        _nextStandaloneRetryUtc = DateTime.MinValue;
+        _publishDirty = true;
         _ = socket.ConnectAsync();
     }
 
     private static async Task PublishStandaloneAsync(VoiceLobbyPublishRequest request, string signature)
     {
         var socket = _socket;
-        if (socket == null) return;
+        if (socket == null)
+        {
+            _publishDirty = true;
+            _nextStandaloneRetryUtc = DateTime.UtcNow.Add(FailureRetryDelay);
+            return;
+        }
 
         try
         {
             var playerId = ResolveLocalPlayerId();
             var clientId = AmongUsClient.Instance?.ClientId ?? -1;
-            if (clientId < 0) return;
+            if (clientId < 0)
+            {
+                _publishDirty = true;
+                _nextStandaloneRetryUtc = DateTime.UtcNow.Add(FailureRetryDelay);
+                return;
+            }
 
             if (!string.IsNullOrEmpty(_joinedCode)
                 && !string.Equals(_joinedCode, request.Code, StringComparison.Ordinal))
@@ -135,13 +168,14 @@ internal static class BetterCrewLinkLobbyPublisher
 
             await socket.EmitAsync("lobby", new object[] { request.Code, BetterCrewLinkLobbyMetadata.ToBclLobby(request) }).ConfigureAwait(false);
             _lastStandaloneSignature = signature;
-            _nextStandalonePublishUtc = DateTime.UtcNow.AddSeconds(RepublishIntervalSeconds);
+            _publishDirty = false;
+            _nextStandaloneRetryUtc = DateTime.MinValue;
         }
         catch (Exception ex)
         {
             VoiceDiagnostics.DebugWarning($"[VC] BCL lobby publish failed: {ex.Message}");
-            _lastStandaloneSignature = null;
-            _nextStandalonePublishUtc = DateTime.MinValue;
+            _publishDirty = true;
+            _nextStandaloneRetryUtc = DateTime.UtcNow.Add(FailureRetryDelay);
         }
     }
 
@@ -150,13 +184,13 @@ internal static class BetterCrewLinkLobbyPublisher
         var socket = _socket;
         var code = _joinedCode;
         _socket = null;
-        _serverUrl = "";
         _connected = false;
         _joinedCode = null;
         _joinedClientId = -1;
         _lastStandaloneSignature = null;
-        _nextStandalonePublishUtc = DateTime.MinValue;
-        _pending = null;
+        _nextStandaloneRetryUtc = DateTime.MinValue;
+        _publishDirty = true;
+
         if (socket == null) return;
         _ = ClearStandaloneAsync(socket, code);
     }

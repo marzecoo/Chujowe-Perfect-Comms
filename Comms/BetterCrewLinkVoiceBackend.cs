@@ -59,6 +59,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
     private byte _joinedPlayerId = byte.MaxValue;
     private int _joinedClientId = -1;
     private bool _joinedIsHost;
+    private int _publicLobbyJoinEpoch;
     private string _localSocketId = string.Empty;
     private string _lastPlayerName = string.Empty;
     private bool _lastLocalRadioActive;
@@ -164,6 +165,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
     public string RoomCode { get; }
     public string Region { get; }
     public string ServerUrl { get; }
+    internal int PublicLobbyJoinEpoch => Volatile.Read(ref _publicLobbyJoinEpoch);
     public bool UsingMicrophone => _microphoneReady;
     public bool UsingSpeaker => _speakerReady;
     public bool Mute { get; private set; }
@@ -1047,6 +1049,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
                 _joinedPlayerId = _lastPlayerId;
                 _joinedClientId = localClientId;
                 _joinedIsHost = isHost;
+                Interlocked.Increment(ref _publicLobbyJoinEpoch);
             }
         }
         finally

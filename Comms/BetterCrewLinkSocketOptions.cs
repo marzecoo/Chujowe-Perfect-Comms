@@ -17,6 +17,7 @@ internal static class BetterCrewLinkSocketOptions
             Reconnection = true,
             ReconnectionAttempts = int.MaxValue,
             EIO = SocketIO.Core.EngineIO.V3,
+            Transport = SocketIOClient.Transport.TransportProtocol.WebSocket,
             ExtraHeaders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
                 [UserAgentHeader] = UserAgent,

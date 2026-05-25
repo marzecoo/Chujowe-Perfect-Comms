@@ -52,6 +52,7 @@ public class VoiceChatRoom
     // ── Microphone ─────────────────────────────────────────────────────────────
     public bool UsingMicrophone => _voiceBackend?.UsingMicrophone == true;
     internal bool IsBetterCrewLinkBackendActive => _betterCrewLinkVoice != null;
+    internal int BetterCrewLinkPublicLobbyJoinEpoch => _betterCrewLinkVoice?.PublicLobbyJoinEpoch ?? 0;
     private IVoiceBackend? _voiceBackend;
     private InterstellarVoiceBackend? _interstellarVoice;
     private BetterCrewLinkVoiceBackend? _betterCrewLinkVoice;
