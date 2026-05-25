@@ -257,6 +257,10 @@ public static class VoiceChatHudState
             {
                 if (sr != null) { sr.sprite = Sprites.MicOff; sr.color = new Color(1f, 0.65f, 0.15f); }
             }
+            else if (_speakerMuted)
+            {
+                if (sr != null) { sr.sprite = Sprites.MicOff; sr.color = new Color(1f, 0.4f, 0.4f); }
+            }
             else if (IsManualMuteActive())
             {
                 if (sr != null) { sr.sprite = Sprites.MicOff; sr.color = new Color(1f, 0.4f, 0.4f); }
@@ -292,7 +296,7 @@ public static class VoiceChatHudState
         if (pushToTalkMode && _micMuted) _micMuted = false;
         bool pushToTalkMuted = pushToTalkMode && !_pushToTalkHeld && !radioTransmit;
         bool roleMuted       = VoiceRoleMuteState.IsLocalMeetingVoiceBlocked();
-        VoiceChatRoom.Current?.SetMute(_micMuted || pushToTalkMuted || roleMuted);
+        VoiceChatRoom.Current?.SetMute(_speakerMuted || _micMuted || pushToTalkMuted || roleMuted);
     }
 
     internal static void ApplySpeakerState()
@@ -350,6 +354,7 @@ public static class VoiceChatHudState
     internal static bool IsInImpostorRadioMode()
         => _impostorHeld
         && CanUseImpostorRadio()
+        && !_speakerMuted
         && !IsManualMuteActive()
         && !VoiceRoleMuteState.IsLocalMeetingVoiceBlocked();
 
@@ -373,7 +378,9 @@ public static class VoiceChatHudState
     internal static void SetSpeakerMuted(bool muted)
     {
         _speakerMuted = muted;
+        ApplyMicState();
         ApplySpeakerState();
+        if (_speakerMuted) MeetingSpeakingIndicatorPatch.ClearLocalIndicator();
         RefreshButtonVisuals();
     }
 
@@ -431,6 +438,7 @@ public static class VoiceChatHudState
         bool pushToTalkMode = tab?.MicMode.Value == VoiceMicMode.PushToTalk;
         string status = VoiceRoleMuteState.TryGetLocalMeetingVoiceBlockReason(out string roleMuteReason)
             ? roleMuteReason
+            : _speakerMuted ? "Deafened"
             : IsManualMuteActive() ? "Muted"
             : IsInImpostorRadioMode() ? "Impostor Radio (held)"
             : pushToTalkMode ? "Push To Talk"
