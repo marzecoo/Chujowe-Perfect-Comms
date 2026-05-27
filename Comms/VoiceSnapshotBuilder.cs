@@ -31,7 +31,8 @@ internal static class VoiceSnapshotBuilder
                 out bool isParasiteControlled,
                 out bool isPuppeteerControlled,
                 out _,
-                out bool isBlackmailedNextRound);
+                out bool isBlackmailedNextRound,
+                out bool isSwooped);
 
             players.Add(new VoicePlayerSnapshot(
                 player.PlayerId,
@@ -50,7 +51,8 @@ internal static class VoiceSnapshotBuilder
                 jailorId,
                 isParasiteControlled,
                 isPuppeteerControlled,
-                isBlackmailedNextRound));
+                isBlackmailedNextRound,
+                isSwooped));
         }
 
         return new VoiceGameStateSnapshot(

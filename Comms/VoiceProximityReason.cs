@@ -15,6 +15,7 @@ internal enum VoiceProximityReason
     Jailed,
     ParasiteControlled,
     PuppeteerControlled,
+    Swooped,
     MeetingLiving,
     ImpostorRadio,
     ImpostorRadioMuted,

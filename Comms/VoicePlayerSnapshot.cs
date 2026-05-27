@@ -19,4 +19,5 @@ internal readonly record struct VoicePlayerSnapshot(
     byte JailorId,
     bool IsParasiteControlled,
     bool IsPuppeteerControlled,
-    bool IsBlackmailedNextRound);
+    bool IsBlackmailedNextRound,
+    bool IsSwooped);

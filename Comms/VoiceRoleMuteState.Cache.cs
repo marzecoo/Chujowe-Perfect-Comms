@@ -15,6 +15,7 @@ internal static partial class VoiceRoleMuteState
             _parasiteInfectedModifierType == null &&
             _puppeteerControlModifierType == null &&
             _crewpostorModifierType == null &&
+            _swoopModifierType == null &&
             PostMeetingBlackmailedPlayers.Count == 0)
         {
             RoleStateCache.Clear();
@@ -39,6 +40,7 @@ internal static partial class VoiceRoleMuteState
         bool isParasiteControlled = GetModifier(player, _parasiteInfectedModifierType) != null;
         bool isPuppeteerControlled = GetModifier(player, _puppeteerControlModifierType) != null;
         bool isCrewpostor = GetModifier(player, _crewpostorModifierType) != null;
+        bool isSwooped = GetModifier(player, _swoopModifierType) != null;
         bool isBlackmailedNextRound = PostMeetingBlackmailedPlayers.Contains(player.PlayerId);
         byte jailorId = byte.MaxValue;
         bool isJailed = false;
@@ -68,7 +70,8 @@ internal static partial class VoiceRoleMuteState
             isParasiteControlled,
             isPuppeteerControlled,
             isCrewpostor,
-            isBlackmailedNextRound);
+            isBlackmailedNextRound,
+            isSwooped);
     }
 
     private static BaseModifier? GetModifier(PlayerControl player, Type? type)
@@ -106,6 +109,7 @@ internal static partial class VoiceRoleMuteState
         _parasiteInfectedModifierType = ResolveType(ParasiteInfectedModifierName);
         _puppeteerControlModifierType = ResolveType(PuppeteerControlModifierName);
         _crewpostorModifierType = ResolveType(CrewpostorModifierName);
+        _swoopModifierType = ResolveType(SwoopModifierName);
         _supportedModTypesResolved = true;
         InvalidateRoleStateCache();
     }

@@ -62,7 +62,7 @@ internal sealed class VoiceOverlayState
             VoiceChatHudState.IsMuted,
             VoiceChatHudState.IsSpeakerMuted,
             room.LocalMicLevel,
-            room.LocalMicSpeaking && !VoiceChatHudState.IsMuted,
+            room.LocalMicSpeaking && !VoiceChatHudState.IsMuted && !VoiceRoleMuteState.IsLocalVoiceBlocked(),
             room.UsingMicrophone,
             room.UsingSpeaker);
 
