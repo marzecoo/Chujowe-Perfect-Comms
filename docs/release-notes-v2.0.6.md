@@ -7,3 +7,4 @@ This Perfect Comms release adds more role-based voice rules and styling improvem
 ### What's Changed
 
 - Added Crewpostor support for impostor voice behavior, including impostor radio, vent voice behavior, and other impostor-only voice routing.
+- Added *Mute Swooper While Swooped* so Swooper voice can optionally mute during the ability.

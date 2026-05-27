@@ -17,9 +17,11 @@ public static class VoiceRoomControlCodec
 {
     private const byte Magic0 = (byte)'P';
     private const byte Magic1 = (byte)'C';
-    private const byte Version = 4;
+    private const byte Version = 5;
+    private const byte LegacyVersion = 4;
     private const int HeaderBytes = 4;
-    private const int FixedSettingsBytes = 4 + 4 + 4 + 4 + 17;
+    private const int LegacyFixedSettingsBytes = 4 + 4 + 4 + 4 + 17;
+    private const int FixedSettingsBytes = 4 + 4 + 4 + 4 + 18;
     private const int MaxServerUrlBytes = 512;
 
     public static byte[] EncodeHostSettingsSnapshot(VoiceRoomSettingsSnapshot settings)
@@ -45,7 +47,8 @@ public static class VoiceRoomControlCodec
     {
         message = default;
         if (payload.Length < HeaderBytes) return false;
-        if (payload[0] != Magic0 || payload[1] != Magic1 || payload[2] != Version) return false;
+        var version = payload[2];
+        if (payload[0] != Magic0 || payload[1] != Magic1 || version is not (Version or LegacyVersion)) return false;
 
         var kind = (VoiceRoomControlMessageKind)payload[3];
         if (kind == VoiceRoomControlMessageKind.HostSettingsRequest)
@@ -57,7 +60,7 @@ public static class VoiceRoomControlCodec
 
         if (kind == VoiceRoomControlMessageKind.HostSettingsSnapshot)
         {
-            if (!TryReadSettings(payload[HeaderBytes..], out var settings)) return false;
+            if (!TryReadSettings(payload[HeaderBytes..], version, out var settings)) return false;
             message = new VoiceRoomControlMessage(kind, settings);
             return true;
         }
@@ -96,17 +99,19 @@ public static class VoiceRoomControlCodec
         buffer[30] = ToByte(settings.MuteParasiteControlled);
         buffer[31] = ToByte(settings.MutePuppeteerControlled);
         buffer[32] = ToByte(settings.CrewpostorUsesImpostorVoice);
+        buffer[33] = ToByte(settings.MuteSwooperWhileSwooped);
         BinaryPrimitives.WriteUInt16LittleEndian(buffer[FixedSettingsBytes..], checked((ushort)serverUrlBytes.Length));
         serverUrlBytes.CopyTo(buffer[(FixedSettingsBytes + 2)..]);
     }
 
-    private static bool TryReadSettings(ReadOnlySpan<byte> buffer, out VoiceRoomSettingsSnapshot settings)
+    private static bool TryReadSettings(ReadOnlySpan<byte> buffer, byte version, out VoiceRoomSettingsSnapshot settings)
     {
         settings = default;
-        if (buffer.Length < FixedSettingsBytes + 2) return false;
-        var serverUrlLength = BinaryPrimitives.ReadUInt16LittleEndian(buffer[FixedSettingsBytes..]);
-        if (serverUrlLength > MaxServerUrlBytes || buffer.Length != FixedSettingsBytes + 2 + serverUrlLength) return false;
-        var serverUrl = System.Text.Encoding.UTF8.GetString(buffer.Slice(FixedSettingsBytes + 2, serverUrlLength));
+        var fixedSettingsBytes = version == LegacyVersion ? LegacyFixedSettingsBytes : FixedSettingsBytes;
+        if (buffer.Length < fixedSettingsBytes + 2) return false;
+        var serverUrlLength = BinaryPrimitives.ReadUInt16LittleEndian(buffer[fixedSettingsBytes..]);
+        if (serverUrlLength > MaxServerUrlBytes || buffer.Length != fixedSettingsBytes + 2 + serverUrlLength) return false;
+        var serverUrl = System.Text.Encoding.UTF8.GetString(buffer.Slice(fixedSettingsBytes + 2, serverUrlLength));
         settings = new VoiceRoomSettingsSnapshot(
             BinaryPrimitives.ReadInt32LittleEndian(buffer),
             serverUrl,
@@ -129,7 +134,8 @@ public static class VoiceRoomControlCodec
             buffer[29] != 0,
             buffer[30] != 0,
             buffer[31] != 0,
-            buffer[32] != 0).Clamp();
+            buffer[32] != 0,
+            version == LegacyVersion || buffer[33] != 0).Clamp();
         return true;
     }
 

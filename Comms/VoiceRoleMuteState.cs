@@ -358,7 +358,7 @@ internal static partial class VoiceRoleMuteState
     {
         reason = VoiceProximityReason.MeetingLiving;
 
-        if (state.IsSwooped)
+        if (settings.MuteSwooperWhileSwooped && state.IsSwooped)
         {
             reason = VoiceProximityReason.Swooped;
             return true;
@@ -391,7 +391,7 @@ internal static partial class VoiceRoleMuteState
         _ = playerId;
         reason = VoiceProximityReason.Proximity;
 
-        if (state.IsSwooped)
+        if (settings.MuteSwooperWhileSwooped && state.IsSwooped)
         {
             reason = VoiceProximityReason.Swooped;
             return true;

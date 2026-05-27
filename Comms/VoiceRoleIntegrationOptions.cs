@@ -16,6 +16,7 @@ public class VoiceRoleIntegrationOptions : AbstractOptionGroup
     public ModdedToggleOption JailorCanUnmuteJailed { get; } = new("Jailor Can Unmute <color=#909190><b>Jailee</b></color>", true);
     public ModdedToggleOption MuteParasiteControlled { get; } = new("Mute <color=#FF6666><b>Parasite</b></color>'s Victim", true);
     public ModdedToggleOption MutePuppeteerControlled { get; } = new("Mute <color=#FF6666><b>Puppeteer</b></color>'s Victim", true);
+    public ModdedToggleOption MuteSwooperWhileSwooped { get; } = new("Mute <color=#FF6666><b>Swooper</b></color> While Swooped", true);
     public ModdedToggleOption CrewpostorUsesImpostorVoice { get; } = new("Crewpostor Uses Impostor Voice", true);
 
     internal static VoiceRoleIntegrationOptions GetInstance() =>
