@@ -146,7 +146,7 @@ public class VoiceChatRoom
 
     public void SetMasterVolume(float v)
     {
-        _voiceBackend?.SetMasterVolume(v);
+        _voiceBackend?.SetMasterVolume(VoiceChatHudState.GetEffectiveMasterVolume(v));
     }
 
     public void SetMicVolume(float v)
@@ -584,7 +584,7 @@ public class VoiceChatRoom
         _betterCrewLinkVoice = _voiceBackend as BetterCrewLinkVoiceBackend;
         _voiceBackend.CustomMessageReceived += HandleBackendCustomMessage;
         _voiceBackend.SetMute(Mute);
-        _voiceBackend.SetMasterVolume(settings?.MasterVolume.Value ?? 1f);
+        SetMasterVolume(settings?.MasterVolume.Value ?? 1f);
         _voiceBackend.SetNoiseGate(
             ApplyMicSensitivity(settings?.NoiseGateThreshold.Value ?? 0.003f, settings?.MicSensitivity.Value ?? 1f),
             ApplyMicSensitivity(settings?.VadThreshold.Value ?? 0.004f, settings?.MicSensitivity.Value ?? 1f));
@@ -645,11 +645,11 @@ public class VoiceChatRoom
     }
 
     private static int CountExpectedRemotePlayers(VoiceGameStateSnapshot snapshot)
-        => snapshot.Players.Count(player => !player.IsLocal && !player.Disconnected && !player.IsDummy && player.ClientId >= 0);
+        => snapshot.Players.Count(player => !player.IsLocal && !VoiceProximityCalculator.IsUnavailableTarget(player) && player.ClientId >= 0);
 
     private static string DescribeExpectedRemotePlayers(VoiceGameStateSnapshot snapshot)
         => string.Join(",", snapshot.Players
-            .Where(player => !player.IsLocal && !player.Disconnected && !player.IsDummy && player.ClientId >= 0)
+            .Where(player => !player.IsLocal && !VoiceProximityCalculator.IsUnavailableTarget(player) && player.ClientId >= 0)
             .Select(player => $"{player.ClientId}:{LogSafe(player.PlayerName)}"));
 
     private static bool TryGetVoiceRoomIdentity(VoiceGameStateSnapshot? snapshot, VoiceTransportBackend backend, out string roomCode, out string region)

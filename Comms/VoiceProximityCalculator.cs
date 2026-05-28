@@ -17,11 +17,13 @@ internal static class VoiceProximityCalculator
     {
         if (!targetPlayer.HasValue)
             return VoiceProximityResult.Muted(VoiceProximityReason.Unmapped);
+        var target = targetPlayer.Value;
+        if (IsUnavailableTarget(target))
+            return VoiceProximityResult.Muted(VoiceProximityReason.TargetUnavailable);
         if (!listenerPos.HasValue)
             return VoiceProximityResult.Muted(VoiceProximityReason.NoListener);
 
         var s = VoiceRoomSettingsState.Current;
-        var target = targetPlayer.Value;
         float maxDistance = s.MaxChatDistance;
         float dist = Distance(target.Position, listenerPos.Value);
         float volume = VoiceAudioOcclusion.ApplyFalloff(dist, maxDistance, (VoiceFalloffMode)s.FalloffMode);
@@ -38,20 +40,33 @@ internal static class VoiceProximityCalculator
         VoicePlayerSnapshot? targetPlayer,
         bool targetRadioActive,
         VoiceTeamRadioChannel targetRadioChannel = VoiceTeamRadioChannel.All)
+        => CalculateMeeting(localPlayer, targetPlayer, targetRadioActive, VoiceGamePhase.Meeting, targetRadioChannel);
+
+    public static VoiceProximityResult CalculateMeeting(
+        VoicePlayerSnapshot? localPlayer,
+        VoicePlayerSnapshot? targetPlayer,
+        bool targetRadioActive,
+        VoiceGamePhase phase,
+        VoiceTeamRadioChannel targetRadioChannel = VoiceTeamRadioChannel.All)
     {
         if (!targetPlayer.HasValue)
             return VoiceProximityResult.Muted(VoiceProximityReason.Unmapped);
 
         var s = VoiceRoomSettingsState.Current;
         var target = targetPlayer.Value;
+        if (IsUnavailableTarget(target))
+            return VoiceProximityResult.Muted(VoiceProximityReason.TargetUnavailable);
         bool localDead = localPlayer?.IsDead == true;
         bool targetDead = target.IsDead;
+
+        if (s.TouMceHackerJamMutesVoice && TouMceVoiceIntegration.IsHackerJammed())
+            return VoiceProximityResult.Muted(VoiceProximityReason.HackerJam);
 
         if (s.OnlyGhostsCanTalk && !localDead)
             return VoiceProximityResult.Muted(VoiceProximityReason.OnlyGhostsCanTalk);
 
-        if (VoiceRoleMuteState.IsMeetingVoiceBlocked(target))
-            return VoiceProximityResult.Muted(VoiceRoleMuteState.GetMeetingBlockReason(target));
+        if (VoiceRoleMuteState.IsMeetingVoiceBlocked(target, phase))
+            return VoiceProximityResult.Muted(VoiceRoleMuteState.GetMeetingBlockReason(target, phase));
 
         if (s.TeamRadio && targetRadioActive && !targetDead)
         {
@@ -112,11 +127,13 @@ internal static class VoiceProximityCalculator
     {
         if (!targetPlayer.HasValue)
             return VoiceProximityResult.Muted(VoiceProximityReason.Unmapped, previousWallCoefficient);
+        var target = targetPlayer.Value;
+        if (IsUnavailableTarget(target))
+            return VoiceProximityResult.Muted(VoiceProximityReason.TargetUnavailable, previousWallCoefficient);
         if (!listenerPos.HasValue)
             return VoiceProximityResult.Muted(VoiceProximityReason.NoListener, previousWallCoefficient);
 
         var s = VoiceRoomSettingsState.Current;
-        var target = targetPlayer.Value;
         var targetPos = target.Position;
         var localListenerPos = ResolveListenerPosition(localPlayer, listenerPos.Value);
         Vector2 cameraPosition = default;
@@ -134,11 +151,15 @@ internal static class VoiceProximityCalculator
         bool targetInVent = target.InVent;
         bool localMediatingMedium = IsMediatingMedium(localPlayer) &&
                                      (MediumGhostVoiceMode)s.MediumGhostVoice != MediumGhostVoiceMode.None;
+
+        if (s.TouMceHackerJamMutesVoice && TouMceVoiceIntegration.IsHackerJammed())
+            return VoiceProximityResult.Muted(VoiceProximityReason.HackerJam, previousWallCoefficient);
+
         var touMceRoute = TryCalculateTouMceRoute(localPlayer, target, s, previousWallCoefficient);
         if (touMceRoute.HasValue)
             return touMceRoute.Value;
 
-        if (s.OnlyMeetingOrLobby)
+        if (ShouldMeetingLobbyOnlyBlockTaskVoice(s, localDead, targetDead))
             return VoiceProximityResult.Muted(VoiceProximityReason.OnlyMeetingOrLobby, previousWallCoefficient);
 
         var mediumGhostRoute = TryCalculateMediumGhostRoute(localPlayer, target, localListenerPos, s, previousWallCoefficient);
@@ -256,6 +277,13 @@ internal static class VoiceProximityCalculator
         return SelectBestNormalRoute(proximityRoute, virtualRoute, cameraRoute);
     }
 
+    private static bool ShouldMeetingLobbyOnlyBlockTaskVoice(
+        VoiceRoomSettingsSnapshot settings,
+        bool localDead,
+        bool targetDead)
+        => settings.OnlyMeetingOrLobby &&
+           (settings.OnlyMeetingOrLobbyAffectsGhosts || !localDead || !targetDead);
+
     private static VoiceProximityResult? TryCalculateTouMceRoute(
         VoicePlayerSnapshot? localPlayer,
         VoicePlayerSnapshot target,
@@ -269,14 +297,9 @@ internal static class VoiceProximityCalculator
         if (TryCalculateTouMcePelicanRoute(local, target, settings, wallCoefficient, out var pelicanRoute))
             return pelicanRoute;
 
-        if (settings.TouMceRecruitVoice && TryCalculateTouMceJackalRoute(local, target, wallCoefficient, out var jackalRoute))
-            return jackalRoute;
-
-        if (settings.TouMceSpiritMasterGhostVoice && TryCalculateTouMceSpiritMasterRoute(local, target, wallCoefficient, out var spiritMasterRoute))
+        if ((MediumGhostVoiceMode)settings.TouMceSpiritMasterGhostVoice != MediumGhostVoiceMode.None &&
+            TryCalculateTouMceSpiritMasterRoute(local, target, settings, wallCoefficient, out var spiritMasterRoute))
             return spiritMasterRoute;
-
-        if (settings.TouMceLawyerClientVoice && TryCalculateTouMceLawyerRoute(local, target, wallCoefficient, out var lawyerRoute))
-            return lawyerRoute;
 
         return null;
     }
@@ -312,29 +335,10 @@ internal static class VoiceProximityCalculator
         return true;
     }
 
-    private static bool TryCalculateTouMceJackalRoute(
-        VoicePlayerSnapshot local,
-        VoicePlayerSnapshot target,
-        float wallCoefficient,
-        out VoiceProximityResult result)
-    {
-        result = default;
-
-        if (local.IsDead || target.IsDead ||
-            local.TouMceJackalTeamId == byte.MaxValue ||
-            local.TouMceJackalTeamId != target.TouMceJackalTeamId)
-        {
-            return false;
-        }
-
-        result = new(0f, 0f, 1f, 0f, VoiceAudioFilterMode.Radio,
-            true, VoiceProximityReason.TeamRadio, wallCoefficient);
-        return true;
-    }
-
     private static bool TryCalculateTouMceSpiritMasterRoute(
         VoicePlayerSnapshot local,
         VoicePlayerSnapshot target,
+        VoiceRoomSettingsSnapshot settings,
         float wallCoefficient,
         out VoiceProximityResult result)
     {
@@ -349,35 +353,12 @@ internal static class VoiceProximityCalculator
             target.IsTouMceSpiritMaster &&
             local.TouMceSpiritMasterId == target.PlayerId;
 
+        var mode = (MediumGhostVoiceMode)settings.TouMceSpiritMasterGhostVoice;
+        if (localIsTargetsSpiritMaster && !MediumCanTalkToGhosts(mode))
+            return false;
+        if (targetIsLocalsSpiritMaster && !GhostCanTalkToMedium(mode))
+            return false;
         if (!localIsTargetsSpiritMaster && !targetIsLocalsSpiritMaster)
-            return false;
-
-        result = new(1f, 0f, 0f, 0f, VoiceAudioFilterMode.None,
-            true, VoiceProximityReason.Proximity, wallCoefficient);
-        return true;
-    }
-
-    private static bool TryCalculateTouMceLawyerRoute(
-        VoicePlayerSnapshot local,
-        VoicePlayerSnapshot target,
-        float wallCoefficient,
-        out VoiceProximityResult result)
-    {
-        result = default;
-
-        if (local.IsDead || target.IsDead)
-            return false;
-
-        bool localIsTargetsLawyer =
-            target.TouMceLawyerOwnerId == local.PlayerId &&
-            local.IsTouMceLawyer &&
-            local.TouMceLawyerClientId == target.PlayerId;
-        bool targetIsLocalsLawyer =
-            local.TouMceLawyerOwnerId == target.PlayerId &&
-            target.IsTouMceLawyer &&
-            target.TouMceLawyerClientId == local.PlayerId;
-
-        if (!localIsTargetsLawyer && !targetIsLocalsLawyer)
             return false;
 
         result = new(1f, 0f, 0f, 0f, VoiceAudioFilterMode.None,
@@ -400,10 +381,14 @@ internal static class VoiceProximityCalculator
             VoiceTeamRadioChannel.Impostors => settings.TeamRadioImpostors && local.IsImpostor && target.IsImpostor,
             VoiceTeamRadioChannel.Vampires => settings.TeamRadioVampires && local.IsVampire && target.IsVampire,
             VoiceTeamRadioChannel.Lovers => settings.TeamRadioLovers && AreLinkedLovers(local, target),
+            VoiceTeamRadioChannel.Recruits => settings.TeamRadioRecruits && AreTouMceRecruits(local, target),
+            VoiceTeamRadioChannel.Lawyer => settings.TeamRadioLawyer && AreTouMceLawyerPair(local, target),
             VoiceTeamRadioChannel.All =>
                 (settings.TeamRadioImpostors && local.IsImpostor && target.IsImpostor) ||
                 (settings.TeamRadioVampires && local.IsVampire && target.IsVampire) ||
-                (settings.TeamRadioLovers && AreLinkedLovers(local, target)),
+                (settings.TeamRadioLovers && AreLinkedLovers(local, target)) ||
+                (settings.TeamRadioRecruits && AreTouMceRecruits(local, target)) ||
+                (settings.TeamRadioLawyer && AreTouMceLawyerPair(local, target)),
             _ => false,
         };
     }
@@ -535,6 +520,32 @@ internal static class VoiceProximityCalculator
                target.LoverPartnerId == local.PlayerId ||
                local.LoverPartnerId == byte.MaxValue ||
                target.LoverPartnerId == byte.MaxValue;
+    }
+
+    internal static bool IsUnavailableTarget(VoicePlayerSnapshot target)
+        => target.Disconnected || target.IsDummy || !target.IsVisible;
+
+    private static bool AreTouMceRecruits(VoicePlayerSnapshot local, VoicePlayerSnapshot target)
+        => !local.IsDead &&
+           !target.IsDead &&
+           local.TouMceJackalTeamId != byte.MaxValue &&
+           local.TouMceJackalTeamId == target.TouMceJackalTeamId;
+
+    private static bool AreTouMceLawyerPair(VoicePlayerSnapshot local, VoicePlayerSnapshot target)
+    {
+        if (local.IsDead || target.IsDead)
+            return false;
+
+        bool localIsTargetsLawyer =
+            target.TouMceLawyerOwnerId == local.PlayerId &&
+            local.IsTouMceLawyer &&
+            local.TouMceLawyerClientId == target.PlayerId;
+        bool targetIsLocalsLawyer =
+            local.TouMceLawyerOwnerId == target.PlayerId &&
+            target.IsTouMceLawyer &&
+            target.TouMceLawyerClientId == local.PlayerId;
+
+        return localIsTargetsLawyer || targetIsLocalsLawyer;
     }
 
     private static VoiceProximityResult CalculateVirtualRoute(

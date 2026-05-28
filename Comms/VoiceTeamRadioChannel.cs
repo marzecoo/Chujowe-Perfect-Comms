@@ -6,6 +6,8 @@ internal enum VoiceTeamRadioChannel : byte
     Impostors = 1,
     Vampires = 2,
     Lovers = 3,
+    Recruits = 4,
+    Lawyer = 5,
     All = byte.MaxValue,
 }
 
@@ -16,6 +18,8 @@ internal static class VoiceTeamRadioChannels
         VoiceTeamRadioChannel.Impostors,
         VoiceTeamRadioChannel.Vampires,
         VoiceTeamRadioChannel.Lovers,
+        VoiceTeamRadioChannel.Recruits,
+        VoiceTeamRadioChannel.Lawyer,
     ];
 
     public static VoiceTeamRadioChannel FromWire(bool active, byte? channel)
@@ -33,6 +37,8 @@ internal static class VoiceTeamRadioChannels
         => channel is VoiceTeamRadioChannel.Impostors
             or VoiceTeamRadioChannel.Vampires
             or VoiceTeamRadioChannel.Lovers
+            or VoiceTeamRadioChannel.Recruits
+            or VoiceTeamRadioChannel.Lawyer
             or VoiceTeamRadioChannel.All
             ? channel
             : VoiceTeamRadioChannel.None;
@@ -46,6 +52,8 @@ internal static class VoiceTeamRadioChannels
             VoiceTeamRadioChannel.Impostors => "Impostors",
             VoiceTeamRadioChannel.Vampires => "Vampires",
             VoiceTeamRadioChannel.Lovers => "Lovers",
+            VoiceTeamRadioChannel.Recruits => "Recruits",
+            VoiceTeamRadioChannel.Lawyer => "Lawyer",
             VoiceTeamRadioChannel.All => "All Teams",
             _ => "Unavailable",
         };

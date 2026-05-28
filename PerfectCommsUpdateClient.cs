@@ -25,9 +25,10 @@ internal sealed class GitHubReleaseInfo
 
 internal static class PerfectCommsUpdateClient
 {
-    private const string GitHubLatestReleaseUrl = "https://api.github.com/repos/artriy/Perfect-Comms/releases/latest";
+    private const string GitHubLatestReleaseUrl = "https://api.github.com/repos/marzecoo/Chujowe-Perfect-Comms/releases/latest";
+    private const string LegacyGitHubLatestReleaseUrl = "https://api.github.com/repos/artriy/Perfect-Comms/releases/latest";
     private const string LegacyCloudflareUpdateUrl = "https://perfect-comms-lobbies.edgetel.workers.dev/updates/latest";
-    private const string GitHubReleasesUrl = "https://github.com/artriy/Perfect-Comms/releases/latest";
+    private const string GitHubReleasesUrl = "https://github.com/marzecoo/Chujowe-Perfect-Comms/releases/latest";
 
     private static readonly HttpClient Client = new()
     {
@@ -62,6 +63,9 @@ internal static class PerfectCommsUpdateClient
             return GitHubLatestReleaseUrl;
 
         if (url.StartsWith(LegacyCloudflareUpdateUrl, StringComparison.OrdinalIgnoreCase))
+            return GitHubLatestReleaseUrl;
+
+        if (url.StartsWith(LegacyGitHubLatestReleaseUrl, StringComparison.OrdinalIgnoreCase))
             return GitHubLatestReleaseUrl;
 
         if (string.Equals(uri.Host, "api.github.com", StringComparison.OrdinalIgnoreCase))

@@ -87,7 +87,7 @@ public class VoiceChatLocalSettings : LocalSettingsTab
         displayValue: true, formatString: "0.00")]
     public ConfigEntry<float> MicSensitivity { get; }
 
-    [LocalSliderSetting("Speaker Volume", min: 0.1f, max: 2f,
+    [LocalSliderSetting("Speaker Volume", min: 0.1f, max: 3f,
         displayValue: true, formatString: "0.00")]
     public ConfigEntry<float> MasterVolume { get; }
 
@@ -207,7 +207,7 @@ public class VoiceChatLocalSettings : LocalSettingsTab
 
         MasterVolume = config.Bind("Audio", "MasterVolume", 1f,
             new ConfigDescription("Master output volume",
-                new AcceptableValueRange<float>(0.1f, 2f)));
+                new AcceptableValueRange<float>(0.1f, 3f)));
 
         MicMode = config.Bind("Audio", "MicMode", VoiceMicMode.OpenMic,
             new ConfigDescription("Microphone activation mode"));
@@ -363,7 +363,7 @@ public class VoiceChatLocalSettings : LocalSettingsTab
             new ConfigDescription("Show Mega Chujowe Perfect Comms update notifications on the main menu"));
 
         UpdateNotificationUrl = config.Bind("Updates", "NotificationUrl",
-            "https://api.github.com/repos/artriy/Perfect-Comms/releases/latest",
+            "https://api.github.com/repos/marzecoo/Chujowe-Perfect-Comms/releases/latest",
             new ConfigDescription("Mega Chujowe Perfect Comms GitHub latest-release API endpoint"));
 
         ShowTestUpdateNotifications = config.Bind("Updates", "ShowTestNotifications", false,
@@ -455,7 +455,7 @@ public class VoiceChatLocalSettings : LocalSettingsTab
         }
         else if (configEntry == MasterVolume)
         {
-            VoiceChatRoom.Current?.SetMasterVolume(MasterVolume.Value);
+            VoiceChatHudState.ApplySpeakerState();
         }
         else if (configEntry == MicMode)
         {

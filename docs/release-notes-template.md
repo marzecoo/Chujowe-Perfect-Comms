@@ -4,7 +4,7 @@ Use this divider in every versioned changelog or release-notes page, directly af
 
 ```html
 <p align="center">
-  <img src="https://raw.githubusercontent.com/artriy/Perfect-Comms/vX.Y.Z/assets/brand/divider.svg" alt="divider" width="900">
+  <img src="https://raw.githubusercontent.com/marzecoo/Chujowe-Perfect-Comms/vX.Y.Z/assets/brand/divider.svg" alt="divider" width="900">
 </p>
 ```
 

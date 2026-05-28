@@ -1,5 +1,18 @@
 # Changelog
 
+## Mega Chujowe Perfect Comms v1.0.1
+
+Fork release for [Town Of Us Mega Chujowe Extension](https://github.com/HekerB/TownOfUsMegaChujoweExtension).
+
+- Built as `MegaChujowePerfectComms.dll`.
+- Update popups and patch notes now point to the fork releases at [marzecoo/Chujowe-Perfect-Comms](https://github.com/marzecoo/Chujowe-Perfect-Comms/releases/latest).
+- Added TouMCE voice support for Pelican belly voice, Infiltrator Recruits, Lawyer/Client, Spirit Master, hidden role mutes, and Hacker Jam.
+- Added Team Radio channels for Recruits and Lawyer/Client.
+- Increased speaker and per-player volume controls up to 300%.
+- Ported upstream 2.0.7 and 2.0.8 routing, camera, and volume fixes.
+
+See `docs/release-notes-v1.0.1.md` for the full fork release notes.
+
 ## Perfect Comms v2.0.6
 
 This Perfect Comms release expands role-aware voice behavior and adds team radio channels.

@@ -46,11 +46,26 @@ public class VoiceChatGameOptions : AbstractOptionGroup
     {
         Visible = TeamRadioSubOptionsVisible
     };
+    public ModdedToggleOption TeamRadioRecruits    { get; } = new("Team Radio - Recruits",          true)
+    {
+        Visible = TeamRadioSubOptionsVisible
+    };
+    public ModdedToggleOption TeamRadioLawyer      { get; } = new("Team Radio - Lawyer",            true)
+    {
+        Visible = TeamRadioSubOptionsVisible
+    };
     public ModdedToggleOption OnlyGhostsCanTalk    { get; } = new("Only Ghosts can Talk/Hear",      false);
     public ModdedToggleOption OnlyMeetingOrLobby   { get; } = new("Meetings/Lobby Only",            false);
+    public ModdedToggleOption OnlyMeetingOrLobbyAffectsGhosts { get; } = new("Ghosts Also Meetings/Lobby Only", false)
+    {
+        Visible = MeetingLobbySubOptionsVisible
+    };
 
     private static bool TeamRadioSubOptionsVisible() =>
         OptionGroupSingleton<VoiceChatGameOptions>.Instance.TeamRadio;
+
+    private static bool MeetingLobbySubOptionsVisible() =>
+        OptionGroupSingleton<VoiceChatGameOptions>.Instance.OnlyMeetingOrLobby;
 
     internal static VoiceChatGameOptions GetInstance() =>
         OptionGroupSingleton<VoiceChatGameOptions>.Instance;

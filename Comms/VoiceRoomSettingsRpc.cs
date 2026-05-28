@@ -62,8 +62,11 @@ internal static class VoiceRoomSettingsRpc
         writer.Write(settings.TeamRadioImpostors);
         writer.Write(settings.TeamRadioVampires);
         writer.Write(settings.TeamRadioLovers);
+        writer.Write(settings.TeamRadioRecruits);
+        writer.Write(settings.TeamRadioLawyer);
         writer.Write(settings.OnlyGhostsCanTalk);
         writer.Write(settings.OnlyMeetingOrLobby);
+        writer.Write(settings.OnlyMeetingOrLobbyAffectsGhosts);
         writer.Write(settings.MuteBlackmailedInMeetings);
         writer.Write(settings.MuteBlackmailedNextRound);
         writer.Write(settings.MuteJailedInMeetings);
@@ -73,6 +76,7 @@ internal static class VoiceRoomSettingsRpc
         writer.Write(settings.CrewpostorUsesImpostorVoice);
         writer.Write(settings.MuteSwooperWhileSwooped);
         writer.Write(settings.MediumGhostVoice);
+        writer.Write(settings.TouMceHackerJamMutesVoice);
         writer.Write(settings.MuteGlitchHacked);
         writer.Write(settings.MuffleBlindedOrFlashedHearing);
         writer.Write(settings.MuffleHypnotizedDuringHysteria);
@@ -101,15 +105,24 @@ internal static class VoiceRoomSettingsRpc
         bool teamRadioImpostors = true;
         bool teamRadioVampires = false;
         bool teamRadioLovers = false;
+        bool teamRadioRecruits = true;
+        bool teamRadioLawyer = true;
         if (hasTeamRadioSubSettings)
         {
             teamRadioImpostors = reader.ReadBoolean();
             teamRadioVampires = reader.ReadBoolean();
             teamRadioLovers = reader.ReadBoolean();
+            if (reader.BytesRemaining >= 15)
+            {
+                teamRadioRecruits = reader.ReadBoolean();
+                teamRadioLawyer = reader.ReadBoolean();
+            }
         }
 
         bool onlyGhostsCanTalk = reader.ReadBoolean();
         bool onlyMeetingOrLobby = reader.ReadBoolean();
+        bool hasMeetingLobbyGhostSetting = reader.BytesRemaining >= 24;
+        bool onlyMeetingOrLobbyAffectsGhosts = hasMeetingLobbyGhostSetting && reader.ReadBoolean();
         bool muteBlackmailedInMeetings = reader.ReadBoolean();
         bool muteBlackmailedNextRound = reader.ReadBoolean();
         bool muteJailedInMeetings = reader.ReadBoolean();
@@ -119,12 +132,15 @@ internal static class VoiceRoomSettingsRpc
         bool crewpostorUsesImpostorVoice = reader.ReadBoolean();
         bool muteSwooperWhileSwooped = reader.BytesRemaining > 0 ? reader.ReadBoolean() : true;
         int mediumGhostVoice = reader.BytesRemaining >= 4 ? reader.ReadInt32() : (int)MediumGhostVoiceMode.None;
+        bool touMceHackerJamMutesVoice = reader.BytesRemaining > 0 ? reader.ReadBoolean() : true;
         bool muteGlitchHacked = reader.BytesRemaining > 0 ? reader.ReadBoolean() : true;
         bool muffleBlindedOrFlashedHearing = reader.BytesRemaining > 0 ? reader.ReadBoolean() : true;
         bool muffleHypnotizedDuringHysteria = reader.BytesRemaining > 0 ? reader.ReadBoolean() : true;
         bool touMcePelicanBellyVoice = reader.BytesRemaining > 0 ? reader.ReadBoolean() : true;
         bool touMceRecruitVoice = reader.BytesRemaining > 0 ? reader.ReadBoolean() : true;
-        bool touMceSpiritMasterGhostVoice = reader.BytesRemaining > 0 ? reader.ReadBoolean() : true;
+        int touMceSpiritMasterGhostVoice = reader.BytesRemaining >= 4
+            ? reader.ReadInt32()
+            : (int)MediumGhostVoiceMode.Both;
         bool touMceLawyerClientVoice = reader.BytesRemaining > 0 ? reader.ReadBoolean() : true;
 
         return new VoiceRoomSettingsSnapshot(
@@ -144,8 +160,11 @@ internal static class VoiceRoomSettingsRpc
             teamRadioImpostors,
             teamRadioVampires,
             teamRadioLovers,
+            teamRadioRecruits,
+            teamRadioLawyer,
             onlyGhostsCanTalk,
             onlyMeetingOrLobby,
+            onlyMeetingOrLobbyAffectsGhosts,
             muteBlackmailedInMeetings,
             muteBlackmailedNextRound,
             muteJailedInMeetings,
@@ -155,6 +174,7 @@ internal static class VoiceRoomSettingsRpc
             crewpostorUsesImpostorVoice,
             muteSwooperWhileSwooped,
             mediumGhostVoice,
+            touMceHackerJamMutesVoice,
             muteGlitchHacked,
             muffleBlindedOrFlashedHearing,
             muffleHypnotizedDuringHysteria,

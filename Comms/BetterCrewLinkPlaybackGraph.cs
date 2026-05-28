@@ -64,7 +64,7 @@ internal sealed class BclMonoPlaybackGraph
 
     public ISampleProvider Endpoint => _audioManager.Endpoint!;
 
-    public void SetMasterVolume(float volume) => _masterVolume.Volume = Math.Clamp(volume, 0f, 2f);
+    public void SetMasterVolume(float volume) => _masterVolume.Volume = Math.Clamp(volume, 0f, 3f);
 
     public BclPeerPlaybackRoute Generate(int groupId)
     {
@@ -119,7 +119,7 @@ internal sealed class BclPeerPlaybackRoute
     public int BufferedSamples => _instance.BufferedSamples;
     public float Level => _levelMeter.Level;
 
-    public void SetVolume(float volume) => _clientVolume.Volume = Math.Clamp(volume, 0f, 2f);
+    public void SetVolume(float volume) => _clientVolume.Volume = Math.Clamp(volume, 0f, 3f);
 
     public void MuteAll()
     {

@@ -234,7 +234,7 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
     public void SetLoopBack(bool loopBack) => _room.SetLoopBack(loopBack);
     public void SetMasterVolume(float volume)
     {
-        _masterVolume.Volume = Math.Clamp(volume, 0f, 2f);
+        _masterVolume.Volume = Math.Clamp(volume, 0f, 3f);
     }
 
     public void SetMicVolume(float volume)
@@ -435,7 +435,7 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
         => $"callbacks={Interlocked.Read(ref _windowsMicCallbacks)} bytes={Interlocked.Read(ref _windowsMicBytes)} samples={Interlocked.Read(ref _windowsMicSamples)} pushed={Interlocked.Read(ref _windowsMicPushedFrames)} silentCallbacks={Interlocked.Read(ref _windowsMicSilentCallbacks)} tinyCallbacks={Interlocked.Read(ref _windowsMicTinyCallbacks)} noMic={Interlocked.Read(ref _windowsMicNoMicrophone)} noBuffer={Interlocked.Read(ref _windowsMicNoBuffer)} noFormat={Interlocked.Read(ref _windowsMicNoFormat)} unsupportedFormats={Interlocked.Read(ref _windowsMicUnsupportedFormats)} lastBytes={Volatile.Read(ref _windowsMicLastBytes)} lastSamples={Volatile.Read(ref _windowsMicLastSamples)} lastPeak={FromMilli(Volatile.Read(ref _windowsMicLastPeakMilli)):0.000} peak={FromMilli(Volatile.Read(ref _windowsMicPeakMilli)):0.000} lastGain={FromMilli(Volatile.Read(ref _windowsMicLastGainMilli)):0.000}";
 
     private static int ToMilli(float value)
-        => (int)MathF.Round(Math.Clamp(value, 0f, 4f) * 1000f);
+        => (int)MathF.Round(Math.Clamp(value, 0f, 3f) * 1000f);
 
     private static float FromMilli(int value)
         => value / 1000f;
@@ -790,28 +790,23 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
 
         var localPlayer = snapshot.TryGetLocalPlayer(out var local) ? local : (VoicePlayerSnapshot?)null;
         var listenerPos = localPlayer?.Position;
-        bool inLobby = snapshot.Phase == VoiceGamePhase.Lobby;
-        bool inMeeting = snapshot.Phase == VoiceGamePhase.Meeting;
-        bool inExile = snapshot.Phase == VoiceGamePhase.Exile;
-        bool inTask = snapshot.Phase == VoiceGamePhase.Tasks;
-
         foreach (var peer in _peers.Values.ToArray())
         {
             var target = FindTarget(snapshot, peer);
             if (!target.HasValue && TryApplySingleRemoteFallback(snapshot, peer, out var fallback))
                 target = fallback;
-            if (target.HasValue && !target.Value.Disconnected && !target.Value.IsDummy &&
+            if (target.HasValue && VoiceProximityCalculator.IsUnavailableTarget(target.Value))
+                peer.ResetMappingNoMute();
+            if (target.HasValue && !VoiceProximityCalculator.IsUnavailableTarget(target.Value) &&
                 peer.UpdateProfile(target.Value.PlayerId, target.Value.PlayerName))
                 ApplySavedVolume(peer);
 
             VoiceProximityResult result;
-            if (inLobby)
+            if (VoiceSceneState.IsLobbyVoicePhase(snapshot.Phase))
                 result = VoiceProximityCalculator.CalculateLobby(target, listenerPos);
-            else if (inMeeting)
-                result = VoiceProximityCalculator.CalculateMeeting(localPlayer, target, peer.RadioActive, peer.RadioChannel);
-            else if (inExile)
-                result = VoiceProximityCalculator.CalculateExile(localPlayer, target);
-            else if (!inTask)
+            else if (VoiceSceneState.IsMeetingVoicePhase(snapshot.Phase))
+                result = VoiceProximityCalculator.CalculateMeeting(localPlayer, target, peer.RadioActive, snapshot.Phase, peer.RadioChannel);
+            else if (!VoiceSceneState.IsTaskVoicePhase(snapshot.Phase))
                 result = VoiceProximityResult.Muted(VoiceProximityReason.OnlyMeetingOrLobby);
             else
                 result = VoiceProximityCalculator.CalculateTaskPhase(localPlayer, target, listenerPos, snapshot.LocalLightRadius, snapshot.MapId, snapshot.CameraViewActive, snapshot.ActiveCameraIndex, snapshot.ActiveCameraPosition, speakerCache, virtualMicrophones, localInVent, peer.RadioActive, commsSabActive, peer.WallCoefficient, peer.RadioChannel);
@@ -831,7 +826,7 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
             return false;
 
         var remotePlayers = snapshot.Players
-            .Where(player => !player.IsLocal && !player.Disconnected && !player.IsDummy && player.ClientId >= 0)
+            .Where(player => !player.IsLocal && !VoiceProximityCalculator.IsUnavailableTarget(player) && player.ClientId >= 0)
             .ToArray();
         if (remotePlayers.Length != 1)
             return false;
@@ -1144,7 +1139,7 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
 
         public void SetVolume(float volume)
         {
-            _clientVolume.Volume = Mathf.Clamp(volume, 0f, 2f);
+            _clientVolume.Volume = Mathf.Clamp(volume, 0f, 3f);
         }
 
         public void MuteAll()

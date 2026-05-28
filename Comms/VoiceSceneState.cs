@@ -42,6 +42,19 @@ internal static class VoiceSceneState
         return VoiceGamePhase.Unknown;
     }
 
+    public static bool IsLobbyVoicePhase(VoiceGamePhase phase)
+        => phase is VoiceGamePhase.Menu
+            or VoiceGamePhase.Lobby
+            or VoiceGamePhase.Intro
+            or VoiceGamePhase.EndGame
+            or VoiceGamePhase.Unknown;
+
+    public static bool IsMeetingVoicePhase(VoiceGamePhase phase)
+        => phase is VoiceGamePhase.Meeting or VoiceGamePhase.Exile;
+
+    public static bool IsTaskVoicePhase(VoiceGamePhase phase)
+        => phase == VoiceGamePhase.Tasks;
+
     public static void Reset()
     {
         _lastFrame = -1;

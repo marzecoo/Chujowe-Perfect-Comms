@@ -24,7 +24,7 @@ public static class VoiceVolumeMenu
     private const float SliderW    = 1.80f;
     private const float SliderHitH  = 0.50f;
     private const float VMin       = 0f;
-    private const float VMax       = 2f;
+    private const float VMax       = 3f;
     private static readonly Dictionary<string, float> _savedVolumes = new(StringComparer.OrdinalIgnoreCase);
     private static readonly List<PlayerVolumeSlider> _sliders = new();
     private static PlayerVolumeSlider? _activeSlider;

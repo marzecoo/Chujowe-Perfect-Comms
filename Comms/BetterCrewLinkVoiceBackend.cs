@@ -780,25 +780,20 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
 
         var localPlayer = snapshot.TryGetLocalPlayer(out var local) ? local : (VoicePlayerSnapshot?)null;
         var listenerPos = localPlayer?.Position;
-        bool inLobby = snapshot.Phase == VoiceGamePhase.Lobby;
-        bool inMeeting = snapshot.Phase == VoiceGamePhase.Meeting;
-        bool inExile = snapshot.Phase == VoiceGamePhase.Exile;
-        bool inTask = snapshot.Phase == VoiceGamePhase.Tasks;
-
         foreach (var peer in SnapshotPeers())
         {
             var target = FindTarget(snapshot, peer);
-            if (target.HasValue && !target.Value.Disconnected && !target.Value.IsDummy && peer.UpdateProfile(target.Value.PlayerId, target.Value.PlayerName))
+            if (target.HasValue && VoiceProximityCalculator.IsUnavailableTarget(target.Value))
+                peer.ResetMappingNoMute();
+            if (target.HasValue && !VoiceProximityCalculator.IsUnavailableTarget(target.Value) && peer.UpdateProfile(target.Value.PlayerId, target.Value.PlayerName))
                 ApplySavedVolume(peer);
 
             VoiceProximityResult result;
-            if (inLobby)
+            if (VoiceSceneState.IsLobbyVoicePhase(snapshot.Phase))
                 result = VoiceProximityCalculator.CalculateLobby(target, listenerPos);
-            else if (inMeeting)
-                result = VoiceProximityCalculator.CalculateMeeting(localPlayer, target, peer.RadioActive, peer.RadioChannel);
-            else if (inExile)
-                result = VoiceProximityCalculator.CalculateExile(localPlayer, target);
-            else if (!inTask)
+            else if (VoiceSceneState.IsMeetingVoicePhase(snapshot.Phase))
+                result = VoiceProximityCalculator.CalculateMeeting(localPlayer, target, peer.RadioActive, snapshot.Phase, peer.RadioChannel);
+            else if (!VoiceSceneState.IsTaskVoicePhase(snapshot.Phase))
                 result = VoiceProximityResult.Muted(VoiceProximityReason.OnlyMeetingOrLobby);
             else
                 result = VoiceProximityCalculator.CalculateTaskPhase(localPlayer, target, listenerPos, snapshot.LocalLightRadius, snapshot.MapId, snapshot.CameraViewActive, snapshot.ActiveCameraIndex, snapshot.ActiveCameraPosition, speakerCache, virtualMicrophones, localInVent, peer.RadioActive, commsSabActive, peer.WallCoefficient, peer.RadioChannel);
@@ -2098,7 +2093,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         public void ResetMappingNoMute() => PlayerId = byte.MaxValue;
         public void SetVolume(float volume)
         {
-            var clamped = Mathf.Clamp(volume, 0f, 2f);
+            var clamped = Mathf.Clamp(volume, 0f, 3f);
             _leftRoute.SetVolume(clamped);
             _rightRoute.SetVolume(clamped);
         }

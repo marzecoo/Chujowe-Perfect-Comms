@@ -14,17 +14,19 @@ public class VoiceRoleIntegrationOptions : AbstractOptionGroup
     public ModdedToggleOption MuteBlackmailedNextRound { get; } = new("<color=#FF0000><b>Blackmailer</b></color>: Mute Blackmailed Next Round", false);
     public ModdedToggleOption MuteParasiteControlled { get; } = new("<color=#FF0000><b>Parasite</b></color>: Mute Controlled Victim", true);
     public ModdedToggleOption MutePuppeteerControlled { get; } = new("<color=#FF0000><b>Puppeteer</b></color>: Mute Controlled Victim", true);
-    public ModdedToggleOption MuteSwooperWhileSwooped { get; } = new("<color=#FF0000><b>Swooper</b></color>: Mute While Swooped", true);
     public ModdedToggleOption MuffleBlindedOrFlashedHearing { get; } = new("<color=#FF0000><b>Eclipsal/Grenadier</b></color>: Muffle Blinded/Flashed Hearing", true);
     public ModdedToggleOption MuffleHypnotizedDuringHysteria { get; } = new("<color=#FF0000><b>Hypnotist</b></color>: Muffle Hypnotized During Hysteria", true);
     public ModdedToggleOption CrewpostorUsesImpostorVoice { get; } = new("<color=#FF0000><b>Crewpostor</b></color>: Use Impostor Voice", true);
+    public ModdedToggleOption TouMceHackerJamMutesVoice { get; } = new("<color=#D12B2B><b>Hacker</b></color>: Jam Mutes Voice", true);
     public ModdedToggleOption MuteGlitchHacked { get; } = new("<color=#00FF00><b>Glitch</b></color>: Mute Hacked Players", true);
+    public ModdedToggleOption MuteSwooperWhileSwooped { get; } = new("<color=#8E7CC3><b>Hidden Roles</b></color>: Mute While Hidden (Swooper/Wraith)", true);
     public ModdedToggleOption MuteJailedInMeetings { get; } = new("<color=#A6A6A6><b>Jailor</b></color>: Mute Jailee in Meetings", true);
     public ModdedToggleOption JailorCanUnmuteJailed { get; } = new("<color=#A6A6A6><b>Jailor</b></color>: Can Unmute Jailee", true);
     public ModdedToggleOption TouMcePelicanBellyVoice { get; } = new("<color=#6A4C93><b>Pelican</b></color>: Belly Voice (Off Mutes Victims)", true);
-    public ModdedToggleOption TouMceRecruitVoice { get; } = new("<color=#7F7F7F><b>Jackal/Recruits</b></color>: Private Voice", true);
-    public ModdedToggleOption TouMceSpiritMasterGhostVoice { get; } = new("<color=#5FBFCF><b>Spirit Master</b></color>: Ghost Voice", true);
-    public ModdedToggleOption TouMceLawyerClientVoice { get; } = new("<color=#B48A5A><b>Lawyer</b></color>: Client Voice", true);
+    public ModdedEnumOption TouMceSpiritMasterGhostVoice { get; } = new("<color=#5FBFCF><b>Spirit Master</b></color>: Ghost Voice",
+        (int)MediumGhostVoiceMode.Both,
+        typeof(MediumGhostVoiceMode),
+        ["None", "Spirit Master -> Ghost", "Ghost -> Spirit Master", "Both"]);
     public ModdedEnumOption MediumGhostVoice { get; } = new("<color=#A680FF><b>Medium</b></color>: Ghost Voice",
         (int)MediumGhostVoiceMode.None,
         typeof(MediumGhostVoiceMode),

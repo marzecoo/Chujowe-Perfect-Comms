@@ -20,8 +20,11 @@ public readonly record struct VoiceRoomSettingsSnapshot(
     bool TeamRadioImpostors,
     bool TeamRadioVampires,
     bool TeamRadioLovers,
+    bool TeamRadioRecruits,
+    bool TeamRadioLawyer,
     bool OnlyGhostsCanTalk,
     bool OnlyMeetingOrLobby,
+    bool OnlyMeetingOrLobbyAffectsGhosts,
     bool MuteBlackmailedInMeetings,
     bool MuteBlackmailedNextRound,
     bool MuteJailedInMeetings,
@@ -31,12 +34,13 @@ public readonly record struct VoiceRoomSettingsSnapshot(
     bool CrewpostorUsesImpostorVoice,
     bool MuteSwooperWhileSwooped,
     int MediumGhostVoice,
+    bool TouMceHackerJamMutesVoice,
     bool MuteGlitchHacked,
     bool MuffleBlindedOrFlashedHearing,
     bool MuffleHypnotizedDuringHysteria,
     bool TouMcePelicanBellyVoice,
     bool TouMceRecruitVoice,
-    bool TouMceSpiritMasterGhostVoice,
+    int TouMceSpiritMasterGhostVoice,
     bool TouMceLawyerClientVoice)
 {
     public const float MinChatDistance = 1.5f;
@@ -52,6 +56,9 @@ public readonly record struct VoiceRoomSettingsSnapshot(
         true,
         false,
         false,
+        false,
+        true,
+        true,
         true,
         true,
         true,
@@ -75,8 +82,9 @@ public readonly record struct VoiceRoomSettingsSnapshot(
         true,
         true,
         true,
-        true,
-        true);
+        false,
+        (int)MediumGhostVoiceMode.Both,
+        false);
 
     public static VoiceRoomSettingsSnapshot FromGameOptions()
     {
@@ -105,8 +113,11 @@ public readonly record struct VoiceRoomSettingsSnapshot(
             s.TeamRadioImpostors.Value,
             s.TeamRadioVampires.Value,
             s.TeamRadioLovers.Value,
+            s.TeamRadioRecruits.Value,
+            s.TeamRadioLawyer.Value,
             s.OnlyGhostsCanTalk.Value,
             s.OnlyMeetingOrLobby.Value,
+            s.OnlyMeetingOrLobbyAffectsGhosts.Value,
             role.MuteBlackmailedInMeetings.Value,
             role.MuteBlackmailedNextRound.Value,
             role.MuteJailedInMeetings.Value,
@@ -116,13 +127,14 @@ public readonly record struct VoiceRoomSettingsSnapshot(
             role.CrewpostorUsesImpostorVoice.Value,
             role.MuteSwooperWhileSwooped.Value,
             role.MediumGhostVoice.Value,
+            role.TouMceHackerJamMutesVoice.Value,
             role.MuteGlitchHacked.Value,
             role.MuffleBlindedOrFlashedHearing.Value,
             role.MuffleHypnotizedDuringHysteria.Value,
             role.TouMcePelicanBellyVoice.Value,
-            role.TouMceRecruitVoice.Value,
+            false,
             role.TouMceSpiritMasterGhostVoice.Value,
-            role.TouMceLawyerClientVoice.Value).Clamp();
+            false).Clamp();
     }
 
     public VoiceRoomSettingsSnapshot Clamp()
@@ -135,6 +147,7 @@ public readonly record struct VoiceRoomSettingsSnapshot(
             FalloffMode = Enum.IsDefined(typeof(VoiceFalloffMode), FalloffMode) ? FalloffMode : (int)VoiceFalloffMode.Smooth,
             OcclusionMode = Enum.IsDefined(typeof(VoiceOcclusionMode), OcclusionMode) ? OcclusionMode : (int)VoiceOcclusionMode.VisionOnly,
             MediumGhostVoice = Enum.IsDefined(typeof(MediumGhostVoiceMode), MediumGhostVoice) ? MediumGhostVoice : (int)MediumGhostVoiceMode.None,
+            TouMceSpiritMasterGhostVoice = Enum.IsDefined(typeof(MediumGhostVoiceMode), TouMceSpiritMasterGhostVoice) ? TouMceSpiritMasterGhostVoice : (int)MediumGhostVoiceMode.Both,
         };
     }
 

@@ -10,8 +10,8 @@ internal readonly record struct VoiceProximityResult(
     VoiceProximityReason Reason,
     float WallCoefficient)
 {
-    private const float PlaybackBoost = 1.35f;
-    private const float MaxPlaybackVolume = 2f;
+    private const float PlaybackBoost = 1.5f;
+    private const float MaxPlaybackVolume = 3f;
 
     public static VoiceProximityResult Muted(VoiceProximityReason reason, float wallCoefficient = 1f)
         => new(0f, 0f, 0f, 0f, VoiceAudioFilterMode.None, false, reason, wallCoefficient);

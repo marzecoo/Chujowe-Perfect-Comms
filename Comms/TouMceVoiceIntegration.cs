@@ -13,6 +13,7 @@ internal static class TouMceVoiceIntegration
     private const string SpiritMasterMediatedModifierName = "TouMegaChujoweExtension.Modifiers.Crewmate.SpiritMasterMediatedModifier";
     private const string LawyerRoleName = "TouMegaChujoweExtension.Roles.Classic.Neutral.LawyerRole";
     private const string LawyerTargetModifierName = "TouMegaChujoweExtension.Modifiers.Neutral.LawyerTargetModifier";
+    private const string HackerSystemName = "TouMegaChujoweExtension.Modules.HackerSystem";
 
     private static Type? _pelicanSystemType;
     private static Type? _jackalRoleType;
@@ -21,6 +22,7 @@ internal static class TouMceVoiceIntegration
     private static Type? _spiritMasterMediatedModifierType;
     private static Type? _lawyerRoleType;
     private static Type? _lawyerTargetModifierType;
+    private static Type? _hackerSystemType;
     private static bool _resolved;
 
     public static void GetPlayerVoiceState(
@@ -73,7 +75,44 @@ internal static class TouMceVoiceIntegration
         _spiritMasterMediatedModifierType = ResolveType(SpiritMasterMediatedModifierName);
         _lawyerRoleType = ResolveType(LawyerRoleName);
         _lawyerTargetModifierType = ResolveType(LawyerTargetModifierName);
+        _hackerSystemType = ResolveType(HackerSystemName);
         _resolved = true;
+    }
+
+    internal static bool IsHackerJammed()
+    {
+        ResolveTypesIfNeeded();
+        if (_hackerSystemType == null)
+            return false;
+
+        try
+        {
+            object? value = _hackerSystemType.GetProperty("IsJammed")?.GetValue(null);
+            return value is bool jammed && jammed;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    internal static bool HasRecruitVoiceChannel(PlayerControl? player)
+    {
+        if (player == null || player.Data?.IsDead == true)
+            return false;
+
+        ResolveTypesIfNeeded();
+        return GetJackalTeamId(player) != byte.MaxValue;
+    }
+
+    internal static bool HasLawyerVoiceChannel(PlayerControl? player)
+    {
+        if (player == null || player.Data?.IsDead == true)
+            return false;
+
+        ResolveTypesIfNeeded();
+        return IsRole(player, LawyerRoleName, _lawyerRoleType) ||
+               GetLawyerOwnerId(player) != byte.MaxValue;
     }
 
     private static Type? ResolveType(string fullName)
