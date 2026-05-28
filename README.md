@@ -47,7 +47,7 @@ Some mods get extra voice behavior when installed:
 
 | Mod | Supported behavior |
 |---|---|
-| TOU-Mira | Blackmailed players stay muted. Jailed players are muted automatically; Jailor can unmute. Parasite/Puppeteer-controlled players muted |
+| TOU-Mira | Blackmailer, Jailor, Parasite/Puppeteer, Swooper, and Glitch voice mutes.<br>Crewpostor impostor voice rules.<br>Medium ghost voice modes.<br>Muffled hearing for Eclipsal, Grenadier, and Hypnotist effects.<br>Team Radio for Impostors, Vampires, and Lovers, with keybind cycling. |
 
 ## Install
 
