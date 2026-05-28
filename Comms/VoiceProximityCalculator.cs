@@ -33,7 +33,8 @@ internal static class VoiceProximityCalculator
     public static VoiceProximityResult CalculateMeeting(
         VoicePlayerSnapshot? localPlayer,
         VoicePlayerSnapshot? targetPlayer,
-        bool targetRadioActive)
+        bool targetRadioActive,
+        VoiceTeamRadioChannel targetRadioChannel = VoiceTeamRadioChannel.All)
     {
         if (!targetPlayer.HasValue)
             return VoiceProximityResult.Muted(VoiceProximityReason.Unmapped);
@@ -42,7 +43,6 @@ internal static class VoiceProximityCalculator
         var target = targetPlayer.Value;
         bool localDead = localPlayer?.IsDead == true;
         bool targetDead = target.IsDead;
-        bool localImp = localPlayer?.IsImpostor == true;
 
         if (s.OnlyGhostsCanTalk && !localDead)
             return VoiceProximityResult.Muted(VoiceProximityReason.OnlyGhostsCanTalk);
@@ -50,13 +50,13 @@ internal static class VoiceProximityCalculator
         if (VoiceRoleMuteState.IsMeetingVoiceBlocked(target))
             return VoiceProximityResult.Muted(VoiceRoleMuteState.GetMeetingBlockReason(target));
 
-        if (s.ImpostorPrivateRadio && targetRadioActive && !targetDead)
+        if (s.TeamRadio && targetRadioActive && !targetDead)
         {
-            if (localImp)
+            if (CanHearTeamRadio(localPlayer, target, s, targetRadioChannel))
                 return new(0f, 0f, 1f, 0f, VoiceAudioFilterMode.Radio,
-                    true, VoiceProximityReason.ImpostorRadio, 1f);
+                    true, VoiceProximityReason.TeamRadio, 1f);
 
-            return VoiceProximityResult.Muted(VoiceProximityReason.ImpostorRadioMuted);
+            return VoiceProximityResult.Muted(VoiceProximityReason.TeamRadioMuted);
         }
 
         if (localDead)
@@ -85,7 +85,8 @@ internal static class VoiceProximityCalculator
         bool localInVent,
         bool targetRadioActive,
         bool commsSabActive,
-        float previousWallCoefficient)
+        float previousWallCoefficient,
+        VoiceTeamRadioChannel targetRadioChannel = VoiceTeamRadioChannel.All)
     {
         if (!targetPlayer.HasValue)
             return VoiceProximityResult.Muted(VoiceProximityReason.Unmapped, previousWallCoefficient);
@@ -120,13 +121,13 @@ internal static class VoiceProximityCalculator
         if (VoiceRoleMuteState.IsTaskVoiceBlocked(target))
             return VoiceProximityResult.Muted(VoiceRoleMuteState.GetTaskBlockReason(target), previousWallCoefficient);
 
-        if (s.ImpostorPrivateRadio && targetRadioActive && !targetDead)
+        if (s.TeamRadio && targetRadioActive && !targetDead)
         {
-            if (localImp)
+            if (CanHearTeamRadio(localPlayer, target, s, targetRadioChannel))
                 return new(0f, 0f, 1f, 0f, VoiceAudioFilterMode.Radio,
-                    true, VoiceProximityReason.ImpostorRadio, previousWallCoefficient);
+                    true, VoiceProximityReason.TeamRadio, previousWallCoefficient);
 
-            return VoiceProximityResult.Muted(VoiceProximityReason.ImpostorRadioMuted, previousWallCoefficient);
+            return VoiceProximityResult.Muted(VoiceProximityReason.TeamRadioMuted, previousWallCoefficient);
         }
 
         if (localDead)
@@ -220,6 +221,40 @@ internal static class VoiceProximityCalculator
             : VoiceProximityResult.Muted(VoiceProximityReason.NoListener, previousWallCoefficient);
 
         return SelectBestNormalRoute(proximityRoute, virtualRoute, cameraRoute);
+    }
+
+    private static bool CanHearTeamRadio(
+        VoicePlayerSnapshot? localPlayer,
+        VoicePlayerSnapshot target,
+        VoiceRoomSettingsSnapshot settings,
+        VoiceTeamRadioChannel targetRadioChannel)
+    {
+        if (!localPlayer.HasValue)
+            return false;
+
+        var local = localPlayer.Value;
+        return VoiceTeamRadioChannels.Normalize(targetRadioChannel) switch
+        {
+            VoiceTeamRadioChannel.Impostors => settings.TeamRadioImpostors && local.IsImpostor && target.IsImpostor,
+            VoiceTeamRadioChannel.Vampires => settings.TeamRadioVampires && local.IsVampire && target.IsVampire,
+            VoiceTeamRadioChannel.Lovers => settings.TeamRadioLovers && AreLinkedLovers(local, target),
+            VoiceTeamRadioChannel.All =>
+                (settings.TeamRadioImpostors && local.IsImpostor && target.IsImpostor) ||
+                (settings.TeamRadioVampires && local.IsVampire && target.IsVampire) ||
+                (settings.TeamRadioLovers && AreLinkedLovers(local, target)),
+            _ => false,
+        };
+    }
+
+    private static bool AreLinkedLovers(VoicePlayerSnapshot local, VoicePlayerSnapshot target)
+    {
+        if (!local.IsLover || !target.IsLover)
+            return false;
+
+        return local.LoverPartnerId == target.PlayerId ||
+               target.LoverPartnerId == local.PlayerId ||
+               local.LoverPartnerId == byte.MaxValue ||
+               target.LoverPartnerId == byte.MaxValue;
     }
 
     private static VoiceProximityResult CalculateVirtualRoute(

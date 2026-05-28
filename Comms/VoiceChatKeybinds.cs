@@ -9,8 +9,13 @@ public static class VoiceChatKeybinds
     public static MiraKeybind ToggleMute { get; } =
         new("Mute / Unmute Mic", KeyboardKeyCode.M);
 
-    public static MiraKeybind ImpostorRadio { get; } =
-        new("Impostor Radio (Hold)", KeyboardKeyCode.V);
+    public static MiraKeybind TeamRadio { get; } =
+        new("Team Radio (Hold)", KeyboardKeyCode.V);
+
+    public static MiraKeybind CycleTeamRadioChannel { get; } =
+        new("Cycle Team Radio Channel", KeyboardKeyCode.G);
+
+    public static MiraKeybind ImpostorRadio => TeamRadio;
 
     public static MiraKeybind PushToTalk { get; } =
         new("Push To Talk (Hold)", KeyboardKeyCode.C);

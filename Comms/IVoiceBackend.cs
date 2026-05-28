@@ -29,8 +29,8 @@ internal interface IVoiceBackend : IDisposable
     void SetMicrophone(string deviceName, float volume);
     void SetSpeaker(string deviceName);
     void UpdateProfile(byte playerId, string playerName);
-    void SendRadioState(byte playerId, bool active);
-    void ApplyRemoteRadioState(byte playerId, bool active);
+    void SendRadioState(byte playerId, VoiceTeamRadioChannel channel);
+    void ApplyRemoteRadioState(byte playerId, VoiceTeamRadioChannel channel);
     void SendCustomMessage(byte[] payload);
     void Rejoin();
     void Update(

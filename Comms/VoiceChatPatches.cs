@@ -17,6 +17,7 @@ public static class VoiceChatPatches
     private static int _lastVolumeToggleFrame = -1;
     private static int _lastLocalRefreshFrame = -1;
     private static int _lastHostRefreshFrame = -1;
+    private static int _lastRadioChannelCycleFrame = -1;
 
     internal static void RegisterKeybindHandlers()
     {
@@ -25,6 +26,7 @@ public static class VoiceChatPatches
         VoiceChatKeybinds.VolumeMenu.OnActivate(ToggleVolumeMenuFromInput);
         VoiceChatKeybinds.LocalVoiceRefresh.OnActivate(RequestLocalRefreshFromInput);
         VoiceChatKeybinds.HostVoiceRefresh.OnActivate(RequestHostRefreshFromInput);
+        VoiceChatKeybinds.CycleTeamRadioChannel.OnActivate(CycleTeamRadioChannelFromInput);
     }
 
     [HarmonyPostfix, HarmonyPatch(typeof(KeyboardJoystick), nameof(KeyboardJoystick.Update))]
@@ -35,8 +37,8 @@ public static class VoiceChatPatches
 
         var player = ReInput.players.GetPlayer(0);
 
-        bool canUseRadio = VoiceChatHudState.CanUseImpostorRadioInput();
-        var action = VoiceChatKeybinds.ImpostorRadio.RewiredInputAction;
+        bool canUseRadio = VoiceChatHudState.CanUseTeamRadioInput();
+        var action = VoiceChatKeybinds.TeamRadio.RewiredInputAction;
         bool held = false;
         bool down = false;
         bool up = false;
@@ -57,7 +59,7 @@ public static class VoiceChatPatches
             _radioInputHeld = false;
         }
 
-        VoiceChatHudState.UpdateImpostorRadioHold(held, down, up);
+        VoiceChatHudState.UpdateTeamRadioHold(held, down, up);
 
         var pttAction = VoiceChatKeybinds.PushToTalk.RewiredInputAction;
         if (!VoiceChatHudState.IsPushToTalkMode())
@@ -117,6 +119,14 @@ public static class VoiceChatPatches
         if (ShouldIgnoreToggleKeybinds()) return;
         if (!TryConsumeToggleFrame(ref _lastHostRefreshFrame)) return;
         VoiceChatRoom.RequestHostVoiceRefreshFromKeybind();
+    }
+
+    private static void CycleTeamRadioChannelFromInput()
+    {
+        if (ShouldIgnoreToggleKeybinds()) return;
+        if (!VoiceChatHudState.CanUseTeamRadioInput()) return;
+        if (!TryConsumeToggleFrame(ref _lastRadioChannelCycleFrame)) return;
+        VoiceChatHudState.CycleTeamRadioChannel();
     }
 
     private static bool TryConsumeToggleFrame(ref int lastFrame)

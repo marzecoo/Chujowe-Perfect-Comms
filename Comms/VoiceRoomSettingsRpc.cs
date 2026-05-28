@@ -58,7 +58,10 @@ internal static class VoiceRoomSettingsRpc
         writer.Write(settings.VentPrivateChat);
         writer.Write(settings.CommsSabDisables);
         writer.Write(settings.CameraCanHear);
-        writer.Write(settings.ImpostorPrivateRadio);
+        writer.Write(settings.TeamRadio);
+        writer.Write(settings.TeamRadioImpostors);
+        writer.Write(settings.TeamRadioVampires);
+        writer.Write(settings.TeamRadioLovers);
         writer.Write(settings.OnlyGhostsCanTalk);
         writer.Write(settings.OnlyMeetingOrLobby);
         writer.Write(settings.MuteBlackmailedInMeetings);
@@ -73,20 +76,47 @@ internal static class VoiceRoomSettingsRpc
 
     private static VoiceRoomSettingsSnapshot ReadSettings(MessageReader reader)
     {
+        int backend = reader.ReadInt32();
+        string backendServerUrl = reader.ReadString();
+        float maxChatDistance = reader.ReadSingle();
+        int falloffMode = reader.ReadInt32();
+        int occlusionMode = reader.ReadInt32();
+        bool wallsBlockSound = reader.ReadBoolean();
+        bool onlyHearInSight = reader.ReadBoolean();
+        bool impostorHearGhosts = reader.ReadBoolean();
+        bool hearInVent = reader.ReadBoolean();
+        bool ventPrivateChat = reader.ReadBoolean();
+        bool commsSabDisables = reader.ReadBoolean();
+        bool cameraCanHear = reader.ReadBoolean();
+        bool teamRadio = reader.ReadBoolean();
+        bool hasTeamRadioSubSettings = reader.BytesRemaining >= 13;
+        bool teamRadioImpostors = true;
+        bool teamRadioVampires = false;
+        bool teamRadioLovers = false;
+        if (hasTeamRadioSubSettings)
+        {
+            teamRadioImpostors = reader.ReadBoolean();
+            teamRadioVampires = reader.ReadBoolean();
+            teamRadioLovers = reader.ReadBoolean();
+        }
+
         return new VoiceRoomSettingsSnapshot(
-            reader.ReadInt32(),
-            reader.ReadString(),
-            reader.ReadSingle(),
-            reader.ReadInt32(),
-            reader.ReadInt32(),
-            reader.ReadBoolean(),
-            reader.ReadBoolean(),
-            reader.ReadBoolean(),
-            reader.ReadBoolean(),
-            reader.ReadBoolean(),
-            reader.ReadBoolean(),
-            reader.ReadBoolean(),
-            reader.ReadBoolean(),
+            backend,
+            backendServerUrl,
+            maxChatDistance,
+            falloffMode,
+            occlusionMode,
+            wallsBlockSound,
+            onlyHearInSight,
+            impostorHearGhosts,
+            hearInVent,
+            ventPrivateChat,
+            commsSabDisables,
+            cameraCanHear,
+            teamRadio,
+            teamRadioImpostors,
+            teamRadioVampires,
+            teamRadioLovers,
             reader.ReadBoolean(),
             reader.ReadBoolean(),
             reader.ReadBoolean(),

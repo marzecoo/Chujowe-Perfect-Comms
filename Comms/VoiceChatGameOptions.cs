@@ -33,9 +33,24 @@ public class VoiceChatGameOptions : AbstractOptionGroup
     public ModdedToggleOption VentPrivateChat      { get; } = new("Private Talk in Vents",          true);
     public ModdedToggleOption CommsSabDisables     { get; } = new("Comms Sabotage Disables Voice",  true);
     public ModdedToggleOption CameraCanHear        { get; } = new("Hear Through Cameras",           true);
-    public ModdedToggleOption ImpostorPrivateRadio { get; } = new("Impostor Radio",                 false);
+    public ModdedToggleOption TeamRadio            { get; } = new("Team Radio",                     true);
+    public ModdedToggleOption TeamRadioImpostors   { get; } = new("Team Radio - Impostors",         true)
+    {
+        Visible = TeamRadioSubOptionsVisible
+    };
+    public ModdedToggleOption TeamRadioVampires    { get; } = new("Team Radio - Vampires",          true)
+    {
+        Visible = TeamRadioSubOptionsVisible
+    };
+    public ModdedToggleOption TeamRadioLovers      { get; } = new("Team Radio - Lovers",            true)
+    {
+        Visible = TeamRadioSubOptionsVisible
+    };
     public ModdedToggleOption OnlyGhostsCanTalk    { get; } = new("Only Ghosts can Talk/Hear",      false);
     public ModdedToggleOption OnlyMeetingOrLobby   { get; } = new("Meetings/Lobby Only",            false);
+
+    private static bool TeamRadioSubOptionsVisible() =>
+        OptionGroupSingleton<VoiceChatGameOptions>.Instance.TeamRadio;
 
     internal static VoiceChatGameOptions GetInstance() =>
         OptionGroupSingleton<VoiceChatGameOptions>.Instance;

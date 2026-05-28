@@ -31,6 +31,9 @@ internal static class VoiceSnapshotBuilder
                 out bool isParasiteControlled,
                 out bool isPuppeteerControlled,
                 out _,
+                out bool isVampire,
+                out bool isLover,
+                out byte loverPartnerId,
                 out bool isBlackmailedNextRound,
                 out bool isSwooped);
 
@@ -42,6 +45,9 @@ internal static class VoiceSnapshotBuilder
                 player.PlayerId == localPlayerId,
                 data?.IsDead == true,
                 VoiceRoleMuteState.IsVoiceImpostor(player),
+                isVampire,
+                isLover,
+                loverPartnerId,
                 player.inVent,
                 data?.Disconnected == true,
                 player.isDummy || player.notRealPlayer,

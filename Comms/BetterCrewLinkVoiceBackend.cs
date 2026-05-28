@@ -62,7 +62,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
     private int _publicLobbyJoinEpoch;
     private string _localSocketId = string.Empty;
     private string _lastPlayerName = string.Empty;
-    private bool _lastLocalRadioActive;
+    private VoiceTeamRadioChannel _lastLocalRadioChannel = VoiceTeamRadioChannel.None;
     private int _joinInFlight;
     private int _customTx;
     private int _customRx;
@@ -762,11 +762,12 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         _lastPlayerName = string.IsNullOrWhiteSpace(playerName) ? "Unknown" : playerName;
     }
 
-    public void SendRadioState(byte playerId, bool active)
+    public void SendRadioState(byte playerId, VoiceTeamRadioChannel channel)
     {
-        if (_lastLocalRadioActive == active) return;
-        _lastLocalRadioActive = active;
-        SendCustomMessage([RadioStateMagic[0], RadioStateMagic[1], RadioStateMagic[2], RadioStateMagic[3], playerId, active ? (byte)1 : (byte)0]);
+        channel = VoiceTeamRadioChannels.Normalize(channel);
+        if (_lastLocalRadioChannel == channel) return;
+        _lastLocalRadioChannel = channel;
+        SendCustomMessage([RadioStateMagic[0], RadioStateMagic[1], RadioStateMagic[2], RadioStateMagic[3], playerId, VoiceTeamRadioChannels.IsActive(channel) ? (byte)1 : (byte)0, (byte)channel]);
     }
 
     public void SendCustomMessage(byte[] payload)
@@ -807,14 +808,15 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         return true;
     }
 
-    public void ApplyRemoteRadioState(byte playerId, bool active)
+    public void ApplyRemoteRadioState(byte playerId, VoiceTeamRadioChannel channel)
     {
+        channel = VoiceTeamRadioChannels.Normalize(channel);
         foreach (var peer in SnapshotPeers())
         {
             if (peer.PlayerId == playerId)
             {
-                peer.RadioActive = active;
-                VoiceDiagnostics.Log("bcl.radio.rx", $"client={peer.ClientId} player={playerId} active={active}");
+                peer.RadioChannel = channel;
+                VoiceDiagnostics.Log("bcl.radio.rx", $"client={peer.ClientId} player={playerId} active={VoiceTeamRadioChannels.IsActive(channel)} channel={channel}");
             }
         }
     }
@@ -894,9 +896,9 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             if (inLobby || !inTask && !inMeeting)
                 result = VoiceProximityCalculator.CalculateLobby(target, listenerPos);
             else if (inMeeting)
-                result = VoiceProximityCalculator.CalculateMeeting(localPlayer, target, peer.RadioActive);
+                result = VoiceProximityCalculator.CalculateMeeting(localPlayer, target, peer.RadioActive, peer.RadioChannel);
             else
-                result = VoiceProximityCalculator.CalculateTaskPhase(localPlayer, target, listenerPos, snapshot.LocalLightRadius, snapshot.MapId, snapshot.CameraViewActive, snapshot.ActiveCameraIndex, snapshot.ActiveCameraPosition, speakerCache, virtualMicrophones, localInVent, peer.RadioActive, commsSabActive, peer.WallCoefficient);
+                result = VoiceProximityCalculator.CalculateTaskPhase(localPlayer, target, listenerPos, snapshot.LocalLightRadius, snapshot.MapId, snapshot.CameraViewActive, snapshot.ActiveCameraIndex, snapshot.ActiveCameraPosition, speakerCache, virtualMicrophones, localInVent, peer.RadioActive, commsSabActive, peer.WallCoefficient, peer.RadioChannel);
 
             peer.Apply(result);
             if (!peer.TryFlushBufferedVoice(out var flushError, out var flushedFrames))
@@ -1495,7 +1497,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
 
     private bool TryHandleRadioState(byte[] payload)
     {
-        if (payload.Length != 6
+        if (payload.Length is not (6 or 7)
             || payload[0] != RadioStateMagic[0]
             || payload[1] != RadioStateMagic[1]
             || payload[2] != RadioStateMagic[2]
@@ -1506,7 +1508,8 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
 
         var playerId = payload[4];
         var active = payload[5] != 0;
-        ApplyRemoteRadioState(playerId, active);
+        var channel = VoiceTeamRadioChannels.FromWire(active, payload.Length >= 7 ? payload[6] : null);
+        ApplyRemoteRadioState(playerId, channel);
         return true;
     }
 
@@ -1864,7 +1867,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         var trimmed = new byte[encoded];
         Array.Copy(packet, trimmed, encoded);
         var voiceFlags = BclVoicePacketFlags.None;
-        if (_lastLocalRadioActive) voiceFlags |= BclVoicePacketFlags.Radio;
+        if (VoiceTeamRadioChannels.IsActive(_lastLocalRadioChannel)) voiceFlags |= BclVoicePacketFlags.Radio;
         if (BclOpusUseInbandFec) voiceFlags |= BclVoicePacketFlags.LossResistant;
         if (IsSyntheticSource(source)) voiceFlags |= BclVoicePacketFlags.Synthetic;
         var framed = BclVoicePacket.Wrap(trimmed, _sendSequence++, frameTimestamp, (ushort)samples, voiceFlags, BclVoicePacket.QuantizeLevel(transmitPeak));
@@ -2146,7 +2149,20 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
 #pragma warning restore CS0618
         public byte PlayerId { get; private set; } = byte.MaxValue;
         public string PlayerName { get; private set; } = "Unknown";
-        public bool RadioActive { get; set; }
+        private VoiceTeamRadioChannel _radioChannel = VoiceTeamRadioChannel.None;
+        public bool RadioActive
+        {
+            get => VoiceTeamRadioChannels.IsActive(_radioChannel);
+            set
+            {
+                if (!value) _radioChannel = VoiceTeamRadioChannel.None;
+            }
+        }
+        public VoiceTeamRadioChannel RadioChannel
+        {
+            get => _radioChannel;
+            set => _radioChannel = VoiceTeamRadioChannels.Normalize(value);
+        }
         public float WallCoefficient { get; private set; } = 1f;
         public VoiceProximityResult CurrentRoute => _currentRoute;
         public bool IsSpeaking => CurrentVoiceLevel >= RemoteSpeakingThreshold;

@@ -8,13 +8,15 @@ internal static class VoiceRadioStateRpc
 {
     private const byte RpcId = 205;
 
-    public static void Send(byte playerId, bool active)
+    public static void Send(byte playerId, VoiceTeamRadioChannel channel)
     {
         var writer = StartWriter();
         if (writer == null) return;
 
+        channel = VoiceTeamRadioChannels.Normalize(channel);
         writer.Write(playerId);
-        writer.Write(active);
+        writer.Write(VoiceTeamRadioChannels.IsActive(channel));
+        writer.Write((byte)channel);
         FinishWriter(writer);
     }
 
@@ -44,7 +46,10 @@ internal static class VoiceRadioStateRpc
             {
                 var playerId = reader.ReadByte();
                 var active = reader.ReadBoolean();
-                VoiceChatRoom.ApplyRemoteRadioState(playerId, active);
+                var channel = VoiceTeamRadioChannels.FromWire(
+                    active,
+                    reader.BytesRemaining > 0 ? reader.ReadByte() : null);
+                VoiceChatRoom.ApplyRemoteRadioState(playerId, channel);
             }
             catch (Exception ex)
             {

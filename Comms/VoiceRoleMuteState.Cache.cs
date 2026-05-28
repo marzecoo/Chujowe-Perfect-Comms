@@ -15,7 +15,9 @@ internal static partial class VoiceRoleMuteState
             _parasiteInfectedModifierType == null &&
             _puppeteerControlModifierType == null &&
             _crewpostorModifierType == null &&
+            _loverModifierType == null &&
             _swoopModifierType == null &&
+            _vampireRoleType == null &&
             PostMeetingBlackmailedPlayers.Count == 0)
         {
             RoleStateCache.Clear();
@@ -40,6 +42,10 @@ internal static partial class VoiceRoleMuteState
         bool isParasiteControlled = GetModifier(player, _parasiteInfectedModifierType) != null;
         bool isPuppeteerControlled = GetModifier(player, _puppeteerControlModifierType) != null;
         bool isCrewpostor = GetModifier(player, _crewpostorModifierType) != null;
+        bool isVampire = IsRole(player, _vampireRoleType, VampireRoleName);
+        var loverModifier = GetModifier(player, _loverModifierType);
+        bool isLover = loverModifier != null;
+        byte loverPartnerId = GetLoverPartnerId(loverModifier);
         bool isSwooped = GetModifier(player, _swoopModifierType) != null;
         bool isBlackmailedNextRound = PostMeetingBlackmailedPlayers.Contains(player.PlayerId);
         byte jailorId = byte.MaxValue;
@@ -70,6 +76,9 @@ internal static partial class VoiceRoleMuteState
             isParasiteControlled,
             isPuppeteerControlled,
             isCrewpostor,
+            isVampire,
+            isLover,
+            loverPartnerId,
             isBlackmailedNextRound,
             isSwooped);
     }
@@ -109,7 +118,9 @@ internal static partial class VoiceRoleMuteState
         _parasiteInfectedModifierType = ResolveType(ParasiteInfectedModifierName);
         _puppeteerControlModifierType = ResolveType(PuppeteerControlModifierName);
         _crewpostorModifierType = ResolveType(CrewpostorModifierName);
+        _loverModifierType = ResolveType(LoverModifierName);
         _swoopModifierType = ResolveType(SwoopModifierName);
+        _vampireRoleType = ResolveType(VampireRoleName);
         _supportedModTypesResolved = true;
         InvalidateRoleStateCache();
     }
@@ -126,6 +137,57 @@ internal static partial class VoiceRoleMuteState
         }
 
         return type;
+    }
+
+    private static bool IsRole(PlayerControl player, Type? type, string fullName)
+    {
+        var role = player.Data?.Role;
+        if (role == null) return false;
+
+        try
+        {
+            var roleType = role.GetType();
+            if (roleType.FullName == fullName)
+                return true;
+            return type != null && (roleType == type || type.IsAssignableFrom(roleType));
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static byte GetLoverPartnerId(BaseModifier? modifier)
+    {
+        if (modifier == null) return byte.MaxValue;
+
+        if (TryGetLoverPartner(modifier, "OtherLover", useProperty: true, out var partner) ||
+            TryGetLoverPartner(modifier, "GetOtherLover", useProperty: false, out partner))
+        {
+            return partner.PlayerId;
+        }
+
+        return byte.MaxValue;
+    }
+
+    private static bool TryGetLoverPartner(BaseModifier modifier, string memberName, bool useProperty, out PlayerControl partner)
+    {
+        partner = null!;
+        try
+        {
+            object? value = useProperty
+                ? modifier.GetType().GetProperty(memberName)?.GetValue(modifier)
+                : modifier.GetType().GetMethod(memberName, Type.EmptyTypes)?.Invoke(modifier, null);
+            if (value is not PlayerControl player)
+                return false;
+
+            partner = player;
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static void InvalidateRoleStateCache()

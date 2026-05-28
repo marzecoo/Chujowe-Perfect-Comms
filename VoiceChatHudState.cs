@@ -24,7 +24,7 @@ public static class VoiceChatHudState
     private const int   ButtonSortOrder = 32760;
     private const int   TooltipSortOrder = 32767;
     private const float TooltipHalfWidth = 1.35f;
-    private const float TooltipHalfHeight = 1.05f;
+    private const float TooltipHalfHeight = 1.25f;
     private const float TooltipButtonGap = 0.35f;
     private const float TooltipViewportPadding = 0.02f;
     private const float ButtonViewportDepth = 10f;
@@ -37,14 +37,16 @@ public static class VoiceChatHudState
     private static TextMeshPro? _micTooltipTmp;
     private static TextMeshPro? _spkTooltipTmp;
     private static bool _micMuted;
-    private static bool _impostorHeld;
+    private static bool _teamRadioHeld;
+    private static VoiceTeamRadioChannel _teamRadioChannel = VoiceTeamRadioChannel.None;
     private static bool _pushToTalkHeld;
     private static bool _speakerMuted;
     private static bool _initialized;
     private static float _overlayScale = 1.30f;
 
     public static bool IsMuted        => IsManualMuteActive();
-    public static bool IsImpostorRadio => IsInImpostorRadioMode();
+    public static bool IsTeamRadio => IsInTeamRadioMode();
+    public static bool IsImpostorRadio => IsTeamRadio;
     public static bool IsSpeakerMuted => _speakerMuted;
     internal static void Init()
     {
@@ -312,7 +314,7 @@ public static class VoiceChatHudState
             {
                 if (sr != null) { sr.sprite = Sprites.MicOff; sr.color = new Color(1f, 0.4f, 0.4f); }
             }
-            else if (IsInImpostorRadioMode())
+            else if (IsInTeamRadioMode())
             {
                 if (sr != null) { sr.sprite = Sprites.MicOn; sr.color = new Color(1f, 0.55f, 0.1f); }
             }
@@ -338,7 +340,7 @@ public static class VoiceChatHudState
     internal static void ApplyMicState()
     {
         var settings = LocalSettingsTabSingleton<VoiceChatLocalSettings>.Instance;
-        bool radioTransmit   = IsInImpostorRadioMode();
+        bool radioTransmit   = IsInTeamRadioMode();
         bool pushToTalkMode  = settings?.MicMode.Value == VoiceMicMode.PushToTalk;
         if (pushToTalkMode && _micMuted) _micMuted = false;
         bool pushToTalkMuted = pushToTalkMode && !_pushToTalkHeld && !radioTransmit;
@@ -380,30 +382,65 @@ public static class VoiceChatHudState
         RefreshButtonVisuals();
     }
 
-    internal static void UpdateImpostorRadioHold(bool held, bool justPressed, bool justReleased)
+    internal static void UpdateTeamRadioHold(bool held, bool justPressed, bool justReleased)
     {
-        if (!CanUseImpostorRadio())
+        var channel = NormalizeTeamRadioChannel();
+        if (channel == VoiceTeamRadioChannel.None)
         {
-            if (_impostorHeld)
+            if (_teamRadioHeld)
             {
-                _impostorHeld = false;
+                _teamRadioHeld = false;
                 ApplyMicState();
                 RefreshButtonVisuals();
             }
             return;
         }
 
-        bool prev     = _impostorHeld;
-        _impostorHeld = held;
-        if (prev != _impostorHeld) { ApplyMicState(); RefreshButtonVisuals(); }
+        bool prev     = _teamRadioHeld;
+        _teamRadioHeld = held;
+        if (prev != _teamRadioHeld) { ApplyMicState(); RefreshButtonVisuals(); }
     }
 
-    internal static bool IsInImpostorRadioMode()
-        => _impostorHeld
-        && CanUseImpostorRadio()
+    internal static void UpdateImpostorRadioHold(bool held, bool justPressed, bool justReleased)
+        => UpdateTeamRadioHold(held, justPressed, justReleased);
+
+    internal static bool IsInTeamRadioMode()
+        => _teamRadioHeld
+        && GetSelectedTeamRadioChannel() != VoiceTeamRadioChannel.None
         && !_speakerMuted
         && !IsManualMuteActive()
         && !VoiceRoleMuteState.IsLocalVoiceBlocked();
+
+    internal static bool IsInImpostorRadioMode()
+        => IsInTeamRadioMode();
+
+    internal static VoiceTeamRadioChannel ActiveTeamRadioChannel()
+        => IsInTeamRadioMode() ? GetSelectedTeamRadioChannel() : VoiceTeamRadioChannel.None;
+
+    internal static VoiceTeamRadioChannel GetSelectedTeamRadioChannel()
+        => NormalizeTeamRadioChannel();
+
+    internal static void CycleTeamRadioChannel()
+    {
+        var next = VoiceRoleMuteState.GetNextTeamRadioChannel(PlayerControl.LocalPlayer, _teamRadioChannel);
+        if (next == _teamRadioChannel)
+            return;
+
+        _teamRadioChannel = next;
+        ApplyMicState();
+        RefreshButtonVisuals();
+        if (_micTooltip?.activeSelf == true)
+            ShowMicTooltip();
+    }
+
+    private static VoiceTeamRadioChannel NormalizeTeamRadioChannel()
+    {
+        if (VoiceRoleMuteState.CanUseTeamRadioChannel(PlayerControl.LocalPlayer, _teamRadioChannel))
+            return _teamRadioChannel;
+
+        _teamRadioChannel = VoiceRoleMuteState.GetFirstTeamRadioChannel(PlayerControl.LocalPlayer);
+        return _teamRadioChannel;
+    }
 
     internal static void UpdatePushToTalkHeld(bool held)
     {
@@ -487,19 +524,22 @@ public static class VoiceChatHudState
             ? roleMuteReason
             : _speakerMuted ? "Deafened"
             : IsManualMuteActive() ? "Muted"
-            : IsInImpostorRadioMode() ? "Impostor Radio (held)"
+            : IsInTeamRadioMode() ? $"Team Radio: {VoiceTeamRadioChannels.DisplayName(GetSelectedTeamRadioChannel())} (held)"
             : pushToTalkMode ? "Push To Talk"
             : "Active";
         string muteKey  = VoiceChatKeybinds.ToggleMute.CurrentKey.ToString();
-        string radioKey = VoiceChatKeybinds.ImpostorRadio.CurrentKey.ToString();
+        string radioKey = VoiceChatKeybinds.TeamRadio.CurrentKey.ToString();
+        string cycleKey = VoiceChatKeybinds.CycleTeamRadioChannel.CurrentKey.ToString();
+        string channel = VoiceTeamRadioChannels.DisplayName(GetSelectedTeamRadioChannel());
 
         _micTooltipTmp.text =
             "<b>Microphone</b>\n" +
             $"Status: {status}\n" +
+            $"Team Radio Channel: {channel}\n" +
             $"Volume: {(int)((tab?.MicVolume.Value ?? 1f) * 100f)}%\n" +
             (pushToTalkMode
-                ? $"Push To Talk active  |  Imp. Radio: {radioKey} (hold)"
-                : $"Mute: {muteKey}  |  Imp. Radio: {radioKey} (hold)");
+                ? $"Push To Talk active  |  Team Radio: {radioKey} (hold)  |  Cycle: {cycleKey}"
+                : $"Mute: {muteKey}  |  Team Radio: {radioKey} (hold)  |  Cycle: {cycleKey}");
 
         PositionNear(_micTooltip, _micButtonObj);
         KeepTooltipOnTop(_micTooltip);
@@ -585,14 +625,19 @@ public static class VoiceChatHudState
         }
     }
 
+    internal static bool CanUseTeamRadioInput()
+        => CanUseTeamRadio() && !VoiceRoleMuteState.IsLocalVoiceBlocked();
+
     internal static bool CanUseImpostorRadioInput()
-        => CanUseImpostorRadio() && !VoiceRoleMuteState.IsLocalVoiceBlocked();
+        => CanUseTeamRadioInput();
+
+    private static bool CanUseTeamRadio()
+        => PlayerControl.LocalPlayer != null
+        && PlayerControl.LocalPlayer.Data?.IsDead == false
+        && VoiceRoleMuteState.CanUseTeamRadio(PlayerControl.LocalPlayer);
 
     private static bool CanUseImpostorRadio()
-        => PlayerControl.LocalPlayer != null
-        && VoiceRoleMuteState.IsVoiceImpostor(PlayerControl.LocalPlayer)
-        && PlayerControl.LocalPlayer.Data?.IsDead == false
-        && VoiceChatGameOptions.GetInstance().ImpostorPrivateRadio.Value;
+        => CanUseTeamRadio();
 
     private static void ClearButtonBG(GameObject obj)
     {

@@ -17,11 +17,13 @@ public static class VoiceRoomControlCodec
 {
     private const byte Magic0 = (byte)'P';
     private const byte Magic1 = (byte)'C';
-    private const byte Version = 5;
-    private const byte LegacyVersion = 4;
+    private const byte Version = 6;
+    private const byte LegacyVersion5 = 5;
+    private const byte LegacyVersion4 = 4;
     private const int HeaderBytes = 4;
-    private const int LegacyFixedSettingsBytes = 4 + 4 + 4 + 4 + 17;
-    private const int FixedSettingsBytes = 4 + 4 + 4 + 4 + 18;
+    private const int LegacyFixedSettingsBytesV4 = 4 + 4 + 4 + 4 + 17;
+    private const int LegacyFixedSettingsBytesV5 = 4 + 4 + 4 + 4 + 18;
+    private const int FixedSettingsBytes = 4 + 4 + 4 + 4 + 21;
     private const int MaxServerUrlBytes = 512;
 
     public static byte[] EncodeHostSettingsSnapshot(VoiceRoomSettingsSnapshot settings)
@@ -48,7 +50,7 @@ public static class VoiceRoomControlCodec
         message = default;
         if (payload.Length < HeaderBytes) return false;
         var version = payload[2];
-        if (payload[0] != Magic0 || payload[1] != Magic1 || version is not (Version or LegacyVersion)) return false;
+        if (payload[0] != Magic0 || payload[1] != Magic1 || !IsSupportedVersion(version)) return false;
 
         var kind = (VoiceRoomControlMessageKind)payload[3];
         if (kind == VoiceRoomControlMessageKind.HostSettingsRequest)
@@ -89,17 +91,20 @@ public static class VoiceRoomControlCodec
         buffer[20] = ToByte(settings.VentPrivateChat);
         buffer[21] = ToByte(settings.CommsSabDisables);
         buffer[22] = ToByte(settings.CameraCanHear);
-        buffer[23] = ToByte(settings.ImpostorPrivateRadio);
-        buffer[24] = ToByte(settings.OnlyGhostsCanTalk);
-        buffer[25] = ToByte(settings.OnlyMeetingOrLobby);
-        buffer[26] = ToByte(settings.MuteBlackmailedInMeetings);
-        buffer[27] = ToByte(settings.MuteBlackmailedNextRound);
-        buffer[28] = ToByte(settings.MuteJailedInMeetings);
-        buffer[29] = ToByte(settings.JailorCanUnmuteJailed);
-        buffer[30] = ToByte(settings.MuteParasiteControlled);
-        buffer[31] = ToByte(settings.MutePuppeteerControlled);
-        buffer[32] = ToByte(settings.CrewpostorUsesImpostorVoice);
-        buffer[33] = ToByte(settings.MuteSwooperWhileSwooped);
+        buffer[23] = ToByte(settings.TeamRadio);
+        buffer[24] = ToByte(settings.TeamRadioImpostors);
+        buffer[25] = ToByte(settings.TeamRadioVampires);
+        buffer[26] = ToByte(settings.TeamRadioLovers);
+        buffer[27] = ToByte(settings.OnlyGhostsCanTalk);
+        buffer[28] = ToByte(settings.OnlyMeetingOrLobby);
+        buffer[29] = ToByte(settings.MuteBlackmailedInMeetings);
+        buffer[30] = ToByte(settings.MuteBlackmailedNextRound);
+        buffer[31] = ToByte(settings.MuteJailedInMeetings);
+        buffer[32] = ToByte(settings.JailorCanUnmuteJailed);
+        buffer[33] = ToByte(settings.MuteParasiteControlled);
+        buffer[34] = ToByte(settings.MutePuppeteerControlled);
+        buffer[35] = ToByte(settings.CrewpostorUsesImpostorVoice);
+        buffer[36] = ToByte(settings.MuteSwooperWhileSwooped);
         BinaryPrimitives.WriteUInt16LittleEndian(buffer[FixedSettingsBytes..], checked((ushort)serverUrlBytes.Length));
         serverUrlBytes.CopyTo(buffer[(FixedSettingsBytes + 2)..]);
     }
@@ -107,11 +112,13 @@ public static class VoiceRoomControlCodec
     private static bool TryReadSettings(ReadOnlySpan<byte> buffer, byte version, out VoiceRoomSettingsSnapshot settings)
     {
         settings = default;
-        var fixedSettingsBytes = version == LegacyVersion ? LegacyFixedSettingsBytes : FixedSettingsBytes;
+        var fixedSettingsBytes = FixedSettingsBytesForVersion(version);
         if (buffer.Length < fixedSettingsBytes + 2) return false;
         var serverUrlLength = BinaryPrimitives.ReadUInt16LittleEndian(buffer[fixedSettingsBytes..]);
         if (serverUrlLength > MaxServerUrlBytes || buffer.Length != fixedSettingsBytes + 2 + serverUrlLength) return false;
         var serverUrl = System.Text.Encoding.UTF8.GetString(buffer.Slice(fixedSettingsBytes + 2, serverUrlLength));
+        bool legacy = version != Version;
+        int tailOffset = legacy ? 24 : 27;
         settings = new VoiceRoomSettingsSnapshot(
             BinaryPrimitives.ReadInt32LittleEndian(buffer),
             serverUrl,
@@ -126,18 +133,32 @@ public static class VoiceRoomControlCodec
             buffer[21] != 0,
             buffer[22] != 0,
             buffer[23] != 0,
-            buffer[24] != 0,
-            buffer[25] != 0,
-            buffer[26] != 0,
-            buffer[27] != 0,
-            buffer[28] != 0,
-            buffer[29] != 0,
-            buffer[30] != 0,
-            buffer[31] != 0,
-            buffer[32] != 0,
-            version == LegacyVersion || buffer[33] != 0).Clamp();
+            legacy || buffer[24] != 0,
+            !legacy && buffer[25] != 0,
+            !legacy && buffer[26] != 0,
+            buffer[tailOffset] != 0,
+            buffer[tailOffset + 1] != 0,
+            buffer[tailOffset + 2] != 0,
+            buffer[tailOffset + 3] != 0,
+            buffer[tailOffset + 4] != 0,
+            buffer[tailOffset + 5] != 0,
+            buffer[tailOffset + 6] != 0,
+            buffer[tailOffset + 7] != 0,
+            buffer[tailOffset + 8] != 0,
+            version == LegacyVersion4 || buffer[tailOffset + 9] != 0).Clamp();
         return true;
     }
+
+    private static bool IsSupportedVersion(byte version)
+        => version is Version or LegacyVersion5 or LegacyVersion4;
+
+    private static int FixedSettingsBytesForVersion(byte version)
+        => version switch
+        {
+            LegacyVersion4 => LegacyFixedSettingsBytesV4,
+            LegacyVersion5 => LegacyFixedSettingsBytesV5,
+            _ => FixedSettingsBytes,
+        };
 
     private static byte ToByte(bool value) => value ? (byte)1 : (byte)0;
 }

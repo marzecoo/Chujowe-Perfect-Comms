@@ -65,7 +65,7 @@ public class VoiceChatRoom
     private float _lastLocalVoiceRefreshRequestTime = -999f;
     private static int _nextHostVoiceRefreshNonce;
     private byte _lastRadioRpcPlayerId = byte.MaxValue;
-    private bool _lastRadioRpcActive;
+    private VoiceTeamRadioChannel _lastRadioRpcChannel = VoiceTeamRadioChannel.None;
     private DateTime _lastRadioRpcSentUtc = DateTime.MinValue;
     private VoiceTransportBackend _activeBackend = VoiceTransportBackend.BetterCrewLink;
     private string? _activeEndpoint;
@@ -308,7 +308,7 @@ public class VoiceChatRoom
         {
             _voiceBackend.Update(snapshot, speakerCache, _virtualMics, localInVent, _commsSabActive);
             if (snapshot != null)
-                SendRadioState(snapshot.LocalPlayerId, VoiceChatHudState.IsInImpostorRadioMode());
+                SendRadioState(snapshot.LocalPlayerId, VoiceChatHudState.ActiveTeamRadioChannel());
             TryRecoverMissingBackendPeers(snapshot);
         }
 
@@ -601,7 +601,7 @@ public class VoiceChatRoom
 #endif
         if (snapshot.TryGetLocalPlayer(out var localPlayer))
             _voiceBackend.UpdateProfile(snapshot.LocalPlayerId, localPlayer.PlayerName);
-        SendRadioState(snapshot.LocalPlayerId, VoiceChatHudState.IsInImpostorRadioMode());
+        SendRadioState(snapshot.LocalPlayerId, VoiceChatHudState.ActiveTeamRadioChannel());
         _activeBackend = endpoint.Backend;
         _activeEndpoint = endpoint.ServerUrl;
         _activeRoomCode = roomCode;
@@ -807,29 +807,31 @@ public class VoiceChatRoom
         return false;
     }
 
-    internal static void ApplyRemoteRadioState(byte playerId, bool active)
+    internal static void ApplyRemoteRadioState(byte playerId, VoiceTeamRadioChannel channel)
     {
-        Current?._voiceBackend?.ApplyRemoteRadioState(playerId, active);
+        Current?._voiceBackend?.ApplyRemoteRadioState(playerId, channel);
     }
 
-    private void SendRadioState(byte playerId, bool active)
+    private void SendRadioState(byte playerId, VoiceTeamRadioChannel channel)
     {
-        _voiceBackend?.SendRadioState(playerId, active);
-        SyncRadioStateRpc(playerId, active);
+        channel = VoiceTeamRadioChannels.Normalize(channel);
+        _voiceBackend?.SendRadioState(playerId, channel);
+        SyncRadioStateRpc(playerId, channel);
     }
 
-    private void SyncRadioStateRpc(byte playerId, bool active)
+    private void SyncRadioStateRpc(byte playerId, VoiceTeamRadioChannel channel)
     {
         if (playerId == byte.MaxValue) return;
 
         var now = DateTime.UtcNow;
-        bool changed = playerId != _lastRadioRpcPlayerId || active != _lastRadioRpcActive;
+        bool active = VoiceTeamRadioChannels.IsActive(channel);
+        bool changed = playerId != _lastRadioRpcPlayerId || channel != _lastRadioRpcChannel;
         bool heartbeat = active && (now - _lastRadioRpcSentUtc).TotalSeconds >= RadioStateRpcHeartbeatSeconds;
         if (!changed && !heartbeat) return;
 
-        VoiceRadioStateRpc.Send(playerId, active);
+        VoiceRadioStateRpc.Send(playerId, channel);
         _lastRadioRpcPlayerId = playerId;
-        _lastRadioRpcActive = active;
+        _lastRadioRpcChannel = channel;
         _lastRadioRpcSentUtc = now;
     }
 
@@ -969,7 +971,7 @@ public class VoiceChatRoom
     private void ResetRadioStateSync()
     {
         _lastRadioRpcPlayerId = byte.MaxValue;
-        _lastRadioRpcActive = false;
+        _lastRadioRpcChannel = VoiceTeamRadioChannel.None;
         _lastRadioRpcSentUtc = DateTime.MinValue;
     }
 
@@ -1227,7 +1229,7 @@ public class VoiceChatRoom
             $"localFound={localFound} local={DescribePlayer(localFound ? local : null)} " +
             $"localPos={FormatVector(snapshot.LocalPosition)} localLight={snapshot.LocalLightRadius:0.000} meeting={snapshot.MeetingActive} comms={snapshot.CommsSabotageActive} " +
             $"cameras={snapshot.CameraCount} cameraActive={snapshot.CameraViewActive} cameraIndex={snapshot.ActiveCameraIndex} cameraPos={FormatVector(snapshot.ActiveCameraPosition)} closedDoors={snapshot.ClosedDoorCount} virtualMics={_virtualMics.Count} virtualSpeakers={_virtualSpeakers.Count} " +
-            $"micMuted={Mute} speakerMuted={VoiceChatHudState.IsSpeakerMuted} radioHeld={VoiceChatHudState.IsImpostorRadio}");
+            $"micMuted={Mute} speakerMuted={VoiceChatHudState.IsSpeakerMuted} radioHeld={VoiceChatHudState.IsTeamRadio} radioChannel={VoiceChatHudState.ActiveTeamRadioChannel()}");
 
         VoiceDiagnostics.Log("state.options", DescribeGameOptions());
     }
@@ -1239,7 +1241,7 @@ public class VoiceChatRoom
             $"publicLobby={o.PublicVoiceLobby.Value} maxDistance={o.MaxChatDistance.Value:0.000} falloff={(VoiceFalloffMode)o.FalloffMode.Value} occlusion={(VoiceOcclusionMode)o.OcclusionMode.Value} " +
             $"wallsBlock={o.WallsBlockSound.Value} onlySight={o.OnlyHearInSight.Value} cameraCanHear={o.CameraCanHear.Value} " +
             $"hearInVent={o.HearInVent.Value} ventPrivate={o.VentPrivateChat.Value} commsDisable={o.CommsSabDisables.Value} " +
-            $"impHearGhosts={o.ImpostorHearGhosts.Value} impRadio={o.ImpostorPrivateRadio.Value} onlyGhosts={o.OnlyGhostsCanTalk.Value} onlyMeetingLobby={o.OnlyMeetingOrLobby.Value}";
+            $"impHearGhosts={o.ImpostorHearGhosts.Value} teamRadio={o.TeamRadio.Value} teamRadioImps={o.TeamRadioImpostors.Value} teamRadioVamps={o.TeamRadioVampires.Value} teamRadioLovers={o.TeamRadioLovers.Value} onlyGhosts={o.OnlyGhostsCanTalk.Value} onlyMeetingLobby={o.OnlyMeetingOrLobby.Value}";
     }
 
     private static string DescribePlayer(VoicePlayerSnapshot? player)

@@ -119,7 +119,7 @@ public class VoiceChatLocalSettings : LocalSettingsTab
     [LocalEnumSetting("Push To Talk Mouse Bind")]
     public ConfigEntry<VoiceMouseBind> PushToTalkMouseBind { get; }
 
-    [LocalEnumSetting("Radio Mouse Bind")]
+    [LocalEnumSetting("Team Radio Mouse Bind")]
     public ConfigEntry<VoiceMouseBind> ImpostorRadioMouseBind { get; }
 
     [LocalEnumSetting("Microphone Device")]
@@ -250,7 +250,7 @@ public class VoiceChatLocalSettings : LocalSettingsTab
             new ConfigDescription("Optional mouse button to hold for push to talk"));
 
         ImpostorRadioMouseBind = config.Bind("Input", "ImpostorRadioMouseBind", VoiceMouseBind.Off,
-            new ConfigDescription("Optional mouse button to hold for impostor radio"));
+            new ConfigDescription("Optional mouse button to hold for team radio"));
 
         NormalizeMouseBind(MuteMouseBind);
         NormalizeMouseBind(SpeakerMouseBind);

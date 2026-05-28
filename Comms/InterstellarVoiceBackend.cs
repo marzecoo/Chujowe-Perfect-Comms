@@ -42,7 +42,7 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
     private readonly LevelMeterRouter _levelMeter;
     private readonly VolumeRouter.Property _masterVolume;
     private LevelMeterRouter.Property? _localMicMeter;
-    private bool _lastLocalRadioActive;
+    private VoiceTeamRadioChannel _lastLocalRadioChannel = VoiceTeamRadioChannel.None;
     private string _lastMicDeviceName = string.Empty;
     private float _lastMicVolume = 1f;
     private bool _microphoneReady;
@@ -850,36 +850,39 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
         _room.SendCustomMessage(payload);
     }
 
-    public void SendRadioState(byte playerId, bool active)
+    public void SendRadioState(byte playerId, VoiceTeamRadioChannel channel)
     {
         if (_lastPlayerId == byte.MaxValue) return;
-        if (_lastLocalRadioActive == active && playerId == _lastPlayerId) return;
+        channel = VoiceTeamRadioChannels.Normalize(channel);
+        if (_lastLocalRadioChannel == channel && playerId == _lastPlayerId) return;
 
-        _lastLocalRadioActive = active;
-        var payload = new byte[6];
+        _lastLocalRadioChannel = channel;
+        var payload = new byte[7];
         Array.Copy(RadioStateMagic, payload, RadioStateMagic.Length);
         payload[4] = playerId;
-        payload[5] = active ? (byte)1 : (byte)0;
+        payload[5] = VoiceTeamRadioChannels.IsActive(channel) ? (byte)1 : (byte)0;
+        payload[6] = (byte)channel;
         if (!InterstellarCustomControlEnabled)
         {
             Interlocked.Increment(ref _customSkipped);
-            VoiceDiagnostics.Log("interstellar.radio.skip", $"player={playerId} active={active} reason=audio-relay-reserved");
+            VoiceDiagnostics.Log("interstellar.radio.skip", $"player={playerId} active={VoiceTeamRadioChannels.IsActive(channel)} channel={channel} reason=audio-relay-reserved");
             return;
         }
 
         Interlocked.Increment(ref _customTx);
-        VoiceDiagnostics.Log("interstellar.radio.tx", $"player={playerId} active={active}");
+        VoiceDiagnostics.Log("interstellar.radio.tx", $"player={playerId} active={VoiceTeamRadioChannels.IsActive(channel)} channel={channel}");
         _room.SendCustomMessage(payload);
     }
 
-    public void ApplyRemoteRadioState(byte playerId, bool active)
+    public void ApplyRemoteRadioState(byte playerId, VoiceTeamRadioChannel channel)
     {
+        channel = VoiceTeamRadioChannels.Normalize(channel);
         foreach (var peer in _peers.Values)
         {
             if (peer.PlayerId == playerId)
             {
-                peer.RadioActive = active;
-                VoiceDiagnostics.Log("interstellar.radio.rx", $"client={peer.ClientId} player={playerId} active={active}");
+                peer.RadioChannel = channel;
+                VoiceDiagnostics.Log("interstellar.radio.rx", $"client={peer.ClientId} player={playerId} active={VoiceTeamRadioChannels.IsActive(channel)} channel={channel}");
             }
         }
     }
@@ -890,7 +893,7 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
         _room.Rejoin();
         _lastPlayerId = byte.MaxValue;
         _lastPlayerName = string.Empty;
-        _lastLocalRadioActive = false;
+        _lastLocalRadioChannel = VoiceTeamRadioChannel.None;
         VoiceDiagnostics.Log("interstellar.rejoin", "state=cleared");
     }
 
@@ -931,9 +934,9 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
             if (inLobby || !inTask && !inMeeting)
                 result = VoiceProximityCalculator.CalculateLobby(target, listenerPos);
             else if (inMeeting)
-                result = VoiceProximityCalculator.CalculateMeeting(localPlayer, target, peer.RadioActive);
+                result = VoiceProximityCalculator.CalculateMeeting(localPlayer, target, peer.RadioActive, peer.RadioChannel);
             else
-                result = VoiceProximityCalculator.CalculateTaskPhase(localPlayer, target, listenerPos, snapshot.LocalLightRadius, snapshot.MapId, snapshot.CameraViewActive, snapshot.ActiveCameraIndex, snapshot.ActiveCameraPosition, speakerCache, virtualMicrophones, localInVent, peer.RadioActive, commsSabActive, peer.WallCoefficient);
+                result = VoiceProximityCalculator.CalculateTaskPhase(localPlayer, target, listenerPos, snapshot.LocalLightRadius, snapshot.MapId, snapshot.CameraViewActive, snapshot.ActiveCameraIndex, snapshot.ActiveCameraPosition, speakerCache, virtualMicrophones, localInVent, peer.RadioActive, commsSabActive, peer.WallCoefficient, peer.RadioChannel);
 
             peer.Apply(result);
             peer.SampleDiagnostics();
@@ -1064,7 +1067,7 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
 
     private void HandleCustomMessage(byte[] payload)
     {
-        if (payload.Length == 6
+        if (payload.Length is 6 or 7
             && payload[0] == RadioStateMagic[0]
             && payload[1] == RadioStateMagic[1]
             && payload[2] == RadioStateMagic[2]
@@ -1072,7 +1075,8 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
         {
             var playerId = payload[4];
             var active = payload[5] != 0;
-            ApplyRemoteRadioState(playerId, active);
+            var channel = VoiceTeamRadioChannels.FromWire(active, payload.Length >= 7 ? payload[6] : null);
+            ApplyRemoteRadioState(playerId, channel);
             return;
         }
 
@@ -1202,7 +1206,20 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
         public byte PlayerId { get; private set; } = byte.MaxValue;
         public string PlayerName { get; private set; } = "Unknown";
         public float WallCoefficient { get; private set; } = 1f;
-        public bool RadioActive { get; set; }
+        private VoiceTeamRadioChannel _radioChannel = VoiceTeamRadioChannel.None;
+        public bool RadioActive
+        {
+            get => VoiceTeamRadioChannels.IsActive(_radioChannel);
+            set
+            {
+                if (!value) _radioChannel = VoiceTeamRadioChannel.None;
+            }
+        }
+        public VoiceTeamRadioChannel RadioChannel
+        {
+            get => _radioChannel;
+            set => _radioChannel = VoiceTeamRadioChannels.Normalize(value);
+        }
         private VoiceProximityResult _currentRoute = VoiceProximityResult.Muted(VoiceProximityReason.Unmapped);
         private float _levelPeakSinceStats;
         private float _levelSumSinceStats;
