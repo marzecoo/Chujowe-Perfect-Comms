@@ -594,7 +594,7 @@ public class VoiceChatRoom
 #else
         _voiceBackend.SetMicrophone(settings?.MicrophoneDevice ?? string.Empty, settings?.MicVolume.Value ?? 1f);
 #endif
-#if WINDOWS || MACOS
+#if WINDOWS
         _voiceBackend.SetSpeaker(settings?.SpeakerDevice ?? string.Empty);
 #else
         _voiceBackend.SetSpeaker(string.Empty);

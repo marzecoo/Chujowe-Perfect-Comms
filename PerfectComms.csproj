@@ -19,34 +19,25 @@
 		<!-- Among Us/BepInEx IL2CPP currently targets net6.0; selected transitive libraries are runtime-compatible here despite newer TFM support warnings. -->
 		<SuppressTfmSupportBuildWarnings>true</SuppressTfmSupportBuildWarnings>
 		<GenerateAssemblyInfo>True</GenerateAssemblyInfo>
-		<Configurations>Debug;Release;Android;Windows;macOS</Configurations>
+		<Configurations>Debug;Release;Android;Windows</Configurations>
 	</PropertyGroup>
 
 	<!--
     Platform configurations:
       Windows  – default PC build; uses the Interstellar voice backend for mic/speaker.
       Android  – Android/mobile build; uses Unity Microphone API + AudioSource for mic/speaker.
-      macOS    – Mac build; uses the isolated CoreAudio/miniaudio native bridge.
     To build for Android, set the Configuration to "Android" in your IDE or run:
       dotnet build -c Android
-    To build for macOS, run:
-      dotnet build -c macOS
   -->
 
 	<!-- Windows build (default): Interstellar voice backend -->
-	<PropertyGroup Condition="'$(Configuration)' != 'Android' and '$(Configuration)' != 'macOS'">
+	<PropertyGroup Condition="'$(Configuration)' != 'Android'">
 		<DefineConstants>$(DefineConstants);WINDOWS</DefineConstants>
 	</PropertyGroup>
 
 	<!-- Android build: Unity Microphone API + AudioSource speaker -->
 	<PropertyGroup Condition="'$(Configuration)' == 'Android'">
 		<DefineConstants>$(DefineConstants);ANDROID</DefineConstants>
-	</PropertyGroup>
-
-	<!-- macOS build: native CoreAudio/miniaudio bridge packaged as PerfectCommsmacOS.dll -->
-	<PropertyGroup Condition="'$(Configuration)' == 'macOS'">
-		<AssemblyName>PerfectCommsmacOS</AssemblyName>
-		<DefineConstants>$(DefineConstants);MACOS</DefineConstants>
 	</PropertyGroup>
 
 	<ItemGroup>
@@ -60,7 +51,7 @@
 		<PackageReference Include="SIPSorcery" Version="10.0.6" />
 		<PackageReference Include="SocketIOClient" Version="3.1.2" />
 		<PackageReference Include="NAudio.Core" Version="2.3.0" />
-		<PackageReference Include="NAudio.WinMM" Version="2.3.0" Condition="'$(Configuration)' != 'macOS'" />
+		<PackageReference Include="NAudio.WinMM" Version="2.3.0" />
 	</ItemGroup>
 
 	<ItemGroup>
@@ -82,7 +73,7 @@
 		<EmbeddedResource Include="Libs\NAudio.Core.dll">
 			<LogicalName>Lib.NAudio.Core.dll</LogicalName>
 		</EmbeddedResource>
-		<EmbeddedResource Include="Libs\NAudio.WinMM.dll" Condition="'$(Configuration)' != 'macOS'">
+		<EmbeddedResource Include="Libs\NAudio.WinMM.dll">
 			<LogicalName>Lib.NAudio.WinMM.dll</LogicalName>
 		</EmbeddedResource>
 		<EmbeddedResource Include="Libs\Concentus.dll">
@@ -94,14 +85,11 @@
 		<EmbeddedResource Include="Libs\Interstellar.Messages.dll">
 			<LogicalName>Lib.Interstellar.Messages.dll</LogicalName>
 		</EmbeddedResource>
-		<EmbeddedResource Include="Libs\rnnoise.x64.dll" Condition="'$(Configuration)' != 'macOS'">
+		<EmbeddedResource Include="Libs\rnnoise.x64.dll">
 			<LogicalName>Lib.rnnoise.x64.dll</LogicalName>
 		</EmbeddedResource>
-		<EmbeddedResource Include="Libs\rnnoise.x86.dll" Condition="'$(Configuration)' != 'macOS'">
+		<EmbeddedResource Include="Libs\rnnoise.x86.dll">
 			<LogicalName>Lib.rnnoise.x86.dll</LogicalName>
-		</EmbeddedResource>
-		<EmbeddedResource Include="Libs\libperfectcomms_audio_macos.dylib" Condition="'$(Configuration)' == 'macOS' and Exists('Libs\libperfectcomms_audio_macos.dylib')">
-			<LogicalName>Lib.libperfectcomms_audio_macos.dylib</LogicalName>
 		</EmbeddedResource>
 		<EmbeddedResource Include="$(NuGetPackageRoot)sipsorcery\10.0.6\lib\net6.0\SIPSorcery.dll">
 			<LogicalName>Lib.SIPSorcery.dll</LogicalName>

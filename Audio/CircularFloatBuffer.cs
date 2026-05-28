@@ -5,9 +5,7 @@ namespace VoiceChatPlugin.Audio;
 internal class CircularFloatBuffer
 {
     private readonly float[] _buffer;
-#if !MACOS
     private readonly object _lock = new();
-#endif
     private int _writePos;
     private int _readPos;
     private int _count;
@@ -16,25 +14,14 @@ internal class CircularFloatBuffer
 
     public int Count
     {
-        get
-        {
-#if MACOS
-            return _count;
-#else
-            lock (_lock) return _count;
-#endif
-        }
+        get { lock (_lock) return _count; }
     }
 
     public CircularFloatBuffer(int size) => _buffer = new float[size];
 
     public int Write(float[] data, int offset, int count)
     {
-#if MACOS
-        return WriteCore(data, offset, count);
-#else
         lock (_lock) return WriteCore(data, offset, count);
-#endif
     }
 
     private int WriteCore(float[] data, int offset, int count)
@@ -56,11 +43,7 @@ internal class CircularFloatBuffer
 
     public int Read(float[] data, int offset, int count)
     {
-#if MACOS
-        return ReadCore(data, offset, count);
-#else
         lock (_lock) return ReadCore(data, offset, count);
-#endif
     }
 
     private int ReadCore(float[] data, int offset, int count)
@@ -81,11 +64,7 @@ internal class CircularFloatBuffer
 
     public void Discard(int count)
     {
-#if MACOS
-        DiscardCore(count);
-#else
         lock (_lock) DiscardCore(count);
-#endif
     }
 
     private void DiscardCore(int count)
@@ -97,11 +76,7 @@ internal class CircularFloatBuffer
 
     public void Reset()
     {
-#if MACOS
-        ResetCore();
-#else
         lock (_lock) ResetCore();
-#endif
     }
 
     private void ResetCore()

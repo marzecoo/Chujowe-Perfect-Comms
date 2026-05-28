@@ -9,12 +9,6 @@ using Interstellar.Routing;
 using Interstellar.Routing.Router;
 using Interstellar.VoiceChat;
 using UnityEngine;
-#if MACOS
-using MacOsAudioDeviceSelection = VoiceChatPlugin.Audio.MacOsAudioDeviceSelection;
-using MacOsAudioDiagnostics = VoiceChatPlugin.Audio.MacOsAudioDiagnostics;
-using MacOsFullDuplexAudioEngine = VoiceChatPlugin.Audio.MacOsFullDuplexAudioEngine;
-using MacOsVoiceAudioConfig = VoiceChatPlugin.Audio.MacOsVoiceAudioConfig;
-#endif
 
 namespace VoiceChatPlugin.VoiceChat;
 
@@ -76,13 +70,6 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
     private int _windowsMicLastPeakMilli;
     private int _windowsMicPeakMilli;
     private int _windowsMicLastGainMilli;
-#endif
-#if MACOS
-    private MacOsFullDuplexAudioEngine? _macAudioEngine;
-    private ManualMicrophone? _macMicrophone;
-    private ManualSpeaker? _macSpeaker;
-    private bool _macSpeakerConfigured;
-    private string _lastSpeakerDeviceName = string.Empty;
 #endif
     private DateTime _lastStatsLogUtc = DateTime.MinValue;
     private byte _lastPlayerId = byte.MaxValue;
@@ -233,10 +220,6 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
     {
         if (Mute == mute) return;
         _room.SetMute(mute);
-#if MACOS
-        if (!mute)
-            RestartMacAudio("unmuted");
-#else
         if (mute)
         {
             StopMicrophone("muted");
@@ -245,7 +228,6 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
         {
             SetMicrophone(_lastMicDeviceName, _lastMicVolume);
         }
-#endif
         VoiceDiagnostics.Log("interstellar.mute", $"mute={Mute} micReady={_microphoneReady} level={LocalLevel:0.000}");
     }
     public void ToggleMute() => SetMute(!Mute);
@@ -272,13 +254,8 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
     {
         var restartCapture = _captureOptions.SyntheticMicToneEnabled != options.SyntheticMicToneEnabled;
         _captureOptions = options;
-#if MACOS
-        if (restartCapture && _microphoneReady)
-            RestartMacAudio("capture-options");
-#else
         if (restartCapture && _microphoneReady && !Mute)
             SetMicrophone(_lastMicDeviceName, _lastMicVolume);
-#endif
         VoiceDiagnostics.Log("interstellar.capture-options", $"syntheticTone={options.SyntheticMicToneEnabled}");
     }
 
@@ -292,14 +269,12 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
     {
         _lastMicDeviceName = deviceName ?? string.Empty;
         _lastMicVolume = Math.Clamp(volume, 0f, 2f);
-#if !MACOS
         if (Mute)
         {
             StopMicrophone("set-muted");
             VoiceDiagnostics.Log("interstellar.mic", $"ready=false muted=true device=\"{_lastMicDeviceName}\" volume={_lastMicVolume:0.00}");
             return;
         }
-#endif
 
         try
         {
@@ -312,9 +287,6 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
 #if ANDROID
                 _androidMicrophone?.Dispose();
                 _androidMicrophone = null;
-#elif MACOS
-                StopMacAudio("synthetic");
-                _macMicrophone = null;
 #endif
                 var manualMicrophone = new ManualMicrophone();
                 _syntheticMicrophone = manualMicrophone;
@@ -330,22 +302,12 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
                 _androidMicrophone.DataAvailable += (buffer, _) => manualMicrophone.PushAudioData(buffer);
                 _androidMicrophone.Start(_lastMicDeviceName);
                 _room.Microphone = manualMicrophone;
-#elif MACOS
-                var manualMicrophone = new ManualMicrophone();
-                _macMicrophone = manualMicrophone;
-                _room.Microphone = manualMicrophone;
-                RestartMacAudio("settings");
 #else
                 StartWindowsMicrophone(_lastMicDeviceName);
 #endif
             }
             SetMicVolume(_lastMicVolume);
-#if MACOS
-            if (_captureOptions.SyntheticMicToneEnabled)
-                _microphoneReady = _room.Microphone != null && _speakerReady;
-#else
             _microphoneReady = _room.Microphone != null;
-#endif
             VoiceDiagnostics.Log("interstellar.mic", $"ready={_microphoneReady} device=\"{_lastMicDeviceName}\" volume={_lastMicVolume:0.00} muted={Mute}");
         }
         catch (Exception ex)
@@ -364,10 +326,6 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
         _androidMicrophone?.Dispose();
         _androidMicrophone = null;
 #endif
-#if MACOS
-        StopMacAudio(reason);
-        _macMicrophone = null;
-#endif
 #if WINDOWS
         StopWindowsMicrophoneCapture();
 #endif
@@ -376,88 +334,6 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
         if (hadMic)
             VoiceDiagnostics.Log("interstellar.mic", $"ready=false reason={reason} device=\"{_lastMicDeviceName}\" level={LocalLevel:0.000}");
     }
-
-#if MACOS
-    private void RestartMacAudio(string reason)
-    {
-        if (!_macSpeakerConfigured)
-        {
-            VoiceDiagnostics.Log("mac.interstellar.audio", $"ready=false stage=waiting-for-speaker reason={reason} input=\"{MacOsAudioDeviceSelection.Describe(_lastMicDeviceName)}\"");
-            return;
-        }
-        if (_macMicrophone == null)
-        {
-            VoiceDiagnostics.Log("mac.interstellar.audio", $"ready=false stage=waiting-for-microphone reason={reason} output=\"{MacOsAudioDeviceSelection.Describe(_lastSpeakerDeviceName)}\"");
-            return;
-        }
-        if (_macSpeaker == null)
-        {
-            VoiceDiagnostics.Log("mac.interstellar.audio", $"ready=false stage=waiting-for-speaker-graph reason={reason}");
-            return;
-        }
-
-        try
-        {
-            StopSyntheticMicTone();
-            _macAudioEngine ??= new MacOsFullDuplexAudioEngine("Interstellar");
-            var result = _macAudioEngine.Start(
-                new MacOsVoiceAudioConfig(
-                    "Interstellar",
-                    _lastMicDeviceName,
-                    _lastSpeakerDeviceName,
-                    Audio.AudioHelpers.ClockRate,
-                    1,
-                    2),
-                OnMacMicrophoneData,
-                ReadMacPlayback);
-
-            _microphoneReady = result.Success;
-            _speakerReady = result.Success;
-            VoiceDiagnostics.Log("mac.interstellar.audio",
-                result.Success
-                    ? $"ready=true reason={reason} sampleRate={Audio.AudioHelpers.ClockRate} inputChannels=1 outputChannels=2 input=\"{MacOsAudioDeviceSelection.Describe(_lastMicDeviceName)}\" output=\"{MacOsAudioDeviceSelection.Describe(_lastSpeakerDeviceName)}\" nativeBackend=CoreAudio"
-                    : $"ready=false reason={reason} stage={result.Stage} code={result.Code} error=\"{result.Message}\"");
-        }
-        catch (Exception ex)
-        {
-            StopMacAudio($"failed:{reason}");
-            VoiceDiagnostics.Log("mac.interstellar.audio", $"ready=false reason={reason} stage=managed-start error=\"{ex.Message}\"");
-        }
-    }
-
-    private void StopMacAudio(string reason)
-    {
-        var hadAudio = _microphoneReady || _speakerReady || _macAudioEngine != null;
-        try { _macAudioEngine?.Stop(reason); } catch { }
-        _microphoneReady = false;
-        _speakerReady = false;
-        if (hadAudio)
-            VoiceDiagnostics.Log("mac.interstellar.audio", $"ready=false reason={reason} level={LocalLevel:0.000}");
-    }
-
-    private void OnMacMicrophoneData(float[] buffer, int samples)
-    {
-        var microphone = _macMicrophone;
-        if (microphone == null || buffer.Length == 0 || samples <= 0) return;
-        samples = Math.Min(samples, buffer.Length);
-        if (Mute) return;
-        if (samples != buffer.Length)
-        {
-            var trimmed = new float[samples];
-            Array.Copy(buffer, trimmed, samples);
-            buffer = trimmed;
-        }
-        microphone.PushAudioData(buffer);
-    }
-
-    private int ReadMacPlayback(float[] buffer, int count)
-    {
-        var speaker = _macSpeaker;
-        if (speaker == null) return 0;
-        speaker.Read(buffer);
-        return count;
-    }
-#endif
 
 #if WINDOWS
     private void StartWindowsMicrophone(string deviceName)
@@ -801,14 +677,6 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
             _windowsSpeakerOutput.Play();
             _speakerReady = _windowsSpeakerOutput.PlaybackState == PlaybackState.Playing;
             VoiceDiagnostics.Log("interstellar.speaker", $"ready={_speakerReady} device=\"{deviceName}\" outputDevice=\"{DescribeWindowsWaveOutDevice(outputDevice)}\" outputDeviceNumber={outputDevice} sourceFormat=\"{provider.WaveFormat}\" graphFormat=\"{provider.WaveFormat}\" outputDevices=\"{DescribeWindowsWaveOutDevices()}\" latencyMs=60 manualSpeaker=true");
-#elif MACOS
-            _lastSpeakerDeviceName = deviceName ?? string.Empty;
-            _macSpeakerConfigured = true;
-            var manualSpeaker = new ManualSpeaker(() => StopMacAudio("manual-speaker-closed"));
-            _macSpeaker = manualSpeaker;
-            _room.Speaker = manualSpeaker;
-            RestartMacAudio("speaker");
-            VoiceDiagnostics.Log("interstellar.speaker", $"ready={_speakerReady} device=\"{MacOsAudioDeviceSelection.Describe(_lastSpeakerDeviceName)}\" manualSpeaker=true macosCoreAudio=true");
 #else
             try { _room.Speaker = null; } catch { }
             _speakerReady = false;
@@ -823,9 +691,6 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
             _androidSpeaker = null;
 #elif WINDOWS
             StopWindowsSpeaker();
-#elif MACOS
-            StopMacAudio("speaker-failed");
-            _macSpeaker = null;
 #endif
             try { _room.Speaker = null; } catch { }
             _speakerReady = false;
@@ -990,12 +855,6 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
         _androidSpeaker = null;
 #elif WINDOWS
         StopWindowsSpeaker();
-#elif MACOS
-        StopMacAudio("dispose");
-        try { _macAudioEngine?.Dispose(); } catch { }
-        _macAudioEngine = null;
-        _macMicrophone = null;
-        _macSpeaker = null;
 #endif
         try { _room.Microphone = null; } catch { }
         try { _room.Speaker = null; } catch { }
@@ -1140,11 +999,6 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
             $"micReady={_microphoneReady} speakerReady={_speakerReady} windowsSpeakerReads={_windowsSpeakerProvider?.ReadCallbacks ?? 0} windowsSpeakerReadFailures={_windowsSpeakerProvider?.ReadFailures ?? 0} " +
             $"micCapture=({DescribeWindowsMicCaptureDiagnostics()}) speakerPull=({_windowsSpeakerProvider?.Diagnostics ?? "none"}) " +
             $"localMeterReady={_localMicMeter != null} syntheticTone={_captureOptions.SyntheticMicToneEnabled} syntheticFrames={Volatile.Read(ref _syntheticFrames)}");
-#elif MACOS
-            $"micReady={_microphoneReady} speakerReady={_speakerReady} macAudio=({_macAudioEngine?.GetDiagnosticsSnapshot().ToString() ?? "none"}) " +
-            $"localMeterReady={_localMicMeter != null} syntheticTone={_captureOptions.SyntheticMicToneEnabled} syntheticFrames={Volatile.Read(ref _syntheticFrames)}");
-        if (_macAudioEngine != null)
-            MacOsAudioDiagnostics.LogStats("Interstellar", _macAudioEngine.GetDiagnosticsSnapshot());
 #else
             $"micReady={_microphoneReady} speakerReady={_speakerReady} localMeterReady={_localMicMeter != null} syntheticTone={_captureOptions.SyntheticMicToneEnabled} syntheticFrames={Volatile.Read(ref _syntheticFrames)}");
 #endif
