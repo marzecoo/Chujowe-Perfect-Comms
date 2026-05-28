@@ -11,7 +11,7 @@ internal sealed class PerfectCommsUpdateInfo
     [JsonPropertyName("enabled")] public bool Enabled { get; set; } = true;
     [JsonPropertyName("test")] public bool Test { get; set; }
     [JsonPropertyName("latestVersion")] public string LatestVersion { get; set; } = "";
-    [JsonPropertyName("title")] public string Title { get; set; } = "Perfect Comms update available";
+    [JsonPropertyName("title")] public string Title { get; set; } = "Mega Chujowe Perfect Comms update available";
     [JsonPropertyName("message")] public string Message { get; set; } = "";
     [JsonPropertyName("releaseUrl")] public string ReleaseUrl { get; set; } = "";
     [JsonPropertyName("showEveryMainMenu")] public bool ShowEveryMainMenu { get; set; }
@@ -80,8 +80,8 @@ internal static class PerfectCommsUpdateClient
             {
                 Enabled = true,
                 LatestVersion = github.TagName,
-                Title = "Perfect Comms update available",
-                Message = "Click here to download the latest Perfect Comms release.",
+                Title = "Mega Chujowe Perfect Comms update available",
+                Message = "Click here to download the latest Mega Chujowe Perfect Comms release.",
                 ReleaseUrl = string.IsNullOrWhiteSpace(github.HtmlUrl) ? GitHubReleasesUrl : github.HtmlUrl,
                 ShowEveryMainMenu = false,
             };

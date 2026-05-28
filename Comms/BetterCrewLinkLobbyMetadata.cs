@@ -37,7 +37,7 @@ internal static class BetterCrewLinkLobbyMetadata
         => new()
         {
             id = -1,
-            title = Clamp(request.Title, 20, "Perfect Comms"),
+            title = Clamp(request.Title, 20, "Mega Chujowe Perfect Comms"),
             host = Clamp(request.Host, 10, "Unknown"),
             current_players = Math.Max(0, request.Players),
             max_players = Math.Max(1, request.MaxPlayers),
@@ -62,7 +62,7 @@ internal static class BetterCrewLinkLobbyMetadata
             Code = ResolveCode(lobby),
             Region = string.IsNullOrWhiteSpace(lobby.server) ? "BCL" : lobby.server.Trim(),
             Language = lobby.language ?? "",
-            Title = string.IsNullOrWhiteSpace(lobby.title) ? "Perfect Comms" : lobby.title,
+            Title = string.IsNullOrWhiteSpace(lobby.title) ? "Mega Chujowe Perfect Comms" : lobby.title,
             Host = string.IsNullOrWhiteSpace(lobby.host) ? "Unknown" : lobby.host,
             Players = Math.Max(0, lobby.current_players),
             MaxPlayers = Math.Max(1, lobby.max_players),

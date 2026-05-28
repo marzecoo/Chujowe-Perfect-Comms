@@ -6,7 +6,7 @@ namespace VoiceChatPlugin.VoiceChat;
 
 public class VoiceRoleIntegrationOptions : AbstractOptionGroup
 {
-    public override string GroupName => "Perfect Comms: Role Voice Rules";
+    public override string GroupName => "Mega Chujowe Perfect Comms: Role Voice Rules";
     public override Color GroupColor => Palette.CrewmateRoleHeaderBlue;
     public override uint GroupPriority => 1001;
 

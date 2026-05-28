@@ -16,7 +16,7 @@ internal sealed class VanillaLobbyModMetadata
 
     public string DisplayName => Id switch
     {
-        VoiceChatPluginMain.Id => "Perfect Comms",
+        VoiceChatPluginMain.Id => "Mega Chujowe Perfect Comms",
         "gg.reactor.api" => "Reactor",
         "mira.api" => "MiraAPI",
         "auavengers.tou.mira" => "TOU Mira",

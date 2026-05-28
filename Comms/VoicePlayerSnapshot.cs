@@ -28,4 +28,13 @@ internal readonly record struct VoicePlayerSnapshot(
     bool HasMediumSpirit,
     Vector2 MediumSpiritPosition,
     bool IsMediatedGhost,
-    byte MediatingMediumId);
+    byte MediatingMediumId,
+    bool IsTouMcePelicanSwallowed,
+    byte TouMcePelicanId,
+    byte TouMceJackalTeamId,
+    bool IsTouMceSpiritMaster,
+    bool IsTouMceSpiritMasterMediatedGhost,
+    byte TouMceSpiritMasterId,
+    bool IsTouMceLawyer,
+    byte TouMceLawyerClientId,
+    byte TouMceLawyerOwnerId);

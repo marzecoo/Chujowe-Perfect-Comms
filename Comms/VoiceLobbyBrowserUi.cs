@@ -142,7 +142,7 @@ internal static class VoiceLobbyBrowserUi
     internal static void OpenInfoEditor()
     {
         var settings = LocalSettingsTabSingleton<VoiceChatLocalSettings>.Instance;
-        _editTitle = settings?.LobbyBrowserTitle.Value ?? "Perfect Comms";
+        _editTitle = settings?.LobbyBrowserTitle.Value ?? "Mega Chujowe Perfect Comms";
         _editLanguage = settings?.LobbyBrowserLanguage.Value ?? "English";
         _editingLanguage = false;
         _editorOpen = true;
@@ -484,7 +484,7 @@ internal static class VoiceLobbyBrowserUi
             SetStatus("");
             var empty = CreateText("EmptyState", _rowsRoot.transform, new Vector3(0f, 0.05f, -0.2f),
                 CurrentSource() == VoiceLobbyBrowserSource.BetterCrewLink
-                    ? "No PerfectComms BCL live lobbies listed.\nHost a lobby and enable Public Voice Lobby in game settings."
+                    ? "No Mega Chujowe Perfect Comms BCL live lobbies listed.\nHost a lobby and enable Public Voice Lobby in game settings."
                     : "No public voice lobbies listed.\nHost a lobby and enable Public Voice Lobby in game settings.",
                 1.20f, TextAlignmentOptions.Center, SortBase + 4);
             empty.enableWordWrapping = true;
@@ -494,7 +494,7 @@ internal static class VoiceLobbyBrowserUi
         }
 
         SetStatus(CurrentSource() == VoiceLobbyBrowserSource.BetterCrewLink
-            ? $"{listings.Count} PerfectComms BCL live lobby/lobbies found"
+            ? $"{listings.Count} Mega Chujowe Perfect Comms BCL live lobby/lobbies found"
             : $"{listings.Count} Cloudflare (Limited) lobby/lobbies found");
         int row = 0;
         foreach (var listing in listings)
@@ -750,7 +750,7 @@ internal static class VoiceLobbyBrowserUi
         var settings = LocalSettingsTabSingleton<VoiceChatLocalSettings>.Instance;
         if (settings != null)
         {
-            settings.LobbyBrowserTitle.Value = string.IsNullOrWhiteSpace(_editTitle) ? "Perfect Comms" : _editTitle.Trim();
+            settings.LobbyBrowserTitle.Value = string.IsNullOrWhiteSpace(_editTitle) ? "Mega Chujowe Perfect Comms" : _editTitle.Trim();
             settings.LobbyBrowserLanguage.Value = string.IsNullOrWhiteSpace(_editLanguage) ? "English" : _editLanguage.Trim();
         }
         _editorOpen = false;

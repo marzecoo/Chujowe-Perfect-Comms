@@ -62,7 +62,7 @@ public class VoiceChatLocalSettings : LocalSettingsTab
 {
     public static LoadableResourceAsset MicIcon { get; } = new("VoiceChatPlugin.Resources.miclogo.png");
 
-    public override string TabName => "Perfect Comms";
+    public override string TabName => "Mega Chujowe Perfect Comms";
     public override LocalSettingTabAppearance TabAppearance => new()
     {
         TabIcon = MicIcon
@@ -330,14 +330,14 @@ public class VoiceChatLocalSettings : LocalSettingsTab
             new ConfigDescription("Use RNNoise to suppress outgoing microphone background noise."));
 
         DebugVoiceStats = config.Bind("Debug", "DebugVoiceStats", false,
-            new ConfigDescription("Enable Perfect Comms diagnostic files and debug log output."));
+            new ConfigDescription("Enable Mega Chujowe Perfect Comms diagnostic files and debug log output."));
 
         SyntheticMicTone = config.Bind("Debug.Advanced", "SyntheticMicTone", false,
             new ConfigDescription("Transmit a quiet generated 48 kHz mono test tone through the active voice backend instead of relying on physical microphone audio."));
         MicCalibrationDiagnostics = config.Bind("Debug", "MicCalibrationDiagnostics", false,
             new ConfigDescription("Log live microphone peak/RMS/gate calibration diagnostics for BetterCrewLink."));
 
-        LobbyBrowserTitle = config.Bind("Lobby Browser", "Title", "Perfect Comms",
+        LobbyBrowserTitle = config.Bind("Lobby Browser", "Title", "Mega Chujowe Perfect Comms",
             new ConfigDescription("Title shown in the voice lobby browser"));
 
         LobbyBrowserLanguage = config.Bind("Lobby Browser", "Language", "English",
@@ -360,11 +360,11 @@ public class VoiceChatLocalSettings : LocalSettingsTab
             new ConfigDescription("Interstellar voice server URL. FangkuaiYa's public server is the default fallback."));
 
         UpdateNotificationsEnabled = config.Bind("Updates", "NotificationsEnabled", true,
-            new ConfigDescription("Show Perfect Comms update notifications on the main menu"));
+            new ConfigDescription("Show Mega Chujowe Perfect Comms update notifications on the main menu"));
 
         UpdateNotificationUrl = config.Bind("Updates", "NotificationUrl",
             "https://api.github.com/repos/artriy/Perfect-Comms/releases/latest",
-            new ConfigDescription("Perfect Comms GitHub latest-release API endpoint"));
+            new ConfigDescription("Mega Chujowe Perfect Comms GitHub latest-release API endpoint"));
 
         ShowTestUpdateNotifications = config.Bind("Updates", "ShowTestNotifications", false,
             new ConfigDescription("Reserved for local update notification testing"));

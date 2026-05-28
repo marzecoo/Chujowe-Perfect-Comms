@@ -19,7 +19,7 @@ using VoiceChatPlugin.VoiceChat;
 
 namespace VoiceChatPlugin;
 
-[BepInPlugin(Id, "Perfect Comms", Version)]
+[BepInPlugin(Id, "Mega Chujowe Perfect Comms", Version)]
 [BepInProcess("Among Us.exe")]
 [BepInDependency(ReactorPlugin.Id)]
 [BepInDependency(MiraApiPlugin.Id)]
@@ -30,7 +30,7 @@ public class VoiceChatPluginMain : BasePlugin, IMiraPlugin
     public const string Version = "2.0.6";
     public static ManualLogSource Logger { get; private set; } = null!;
     public Harmony Harmony { get; } = new(Id);
-    public string OptionsTitleText => "Perfect Comms";
+    public string OptionsTitleText => "Mega Chujowe Perfect Comms";
     public ConfigFile GetConfigFile() => Config;
     private const string ResPrefix = "Lib.";
     private static readonly Dictionary<string, Assembly> _asmCache
@@ -74,8 +74,8 @@ public class VoiceChatPluginMain : BasePlugin, IMiraPlugin
     {
         Logger = Log;
         VanillaLobbyDiagnostics.Configure(message => Logger.LogInfo(message), message => Logger.LogWarning(message));
-        VoiceDiagnostics.DebugInfo("[VC] Loading Perfect Comms.");
-        ReactorCredits.Register("Perfect Comms", Version, false, ReactorCredits.AlwaysShow);
+        VoiceDiagnostics.DebugInfo("[VC] Loading Mega Chujowe Perfect Comms.");
+        ReactorCredits.Register("Mega Chujowe Perfect Comms", Version, false, ReactorCredits.AlwaysShow);
         VoiceDiagnostics.Init();
         if (VoiceDiagnostics.IsEnabled && !string.IsNullOrEmpty(VoiceDiagnostics.Path))
             VoiceDiagnostics.DebugInfo($"[VC] Diagnostics log: {VoiceDiagnostics.Path}");
@@ -87,6 +87,6 @@ public class VoiceChatPluginMain : BasePlugin, IMiraPlugin
         VoiceChatPatches.RegisterKeybindHandlers();
         Harmony.PatchAll(Assembly.GetExecutingAssembly());
         VanillaLobbyPatchDiagnostics.LogPatchState(Harmony);
-        VoiceDiagnostics.DebugInfo("[VC] Perfect Comms loaded.");
+        VoiceDiagnostics.DebugInfo("[VC] Mega Chujowe Perfect Comms loaded.");
     }
 }

@@ -115,6 +115,9 @@ internal static class VoiceProximityCalculator
         bool targetInVent = target.InVent;
         bool localMediatingMedium = IsMediatingMedium(localPlayer) &&
                                      (MediumGhostVoiceMode)s.MediumGhostVoice != MediumGhostVoiceMode.None;
+        var touMceRoute = TryCalculateTouMceRoute(localPlayer, target, previousWallCoefficient);
+        if (touMceRoute.HasValue)
+            return touMceRoute.Value;
 
         if (s.OnlyMeetingOrLobby)
             return VoiceProximityResult.Muted(VoiceProximityReason.OnlyMeetingOrLobby, previousWallCoefficient);
@@ -232,6 +235,127 @@ internal static class VoiceProximityCalculator
             : VoiceProximityResult.Muted(VoiceProximityReason.NoListener, previousWallCoefficient);
 
         return SelectBestNormalRoute(proximityRoute, virtualRoute, cameraRoute);
+    }
+
+    private static VoiceProximityResult? TryCalculateTouMceRoute(
+        VoicePlayerSnapshot? localPlayer,
+        VoicePlayerSnapshot target,
+        float wallCoefficient)
+    {
+        if (!localPlayer.HasValue)
+            return null;
+
+        var local = localPlayer.Value;
+        if (TryCalculateTouMcePelicanRoute(local, target, wallCoefficient, out var pelicanRoute))
+            return pelicanRoute;
+
+        if (TryCalculateTouMceJackalRoute(local, target, wallCoefficient, out var jackalRoute))
+            return jackalRoute;
+
+        if (TryCalculateTouMceSpiritMasterRoute(local, target, wallCoefficient, out var spiritMasterRoute))
+            return spiritMasterRoute;
+
+        if (TryCalculateTouMceLawyerRoute(local, target, wallCoefficient, out var lawyerRoute))
+            return lawyerRoute;
+
+        return null;
+    }
+
+    private static bool TryCalculateTouMcePelicanRoute(
+        VoicePlayerSnapshot local,
+        VoicePlayerSnapshot target,
+        float wallCoefficient,
+        out VoiceProximityResult result)
+    {
+        result = default;
+
+        if (!local.IsTouMcePelicanSwallowed && !target.IsTouMcePelicanSwallowed)
+            return false;
+
+        bool localIsTargetsPelican = target.IsTouMcePelicanSwallowed && target.TouMcePelicanId == local.PlayerId;
+        bool targetIsLocalsPelican = local.IsTouMcePelicanSwallowed && local.TouMcePelicanId == target.PlayerId;
+        if (localIsTargetsPelican || targetIsLocalsPelican)
+        {
+            result = new(1f, 0f, 0f, 0f, VoiceAudioFilterMode.None,
+                true, VoiceProximityReason.Proximity, wallCoefficient);
+            return true;
+        }
+
+        result = VoiceProximityResult.Muted(VoiceProximityReason.TargetDeadMuted, wallCoefficient);
+        return true;
+    }
+
+    private static bool TryCalculateTouMceJackalRoute(
+        VoicePlayerSnapshot local,
+        VoicePlayerSnapshot target,
+        float wallCoefficient,
+        out VoiceProximityResult result)
+    {
+        result = default;
+
+        if (local.IsDead || target.IsDead ||
+            local.TouMceJackalTeamId == byte.MaxValue ||
+            local.TouMceJackalTeamId != target.TouMceJackalTeamId)
+        {
+            return false;
+        }
+
+        result = new(0f, 0f, 1f, 0f, VoiceAudioFilterMode.Radio,
+            true, VoiceProximityReason.TeamRadio, wallCoefficient);
+        return true;
+    }
+
+    private static bool TryCalculateTouMceSpiritMasterRoute(
+        VoicePlayerSnapshot local,
+        VoicePlayerSnapshot target,
+        float wallCoefficient,
+        out VoiceProximityResult result)
+    {
+        result = default;
+
+        bool localIsTargetsSpiritMaster =
+            local.IsTouMceSpiritMaster &&
+            target.IsTouMceSpiritMasterMediatedGhost &&
+            target.TouMceSpiritMasterId == local.PlayerId;
+        bool targetIsLocalsSpiritMaster =
+            local.IsTouMceSpiritMasterMediatedGhost &&
+            target.IsTouMceSpiritMaster &&
+            local.TouMceSpiritMasterId == target.PlayerId;
+
+        if (!localIsTargetsSpiritMaster && !targetIsLocalsSpiritMaster)
+            return false;
+
+        result = new(1f, 0f, 0f, 0f, VoiceAudioFilterMode.None,
+            true, VoiceProximityReason.Proximity, wallCoefficient);
+        return true;
+    }
+
+    private static bool TryCalculateTouMceLawyerRoute(
+        VoicePlayerSnapshot local,
+        VoicePlayerSnapshot target,
+        float wallCoefficient,
+        out VoiceProximityResult result)
+    {
+        result = default;
+
+        if (local.IsDead || target.IsDead)
+            return false;
+
+        bool localIsTargetsLawyer =
+            target.TouMceLawyerOwnerId == local.PlayerId &&
+            local.IsTouMceLawyer &&
+            local.TouMceLawyerClientId == target.PlayerId;
+        bool targetIsLocalsLawyer =
+            local.TouMceLawyerOwnerId == target.PlayerId &&
+            target.IsTouMceLawyer &&
+            target.TouMceLawyerClientId == local.PlayerId;
+
+        if (!localIsTargetsLawyer && !targetIsLocalsLawyer)
+            return false;
+
+        result = new(1f, 0f, 0f, 0f, VoiceAudioFilterMode.None,
+            true, VoiceProximityReason.Proximity, wallCoefficient);
+        return true;
     }
 
     private static bool CanHearTeamRadio(

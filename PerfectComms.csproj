@@ -4,9 +4,9 @@
 		<TargetFramework>net6.0</TargetFramework>
 		<RootNamespace>VoiceChatPlugin</RootNamespace>
 		<AssemblyName>PerfectComms</AssemblyName>
-		<AssemblyTitle>Perfect Comms</AssemblyTitle>
-		<Product>Perfect Comms</Product>
-		<Company>Perfect Comms</Company>
+		<AssemblyTitle>Mega Chujowe Perfect Comms</AssemblyTitle>
+		<Product>Mega Chujowe Perfect Comms</Product>
+		<Company>Mega Chujowe Perfect Comms</Company>
 		<Description>Native proximity voice for modded Among Us.</Description>
 		<Version>2.0.6</Version>
 		<AssemblyVersion>2.0.6.0</AssemblyVersion>

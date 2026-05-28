@@ -8,7 +8,7 @@ namespace VoiceChatPlugin;
 public static class PerfectCommsCreditsColorPatch
 {
     private const string CreditsColor = "#00E5FF";
-    private const string CreditsLabel = "Perfect Comms " + VoiceChatPluginMain.Version;
+    private const string CreditsLabel = "Mega Chujowe Perfect Comms " + VoiceChatPluginMain.Version;
 
     private static void Postfix(ref string? __result)
     {

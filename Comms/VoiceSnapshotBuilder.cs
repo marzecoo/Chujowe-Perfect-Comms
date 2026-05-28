@@ -44,6 +44,17 @@ internal static class VoiceSnapshotBuilder
                 out Vector2 mediumSpiritPosition,
                 out bool isMediatedGhost,
                 out byte mediatingMediumId);
+            TouMceVoiceIntegration.GetPlayerVoiceState(
+                player,
+                out bool isTouMcePelicanSwallowed,
+                out byte touMcePelicanId,
+                out byte touMceJackalTeamId,
+                out bool isTouMceSpiritMaster,
+                out bool isTouMceSpiritMasterMediatedGhost,
+                out byte touMceSpiritMasterId,
+                out bool isTouMceLawyer,
+                out byte touMceLawyerClientId,
+                out byte touMceLawyerOwnerId);
 
             players.Add(new VoicePlayerSnapshot(
                 player.PlayerId,
@@ -71,7 +82,16 @@ internal static class VoiceSnapshotBuilder
                 hasMediumSpirit,
                 mediumSpiritPosition,
                 isMediatedGhost,
-                mediatingMediumId));
+                mediatingMediumId,
+                isTouMcePelicanSwallowed,
+                touMcePelicanId,
+                touMceJackalTeamId,
+                isTouMceSpiritMaster,
+                isTouMceSpiritMasterMediatedGhost,
+                touMceSpiritMasterId,
+                isTouMceLawyer,
+                touMceLawyerClientId,
+                touMceLawyerOwnerId));
         }
 
         return new VoiceGameStateSnapshot(

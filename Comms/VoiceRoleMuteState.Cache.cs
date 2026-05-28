@@ -24,6 +24,12 @@ internal static partial class VoiceRoleMuteState
             _vampireRoleType == null &&
             _mediumRoleType == null &&
             _mediatedModifierType == null &&
+            _touMceAstralInvisibilityModifierType == null &&
+            _touMceAstralPhaseModifierType == null &&
+            _touMceBurrowerInvisibleModifierType == null &&
+            _touMceSpeedyAccelerateModifierType == null &&
+            _touMceVanishedModifierType == null &&
+            _touMceWraithLanternInvisibilityModifierType == null &&
             PostMeetingBlackmailedPlayers.Count == 0)
         {
             RoleStateCache.Clear();
@@ -55,7 +61,13 @@ internal static partial class VoiceRoleMuteState
         var loverModifier = GetModifier(player, _loverModifierType);
         bool isLover = loverModifier != null;
         byte loverPartnerId = GetLoverPartnerId(loverModifier);
-        bool isSwooped = GetModifier(player, _swoopModifierType) != null;
+        bool isSwooped = GetModifier(player, _swoopModifierType) != null ||
+                         GetModifier(player, _touMceAstralInvisibilityModifierType) != null ||
+                         GetModifier(player, _touMceAstralPhaseModifierType) != null ||
+                         GetModifier(player, _touMceBurrowerInvisibleModifierType) != null ||
+                         GetModifier(player, _touMceSpeedyAccelerateModifierType) != null ||
+                         GetModifier(player, _touMceVanishedModifierType) != null ||
+                         GetModifier(player, _touMceWraithLanternInvisibilityModifierType) != null;
         bool isGlitchHacked = IsGlitchHackActive(GetModifier(player, _glitchHackedModifierType));
         var mediatedModifier = GetModifier(player, _mediatedModifierType);
         bool isMediatedGhost = mediatedModifier != null && player.Data?.IsDead == true;
@@ -174,6 +186,12 @@ internal static partial class VoiceRoleMuteState
         _vampireRoleType = ResolveType(VampireRoleName);
         _mediumRoleType = ResolveType(MediumRoleName);
         _mediatedModifierType = ResolveType(MediatedModifierName);
+        _touMceAstralInvisibilityModifierType = ResolveType(TouMceAstralInvisibilityModifierName);
+        _touMceAstralPhaseModifierType = ResolveType(TouMceAstralPhaseModifierName);
+        _touMceBurrowerInvisibleModifierType = ResolveType(TouMceBurrowerInvisibleModifierName);
+        _touMceSpeedyAccelerateModifierType = ResolveType(TouMceSpeedyAccelerateModifierName);
+        _touMceVanishedModifierType = ResolveType(TouMceVanishedModifierName);
+        _touMceWraithLanternInvisibilityModifierType = ResolveType(TouMceWraithLanternInvisibilityModifierName);
         _supportedModTypesResolved = true;
         InvalidateRoleStateCache();
     }

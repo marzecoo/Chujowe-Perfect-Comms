@@ -23,6 +23,12 @@ internal static partial class VoiceRoleMuteState
     private const string VampireRoleName = "TownOfUs.Roles.Neutral.VampireRole";
     private const string MediumRoleName = "TownOfUs.Roles.Crewmate.MediumRole";
     private const string MediatedModifierName = "TownOfUs.Modifiers.Crewmate.MediatedModifier";
+    private const string TouMceAstralInvisibilityModifierName = "TouMegaChujoweExtension.Modifiers.Impostor.AstralInvisibilityModifier";
+    private const string TouMceAstralPhaseModifierName = "TouMegaChujoweExtension.Modifiers.Impostor.AstralPhaseModifier";
+    private const string TouMceBurrowerInvisibleModifierName = "TouMegaChujoweExtension.Modifiers.Impostor.BurrowerInvisibleModifier";
+    private const string TouMceSpeedyAccelerateModifierName = "TouMegaChujoweExtension.Modifiers.Impostor.SpeedyAccelerateModifier";
+    private const string TouMceVanishedModifierName = "TouMegaChujoweExtension.Modifiers.Crewmate.VanishModifier";
+    private const string TouMceWraithLanternInvisibilityModifierName = "TouMegaChujoweExtension.Modifiers.Impostor.WraithLanternInvisibilityModifier";
     private const float RoleStateRefreshInterval = 0.25f;
 
     private static readonly HashSet<byte> JailVoiceAllowed = new();
@@ -44,6 +50,12 @@ internal static partial class VoiceRoleMuteState
     private static Type? _vampireRoleType;
     private static Type? _mediumRoleType;
     private static Type? _mediatedModifierType;
+    private static Type? _touMceAstralInvisibilityModifierType;
+    private static Type? _touMceAstralPhaseModifierType;
+    private static Type? _touMceBurrowerInvisibleModifierType;
+    private static Type? _touMceSpeedyAccelerateModifierType;
+    private static Type? _touMceVanishedModifierType;
+    private static Type? _touMceWraithLanternInvisibilityModifierType;
     private static bool _supportedModTypesResolved;
     private static int _resolvedGameId = int.MinValue;
     private static VoiceGamePhase _resolvedPhase = VoiceGamePhase.Unknown;

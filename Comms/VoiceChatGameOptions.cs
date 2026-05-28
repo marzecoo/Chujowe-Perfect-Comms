@@ -6,7 +6,7 @@ namespace VoiceChatPlugin.VoiceChat;
 
 public class VoiceChatGameOptions : AbstractOptionGroup
 {
-    public override string GroupName => "Perfect Comms";
+    public override string GroupName => "Mega Chujowe Perfect Comms";
     public override uint GroupPriority => 1000;
 
     public ModdedToggleOption PublicVoiceLobby { get; } = new("Public Voice Lobby", false);
