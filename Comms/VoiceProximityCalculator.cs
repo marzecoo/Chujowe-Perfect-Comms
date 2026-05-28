@@ -74,6 +74,25 @@ internal static class VoiceProximityCalculator
             true, VoiceProximityReason.MeetingLiving, 1f);
     }
 
+    public static VoiceProximityResult CalculateExile(
+        VoicePlayerSnapshot? localPlayer,
+        VoicePlayerSnapshot? targetPlayer)
+    {
+        if (!targetPlayer.HasValue)
+            return VoiceProximityResult.Muted(VoiceProximityReason.Unmapped);
+
+        var target = targetPlayer.Value;
+        if (target.IsDead)
+            return VoiceProximityResult.Muted(VoiceProximityReason.TargetDeadMuted);
+
+        return new(1f, 0f, 0f, 0f, VoiceAudioFilterMode.None,
+            true,
+            localPlayer?.IsDead == true
+                ? VoiceProximityReason.LocalDeadHearsLiving
+                : VoiceProximityReason.MeetingLiving,
+            1f);
+    }
+
     public static VoiceProximityResult CalculateTaskPhase(
         VoicePlayerSnapshot? localPlayer,
         VoicePlayerSnapshot? targetPlayer,
@@ -115,7 +134,7 @@ internal static class VoiceProximityCalculator
         bool targetInVent = target.InVent;
         bool localMediatingMedium = IsMediatingMedium(localPlayer) &&
                                      (MediumGhostVoiceMode)s.MediumGhostVoice != MediumGhostVoiceMode.None;
-        var touMceRoute = TryCalculateTouMceRoute(localPlayer, target, previousWallCoefficient);
+        var touMceRoute = TryCalculateTouMceRoute(localPlayer, target, s, previousWallCoefficient);
         if (touMceRoute.HasValue)
             return touMceRoute.Value;
 
@@ -240,22 +259,23 @@ internal static class VoiceProximityCalculator
     private static VoiceProximityResult? TryCalculateTouMceRoute(
         VoicePlayerSnapshot? localPlayer,
         VoicePlayerSnapshot target,
+        VoiceRoomSettingsSnapshot settings,
         float wallCoefficient)
     {
         if (!localPlayer.HasValue)
             return null;
 
         var local = localPlayer.Value;
-        if (TryCalculateTouMcePelicanRoute(local, target, wallCoefficient, out var pelicanRoute))
+        if (TryCalculateTouMcePelicanRoute(local, target, settings, wallCoefficient, out var pelicanRoute))
             return pelicanRoute;
 
-        if (TryCalculateTouMceJackalRoute(local, target, wallCoefficient, out var jackalRoute))
+        if (settings.TouMceRecruitVoice && TryCalculateTouMceJackalRoute(local, target, wallCoefficient, out var jackalRoute))
             return jackalRoute;
 
-        if (TryCalculateTouMceSpiritMasterRoute(local, target, wallCoefficient, out var spiritMasterRoute))
+        if (settings.TouMceSpiritMasterGhostVoice && TryCalculateTouMceSpiritMasterRoute(local, target, wallCoefficient, out var spiritMasterRoute))
             return spiritMasterRoute;
 
-        if (TryCalculateTouMceLawyerRoute(local, target, wallCoefficient, out var lawyerRoute))
+        if (settings.TouMceLawyerClientVoice && TryCalculateTouMceLawyerRoute(local, target, wallCoefficient, out var lawyerRoute))
             return lawyerRoute;
 
         return null;
@@ -264,6 +284,7 @@ internal static class VoiceProximityCalculator
     private static bool TryCalculateTouMcePelicanRoute(
         VoicePlayerSnapshot local,
         VoicePlayerSnapshot target,
+        VoiceRoomSettingsSnapshot settings,
         float wallCoefficient,
         out VoiceProximityResult result)
     {
@@ -271,6 +292,12 @@ internal static class VoiceProximityCalculator
 
         if (!local.IsTouMcePelicanSwallowed && !target.IsTouMcePelicanSwallowed)
             return false;
+
+        if (!settings.TouMcePelicanBellyVoice)
+        {
+            result = VoiceProximityResult.Muted(VoiceProximityReason.TargetDeadMuted, wallCoefficient);
+            return true;
+        }
 
         bool localIsTargetsPelican = target.IsTouMcePelicanSwallowed && target.TouMcePelicanId == local.PlayerId;
         bool targetIsLocalsPelican = local.IsTouMcePelicanSwallowed && local.TouMcePelicanId == target.PlayerId;

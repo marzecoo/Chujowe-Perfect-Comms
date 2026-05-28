@@ -17,7 +17,8 @@ public static class VoiceRoomControlCodec
 {
     private const byte Magic0 = (byte)'P';
     private const byte Magic1 = (byte)'C';
-    private const byte Version = 9;
+    private const byte Version = 10;
+    private const byte LegacyVersion9 = 9;
     private const byte LegacyVersion8 = 8;
     private const byte LegacyVersion7 = 7;
     private const byte LegacyVersion6 = 6;
@@ -29,7 +30,8 @@ public static class VoiceRoomControlCodec
     private const int LegacyFixedSettingsBytesV6 = 4 + 4 + 4 + 4 + 21;
     private const int LegacyFixedSettingsBytesV7 = 4 + 4 + 4 + 4 + 21 + 4;
     private const int LegacyFixedSettingsBytesV8 = 4 + 4 + 4 + 4 + 21 + 4 + 1;
-    private const int FixedSettingsBytes = 4 + 4 + 4 + 4 + 21 + 4 + 3;
+    private const int LegacyFixedSettingsBytesV9 = 4 + 4 + 4 + 4 + 21 + 4 + 3;
+    private const int FixedSettingsBytes = 4 + 4 + 4 + 4 + 21 + 4 + 7;
     private const int MaxServerUrlBytes = 512;
 
     public static byte[] EncodeHostSettingsSnapshot(VoiceRoomSettingsSnapshot settings)
@@ -115,6 +117,10 @@ public static class VoiceRoomControlCodec
         buffer[41] = ToByte(settings.MuteGlitchHacked);
         buffer[42] = ToByte(settings.MuffleBlindedOrFlashedHearing);
         buffer[43] = ToByte(settings.MuffleHypnotizedDuringHysteria);
+        buffer[44] = ToByte(settings.TouMcePelicanBellyVoice);
+        buffer[45] = ToByte(settings.TouMceRecruitVoice);
+        buffer[46] = ToByte(settings.TouMceSpiritMasterGhostVoice);
+        buffer[47] = ToByte(settings.TouMceLawyerClientVoice);
         BinaryPrimitives.WriteUInt16LittleEndian(buffer[FixedSettingsBytes..], checked((ushort)serverUrlBytes.Length));
         serverUrlBytes.CopyTo(buffer[(FixedSettingsBytes + 2)..]);
     }
@@ -127,11 +133,12 @@ public static class VoiceRoomControlCodec
         var serverUrlLength = BinaryPrimitives.ReadUInt16LittleEndian(buffer[fixedSettingsBytes..]);
         if (serverUrlLength > MaxServerUrlBytes || buffer.Length != fixedSettingsBytes + 2 + serverUrlLength) return false;
         var serverUrl = System.Text.Encoding.UTF8.GetString(buffer.Slice(fixedSettingsBytes + 2, serverUrlLength));
-        bool hasTeamRadioSubSettings = version == Version || version == LegacyVersion8 || version == LegacyVersion7 || version == LegacyVersion6;
+        bool hasTeamRadioSubSettings = version == Version || version == LegacyVersion9 || version == LegacyVersion8 || version == LegacyVersion7 || version == LegacyVersion6;
         int tailOffset = hasTeamRadioSubSettings ? 27 : 24;
-        bool hasMediumGhostVoice = version == Version || version == LegacyVersion8 || version == LegacyVersion7;
-        bool hasMuteGlitchHacked = version == Version || version == LegacyVersion8;
-        bool hasListenerMuffleSettings = version == Version;
+        bool hasMediumGhostVoice = version == Version || version == LegacyVersion9 || version == LegacyVersion8 || version == LegacyVersion7;
+        bool hasMuteGlitchHacked = version == Version || version == LegacyVersion9 || version == LegacyVersion8;
+        bool hasListenerMuffleSettings = version == Version || version == LegacyVersion9;
+        bool hasTouMceVoiceSettings = version == Version;
         settings = new VoiceRoomSettingsSnapshot(
             BinaryPrimitives.ReadInt32LittleEndian(buffer),
             serverUrl,
@@ -164,12 +171,16 @@ public static class VoiceRoomControlCodec
                 : (int)MediumGhostVoiceMode.None,
             hasMuteGlitchHacked ? buffer[tailOffset + 14] != 0 : true,
             hasListenerMuffleSettings ? buffer[tailOffset + 15] != 0 : true,
-            hasListenerMuffleSettings ? buffer[tailOffset + 16] != 0 : true).Clamp();
+            hasListenerMuffleSettings ? buffer[tailOffset + 16] != 0 : true,
+            hasTouMceVoiceSettings ? buffer[tailOffset + 17] != 0 : true,
+            hasTouMceVoiceSettings ? buffer[tailOffset + 18] != 0 : true,
+            hasTouMceVoiceSettings ? buffer[tailOffset + 19] != 0 : true,
+            hasTouMceVoiceSettings ? buffer[tailOffset + 20] != 0 : true).Clamp();
         return true;
     }
 
     private static bool IsSupportedVersion(byte version)
-        => version is Version or LegacyVersion8 or LegacyVersion7 or LegacyVersion6 or LegacyVersion5 or LegacyVersion4;
+        => version is Version or LegacyVersion9 or LegacyVersion8 or LegacyVersion7 or LegacyVersion6 or LegacyVersion5 or LegacyVersion4;
 
     private static int FixedSettingsBytesForVersion(byte version)
         => version switch
@@ -178,6 +189,7 @@ public static class VoiceRoomControlCodec
             LegacyVersion5 => LegacyFixedSettingsBytesV5,
             LegacyVersion6 => LegacyFixedSettingsBytesV6,
             LegacyVersion7 => LegacyFixedSettingsBytesV7,
+            LegacyVersion9 => LegacyFixedSettingsBytesV9,
             LegacyVersion8 => LegacyFixedSettingsBytesV8,
             _ => FixedSettingsBytes,
         };

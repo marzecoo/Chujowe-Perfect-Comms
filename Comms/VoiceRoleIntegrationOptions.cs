@@ -21,6 +21,10 @@ public class VoiceRoleIntegrationOptions : AbstractOptionGroup
     public ModdedToggleOption MuteGlitchHacked { get; } = new("<color=#00FF00><b>Glitch</b></color>: Mute Hacked Players", true);
     public ModdedToggleOption MuteJailedInMeetings { get; } = new("<color=#A6A6A6><b>Jailor</b></color>: Mute Jailee in Meetings", true);
     public ModdedToggleOption JailorCanUnmuteJailed { get; } = new("<color=#A6A6A6><b>Jailor</b></color>: Can Unmute Jailee", true);
+    public ModdedToggleOption TouMcePelicanBellyVoice { get; } = new("<color=#6A4C93><b>Pelican</b></color>: Belly Voice (Off Mutes Victims)", true);
+    public ModdedToggleOption TouMceRecruitVoice { get; } = new("<color=#7F7F7F><b>Jackal/Recruits</b></color>: Private Voice", true);
+    public ModdedToggleOption TouMceSpiritMasterGhostVoice { get; } = new("<color=#5FBFCF><b>Spirit Master</b></color>: Ghost Voice", true);
+    public ModdedToggleOption TouMceLawyerClientVoice { get; } = new("<color=#B48A5A><b>Lawyer</b></color>: Client Voice", true);
     public ModdedEnumOption MediumGhostVoice { get; } = new("<color=#A680FF><b>Medium</b></color>: Ghost Voice",
         (int)MediumGhostVoiceMode.None,
         typeof(MediumGhostVoiceMode),

@@ -782,6 +782,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         var listenerPos = localPlayer?.Position;
         bool inLobby = snapshot.Phase == VoiceGamePhase.Lobby;
         bool inMeeting = snapshot.Phase == VoiceGamePhase.Meeting;
+        bool inExile = snapshot.Phase == VoiceGamePhase.Exile;
         bool inTask = snapshot.Phase == VoiceGamePhase.Tasks;
 
         foreach (var peer in SnapshotPeers())
@@ -791,10 +792,14 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
                 ApplySavedVolume(peer);
 
             VoiceProximityResult result;
-            if (inLobby || !inTask && !inMeeting)
+            if (inLobby)
                 result = VoiceProximityCalculator.CalculateLobby(target, listenerPos);
             else if (inMeeting)
                 result = VoiceProximityCalculator.CalculateMeeting(localPlayer, target, peer.RadioActive, peer.RadioChannel);
+            else if (inExile)
+                result = VoiceProximityCalculator.CalculateExile(localPlayer, target);
+            else if (!inTask)
+                result = VoiceProximityResult.Muted(VoiceProximityReason.OnlyMeetingOrLobby);
             else
                 result = VoiceProximityCalculator.CalculateTaskPhase(localPlayer, target, listenerPos, snapshot.LocalLightRadius, snapshot.MapId, snapshot.CameraViewActive, snapshot.ActiveCameraIndex, snapshot.ActiveCameraPosition, speakerCache, virtualMicrophones, localInVent, peer.RadioActive, commsSabActive, peer.WallCoefficient, peer.RadioChannel);
 

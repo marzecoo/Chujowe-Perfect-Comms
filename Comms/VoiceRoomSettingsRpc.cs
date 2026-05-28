@@ -76,6 +76,10 @@ internal static class VoiceRoomSettingsRpc
         writer.Write(settings.MuteGlitchHacked);
         writer.Write(settings.MuffleBlindedOrFlashedHearing);
         writer.Write(settings.MuffleHypnotizedDuringHysteria);
+        writer.Write(settings.TouMcePelicanBellyVoice);
+        writer.Write(settings.TouMceRecruitVoice);
+        writer.Write(settings.TouMceSpiritMasterGhostVoice);
+        writer.Write(settings.TouMceLawyerClientVoice);
     }
 
     private static VoiceRoomSettingsSnapshot ReadSettings(MessageReader reader)
@@ -118,6 +122,10 @@ internal static class VoiceRoomSettingsRpc
         bool muteGlitchHacked = reader.BytesRemaining > 0 ? reader.ReadBoolean() : true;
         bool muffleBlindedOrFlashedHearing = reader.BytesRemaining > 0 ? reader.ReadBoolean() : true;
         bool muffleHypnotizedDuringHysteria = reader.BytesRemaining > 0 ? reader.ReadBoolean() : true;
+        bool touMcePelicanBellyVoice = reader.BytesRemaining > 0 ? reader.ReadBoolean() : true;
+        bool touMceRecruitVoice = reader.BytesRemaining > 0 ? reader.ReadBoolean() : true;
+        bool touMceSpiritMasterGhostVoice = reader.BytesRemaining > 0 ? reader.ReadBoolean() : true;
+        bool touMceLawyerClientVoice = reader.BytesRemaining > 0 ? reader.ReadBoolean() : true;
 
         return new VoiceRoomSettingsSnapshot(
             backend,
@@ -149,7 +157,11 @@ internal static class VoiceRoomSettingsRpc
             mediumGhostVoice,
             muteGlitchHacked,
             muffleBlindedOrFlashedHearing,
-            muffleHypnotizedDuringHysteria).Clamp();
+            muffleHypnotizedDuringHysteria,
+            touMcePelicanBellyVoice,
+            touMceRecruitVoice,
+            touMceSpiritMasterGhostVoice,
+            touMceLawyerClientVoice).Clamp();
     }
 
     [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.HandleRpc))]

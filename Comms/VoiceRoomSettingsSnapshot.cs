@@ -33,7 +33,11 @@ public readonly record struct VoiceRoomSettingsSnapshot(
     int MediumGhostVoice,
     bool MuteGlitchHacked,
     bool MuffleBlindedOrFlashedHearing,
-    bool MuffleHypnotizedDuringHysteria)
+    bool MuffleHypnotizedDuringHysteria,
+    bool TouMcePelicanBellyVoice,
+    bool TouMceRecruitVoice,
+    bool TouMceSpiritMasterGhostVoice,
+    bool TouMceLawyerClientVoice)
 {
     public const float MinChatDistance = 1.5f;
     public const float MaxChatDistanceLimit = 20f;
@@ -66,6 +70,10 @@ public readonly record struct VoiceRoomSettingsSnapshot(
         true,
         true,
         (int)MediumGhostVoiceMode.None,
+        true,
+        true,
+        true,
+        true,
         true,
         true,
         true);
@@ -110,7 +118,11 @@ public readonly record struct VoiceRoomSettingsSnapshot(
             role.MediumGhostVoice.Value,
             role.MuteGlitchHacked.Value,
             role.MuffleBlindedOrFlashedHearing.Value,
-            role.MuffleHypnotizedDuringHysteria.Value).Clamp();
+            role.MuffleHypnotizedDuringHysteria.Value,
+            role.TouMcePelicanBellyVoice.Value,
+            role.TouMceRecruitVoice.Value,
+            role.TouMceSpiritMasterGhostVoice.Value,
+            role.TouMceLawyerClientVoice.Value).Clamp();
     }
 
     public VoiceRoomSettingsSnapshot Clamp()

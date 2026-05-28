@@ -59,10 +59,12 @@ Some mods get extra voice behavior when installed:
 | TOU-Mira | Blackmailer, Jailor, Parasite/Puppeteer, Swooper, and Glitch voice mutes.<br>Crewpostor impostor voice rules.<br>Medium ghost voice modes.<br>Muffled hearing for Eclipsal, Grenadier, and Hypnotist effects.<br>Team Radio for Impostors, Vampires, and Lovers, with keybind cycling. |
 | Town Of Us Mega Chujowe Extension | Pelican belly voice with swallowed players.<br>Recruit-only voice for Infiltrator recruits.<br>Lawyer and Client private voice.<br>Spirit Master voice with mediated ghosts.<br>Voice safety for custom invisible roles like Astral, Burrower, Speedy, Vanisher, and Wraith. |
 
+TouMCE-specific voice channels can be toggled in the role voice rules settings. If Pelican belly voice is disabled, swallowed players are muted instead of being able to talk and reveal the Pelican.
+
 ## Install
 
-1. Download `PerfectComms.dll`, or use `PerfectComms+dependencies.zip` if you need the required mod dependencies included.
-2. Put `PerfectComms.dll` in `BepInEx/plugins`, or extract the dependency zip into your Among Us install folder.
+1. Download `MegaChujowePerfectComms.dll`, or use `MegaChujowePerfectComms+dependencies.zip` if you need the required mod dependencies included.
+2. Put `MegaChujowePerfectComms.dll` in `BepInEx/plugins`, or extract the dependency zip into your Among Us install folder.
 3. Start Among Us and open the Mega Chujowe Perfect Comms settings in-game.
 
 If you are using Town Of Us Mega Chujowe Extension, do not install the original Perfect Comms build instead of this fork. Mixing the wrong build can cause role voice bugs, especially around Pelican, Recruits, Lawyer, and Spirit Master.
@@ -70,10 +72,10 @@ If you are using Town Of Us Mega Chujowe Extension, do not install the original 
 DLL-only install:
 
 ```text
-BepInEx/plugins/PerfectComms.dll
+BepInEx/plugins/MegaChujowePerfectComms.dll
 ```
 
-DLL-only installs require your mod pack to already include MiraAPI and Reactor. `PerfectComms+dependencies.zip` includes BepInEx, MiraAPI, and Reactor, but does not include TOU-Mira.
+DLL-only installs require your mod pack to already include MiraAPI and Reactor. `MegaChujowePerfectComms+dependencies.zip` includes BepInEx, MiraAPI, and Reactor, but does not include TOU-Mira.
 
 ## Notice
 
