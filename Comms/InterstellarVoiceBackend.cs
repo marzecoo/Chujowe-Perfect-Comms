@@ -1165,10 +1165,10 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
             WallCoefficient = result.WallCoefficient;
             bool listenerMuffled = result.FilterMode == VoiceAudioFilterMode.ListenerMuffle;
             float routeVolume = Math.Clamp(result.NormalVolume + result.GhostVolume + result.RadioVolume, 0f, 1f);
-            _normalVolume.Volume = listenerMuffled ? 0f : result.NormalVolume;
-            _ghostVolume.Volume = listenerMuffled ? 0f : result.GhostVolume;
-            _radioVolume.Volume = listenerMuffled ? 0f : result.RadioVolume;
-            _listenerMuffleVolume.Volume = listenerMuffled ? routeVolume * 0.75f : 0f;
+            _normalVolume.Volume = listenerMuffled ? 0f : VoiceProximityResult.BoostPlaybackVolume(result.NormalVolume);
+            _ghostVolume.Volume = listenerMuffled ? 0f : VoiceProximityResult.BoostPlaybackVolume(result.GhostVolume);
+            _radioVolume.Volume = listenerMuffled ? 0f : VoiceProximityResult.BoostPlaybackVolume(result.RadioVolume);
+            _listenerMuffleVolume.Volume = listenerMuffled ? VoiceProximityResult.BoostPlaybackVolume(routeVolume * 0.75f) : 0f;
             _imager.Pan = result.Pan;
         }
 

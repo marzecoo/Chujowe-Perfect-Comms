@@ -135,10 +135,10 @@ internal sealed class BclPeerPlaybackRoute
         gain = Math.Clamp(gain, 0f, 1f);
         bool listenerMuffled = result.FilterMode == VoiceAudioFilterMode.ListenerMuffle;
         float routeVolume = Math.Clamp(result.NormalVolume + result.GhostVolume + result.RadioVolume, 0f, 1f);
-        _normalVolume.Volume = listenerMuffled ? 0f : result.NormalVolume * gain;
-        _ghostVolume.Volume = listenerMuffled ? 0f : result.GhostVolume * gain;
-        _radioVolume.Volume = listenerMuffled ? 0f : result.RadioVolume * gain;
-        _listenerMuffleVolume.Volume = listenerMuffled ? routeVolume * 0.75f * gain : 0f;
+        _normalVolume.Volume = listenerMuffled ? 0f : VoiceProximityResult.BoostPlaybackVolume(result.NormalVolume, gain);
+        _ghostVolume.Volume = listenerMuffled ? 0f : VoiceProximityResult.BoostPlaybackVolume(result.GhostVolume, gain);
+        _radioVolume.Volume = listenerMuffled ? 0f : VoiceProximityResult.BoostPlaybackVolume(result.RadioVolume, gain);
+        _listenerMuffleVolume.Volume = listenerMuffled ? VoiceProximityResult.BoostPlaybackVolume(routeVolume * 0.75f, gain) : 0f;
         _imager.Pan = 0f;
     }
 
