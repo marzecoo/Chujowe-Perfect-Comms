@@ -1,4 +1,4 @@
-Perfect Comms v2.0.6 expands role-aware voice behavior and adds team radio channels.
+This Perfect Comms release expands role-aware voice behavior and adds team radio channels.
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/artriy/Perfect-Comms/v2.0.6/assets/brand/divider.svg" alt="divider" width="900">
