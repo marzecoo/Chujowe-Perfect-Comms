@@ -14,6 +14,9 @@ Mega Chujowe Perfect Comms makes voice chat feel like part of the match. Players
 > [!IMPORTANT]
 > This fork is made specifically for [Town Of Us Mega Chujowe Extension](https://github.com/HekerB/TownOfUsMegaChujoweExtension) and works with [Town of Us: Mira](https://github.com/AU-Avengers/TOU-Mira). If you play with that extension, use this fork instead of the original Perfect Comms build so extension-specific roles do not leak or break voice behavior.
 
+> [!NOTE]
+> This project is a fork of [artriy/Perfect-Comms](https://github.com/artriy/Perfect-Comms). Huge thanks to the original Perfect Comms creator and contributors for building the base voice chat mod.
+
 > [!TIP]
 > Need help, want to report bugs, or looking for lobbies? Join the TouMCE Discord: [https://discord.gg/qaQZAmAVh4](https://discord.gg/qaQZAmAVh4)
 
@@ -78,6 +81,7 @@ Mega Chujowe Perfect Comms is an unofficial mod. It is not affiliated with Inner
 
 ## Credits
 
+- Original Perfect Comms fork source: [artriy/Perfect-Comms](https://github.com/artriy/Perfect-Comms)
 - Original repo: [FangkuaiYa/AmongUs-VoiceChat](https://github.com/FangkuaiYa/AmongUs-VoiceChat)
 - BetterCrewLink: [OhMyGuus/BetterCrewLink](https://github.com/OhMyGuus/BetterCrewLink)
 - Interstellar: [Dolly1016/Interstellar](https://github.com/Dolly1016/Interstellar)
