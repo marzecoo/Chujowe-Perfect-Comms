@@ -10,18 +10,18 @@ public class VoiceRoleIntegrationOptions : AbstractOptionGroup
     public override Color GroupColor => Palette.CrewmateRoleHeaderBlue;
     public override uint GroupPriority => 1001;
 
-    public ModdedToggleOption MuteBlackmailedInMeetings { get; } = new("Mute <color=#FF6666><b>Blackmailed</b></color> in Meetings", true);
-    public ModdedToggleOption MuteBlackmailedNextRound { get; } = new("Mute <color=#FF6666><b>Blackmailed</b></color> Next Round", false);
-    public ModdedToggleOption MuteJailedInMeetings { get; } = new("Mute <color=#909190><b>Jailee</b></color> in Meetings", true);
-    public ModdedToggleOption JailorCanUnmuteJailed { get; } = new("Jailor Can Unmute <color=#909190><b>Jailee</b></color>", true);
-    public ModdedToggleOption MuteParasiteControlled { get; } = new("Mute <color=#FF6666><b>Parasite</b></color>'s Victim", true);
-    public ModdedToggleOption MutePuppeteerControlled { get; } = new("Mute <color=#FF6666><b>Puppeteer</b></color>'s Victim", true);
-    public ModdedToggleOption MuteSwooperWhileSwooped { get; } = new("Mute <color=#FF6666><b>Swooper</b></color> While Swooped", true);
-    public ModdedToggleOption MuteGlitchHacked { get; } = new("Mute <color=#FF6666><b>Glitch-Hacked</b></color> Players", true);
-    public ModdedToggleOption MuffleBlindedOrFlashedHearing { get; } = new("Muffle <color=#FF6666><b>Blinded/Flashed</b></color> Hearing", true);
-    public ModdedToggleOption MuffleHypnotizedDuringHysteria { get; } = new("Muffle <color=#FF6666><b>Hypnotized</b></color> During Hysteria", true);
-    public ModdedToggleOption CrewpostorUsesImpostorVoice { get; } = new("Crewpostor Uses Impostor Voice", true);
-    public ModdedEnumOption MediumGhostVoice { get; } = new("Medium Ghost Voice",
+    public ModdedToggleOption MuteBlackmailedInMeetings { get; } = new("<color=#FF0000><b>Blackmailer</b></color>: Mute Blackmailed in Meetings", true);
+    public ModdedToggleOption MuteBlackmailedNextRound { get; } = new("<color=#FF0000><b>Blackmailer</b></color>: Mute Blackmailed Next Round", false);
+    public ModdedToggleOption MuteParasiteControlled { get; } = new("<color=#FF0000><b>Parasite</b></color>: Mute Controlled Victim", true);
+    public ModdedToggleOption MutePuppeteerControlled { get; } = new("<color=#FF0000><b>Puppeteer</b></color>: Mute Controlled Victim", true);
+    public ModdedToggleOption MuteSwooperWhileSwooped { get; } = new("<color=#FF0000><b>Swooper</b></color>: Mute While Swooped", true);
+    public ModdedToggleOption MuffleBlindedOrFlashedHearing { get; } = new("<color=#FF0000><b>Eclipsal/Grenadier</b></color>: Muffle Blinded/Flashed Hearing", true);
+    public ModdedToggleOption MuffleHypnotizedDuringHysteria { get; } = new("<color=#FF0000><b>Hypnotist</b></color>: Muffle Hypnotized During Hysteria", true);
+    public ModdedToggleOption CrewpostorUsesImpostorVoice { get; } = new("<color=#FF0000><b>Crewpostor</b></color>: Use Impostor Voice", true);
+    public ModdedToggleOption MuteGlitchHacked { get; } = new("<color=#00FF00><b>Glitch</b></color>: Mute Hacked Players", true);
+    public ModdedToggleOption MuteJailedInMeetings { get; } = new("<color=#A6A6A6><b>Jailor</b></color>: Mute Jailee in Meetings", true);
+    public ModdedToggleOption JailorCanUnmuteJailed { get; } = new("<color=#A6A6A6><b>Jailor</b></color>: Can Unmute Jailee", true);
+    public ModdedEnumOption MediumGhostVoice { get; } = new("<color=#A680FF><b>Medium</b></color>: Ghost Voice",
         (int)MediumGhostVoiceMode.None,
         typeof(MediumGhostVoiceMode),
         ["None", "Medium -> Ghost", "Ghost -> Medium", "Both"]);
