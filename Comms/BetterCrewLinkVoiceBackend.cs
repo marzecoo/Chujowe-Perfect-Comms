@@ -1383,7 +1383,11 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             var payload = data.Skip(DataControlPrefixLength).ToArray();
             if (TryHandleRadioState(payload, peer.PlayerId)) return;
             Interlocked.Increment(ref _customRx);
-            CustomMessageReceived?.Invoke(new VoiceBackendCustomMessage(payload, peer.ClientId, peer.PlayerId, peer.SocketId));
+            // The side-channel is no longer trusted for authority (see
+            // VoiceChatRoom.ProcessBackendCustomMessage), so it does not claim a sender identity.
+            // Its id was self-asserted by the peer anyway, and reading peer.ClientId/PlayerId here on
+            // the data-channel background thread risked a torn read against the mapping thread.
+            CustomMessageReceived?.Invoke(VoiceBackendCustomMessage.Unknown(payload, peer.SocketId));
             return;
         }
 

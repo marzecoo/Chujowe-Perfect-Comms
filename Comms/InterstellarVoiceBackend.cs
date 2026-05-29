@@ -1151,7 +1151,12 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
 
         public void ResetMappingNoMute()
         {
+            // Clear per-mapping state too, so a slot remapped to another player mid-game
+            // doesn't inherit the previous player's radio channel or wall coefficient
+            // (mirrors BetterCrewLinkVoiceBackend.PeerConnection.ResetMappingNoMute()).
             PlayerId = byte.MaxValue;
+            _radioChannel = VoiceTeamRadioChannel.None;
+            WallCoefficient = 1f;
         }
 
         public void SetVolume(float volume)

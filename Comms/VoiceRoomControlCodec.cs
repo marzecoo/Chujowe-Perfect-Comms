@@ -129,6 +129,7 @@ public static class VoiceRoomControlCodec
     {
         settings = default;
         var fixedSettingsBytes = FixedSettingsBytesForVersion(version);
+        if (fixedSettingsBytes < 0) return false; // fail closed: unknown/unmapped version
         if (buffer.Length < fixedSettingsBytes + 2) return false;
         var serverUrlLength = BinaryPrimitives.ReadUInt16LittleEndian(buffer[fixedSettingsBytes..]);
         if (serverUrlLength > MaxServerUrlBytes || buffer.Length != fixedSettingsBytes + 2 + serverUrlLength) return false;
@@ -191,7 +192,8 @@ public static class VoiceRoomControlCodec
             LegacyVersion8 => LegacyFixedSettingsBytesV8,
             LegacyVersion9 => LegacyFixedSettingsBytesV9,
             LegacyVersion10 => LegacyFixedSettingsBytesV10,
-            _ => FixedSettingsBytes,
+            Version => FixedSettingsBytes,
+            _ => -1, // fail closed: reject unknown versions instead of guessing the current layout
         };
 
     private static byte ToByte(bool value) => value ? (byte)1 : (byte)0;
