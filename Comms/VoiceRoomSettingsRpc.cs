@@ -80,6 +80,7 @@ internal static class VoiceRoomSettingsRpc
         writer.Write(settings.MuteGlitchHacked);
         writer.Write(settings.MuffleBlindedOrFlashedHearing);
         writer.Write(settings.MuffleHypnotizedDuringHysteria);
+        writer.Write(settings.TeamRadioInMeetings);
         writer.Write(settings.TouMcePelicanBellyVoice);
         writer.Write(settings.TouMceRecruitVoice);
         writer.Write(settings.TouMceSpiritMasterGhostVoice);
@@ -136,6 +137,7 @@ internal static class VoiceRoomSettingsRpc
         bool muteGlitchHacked = reader.BytesRemaining > 0 ? reader.ReadBoolean() : true;
         bool muffleBlindedOrFlashedHearing = reader.BytesRemaining > 0 ? reader.ReadBoolean() : true;
         bool muffleHypnotizedDuringHysteria = reader.BytesRemaining > 0 ? reader.ReadBoolean() : true;
+        bool teamRadioInMeetings = reader.BytesRemaining > 0 ? reader.ReadBoolean() : false;
         bool touMcePelicanBellyVoice = reader.BytesRemaining > 0 ? reader.ReadBoolean() : true;
         bool touMceRecruitVoice = reader.BytesRemaining > 0 ? reader.ReadBoolean() : true;
         int touMceSpiritMasterGhostVoice = reader.BytesRemaining >= 4
@@ -178,6 +180,7 @@ internal static class VoiceRoomSettingsRpc
             muteGlitchHacked,
             muffleBlindedOrFlashedHearing,
             muffleHypnotizedDuringHysteria,
+            teamRadioInMeetings,
             touMcePelicanBellyVoice,
             touMceRecruitVoice,
             touMceSpiritMasterGhostVoice,

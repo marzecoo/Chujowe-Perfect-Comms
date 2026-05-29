@@ -17,7 +17,8 @@ public static class VoiceRoomControlCodec
 {
     private const byte Magic0 = (byte)'P';
     private const byte Magic1 = (byte)'C';
-    private const byte Version = 12;
+    private const byte Version = 13;
+    private const byte LegacyVersion12 = 12;
     private const byte LegacyVersion11 = 11;
     private const byte LegacyVersion10 = 10;
     private const byte LegacyVersion9 = 9;
@@ -35,7 +36,8 @@ public static class VoiceRoomControlCodec
     private const int LegacyFixedSettingsBytesV9 = 4 + 4 + 4 + 4 + 21 + 4 + 3;
     private const int LegacyFixedSettingsBytesV10 = 4 + 4 + 4 + 4 + 21 + 4 + 7;
     private const int LegacyFixedSettingsBytesV11 = 4 + 4 + 4 + 4 + 23 + 4 + 11;
-    private const int FixedSettingsBytes = 4 + 4 + 4 + 4 + 24 + 4 + 11;
+    private const int LegacyFixedSettingsBytesV12 = 4 + 4 + 4 + 4 + 24 + 4 + 11;
+    private const int FixedSettingsBytes = 4 + 4 + 4 + 4 + 24 + 4 + 12;
     private const int MaxServerUrlBytes = 512;
 
     public static byte[] EncodeHostSettingsSnapshot(VoiceRoomSettingsSnapshot settings)
@@ -125,10 +127,11 @@ public static class VoiceRoomControlCodec
         buffer[45] = ToByte(settings.MuteGlitchHacked);
         buffer[46] = ToByte(settings.MuffleBlindedOrFlashedHearing);
         buffer[47] = ToByte(settings.MuffleHypnotizedDuringHysteria);
-        buffer[48] = ToByte(settings.TouMcePelicanBellyVoice);
-        buffer[49] = ToByte(settings.TouMceRecruitVoice);
-        BinaryPrimitives.WriteInt32LittleEndian(buffer[50..], settings.TouMceSpiritMasterGhostVoice);
-        buffer[54] = ToByte(settings.TouMceLawyerClientVoice);
+        buffer[48] = ToByte(settings.TeamRadioInMeetings);
+        buffer[49] = ToByte(settings.TouMcePelicanBellyVoice);
+        buffer[50] = ToByte(settings.TouMceRecruitVoice);
+        BinaryPrimitives.WriteInt32LittleEndian(buffer[51..], settings.TouMceSpiritMasterGhostVoice);
+        buffer[55] = ToByte(settings.TouMceLawyerClientVoice);
         BinaryPrimitives.WriteUInt16LittleEndian(buffer[FixedSettingsBytes..], checked((ushort)serverUrlBytes.Length));
         serverUrlBytes.CopyTo(buffer[(FixedSettingsBytes + 2)..]);
     }
@@ -142,16 +145,19 @@ public static class VoiceRoomControlCodec
         if (serverUrlLength > MaxServerUrlBytes || buffer.Length != fixedSettingsBytes + 2 + serverUrlLength) return false;
         var serverUrl = System.Text.Encoding.UTF8.GetString(buffer.Slice(fixedSettingsBytes + 2, serverUrlLength));
         bool isCurrent = version == Version;
-        bool hasTouMceTeamRadioSettings = isCurrent || version == LegacyVersion11;
-        bool hasTeamRadioSubSettings = hasTouMceTeamRadioSettings || version == LegacyVersion10 || version == LegacyVersion9 || version == LegacyVersion8 || version == LegacyVersion7 || version == LegacyVersion6;
+        bool hasTouMceTeamRadioSettings = isCurrent || version is LegacyVersion12 or LegacyVersion11;
+        bool hasTeamRadioSubSettings = hasTouMceTeamRadioSettings || version is LegacyVersion10 or LegacyVersion9 or LegacyVersion8 or LegacyVersion7 or LegacyVersion6;
         int tailOffset = hasTouMceTeamRadioSettings ? 29 : hasTeamRadioSubSettings ? 27 : 24;
-        bool hasMediumGhostVoice = isCurrent || version == LegacyVersion11 || version == LegacyVersion10 || version == LegacyVersion9 || version == LegacyVersion8 || version == LegacyVersion7;
-        bool hasMuteGlitchHacked = isCurrent || version == LegacyVersion11 || version == LegacyVersion10 || version == LegacyVersion9 || version == LegacyVersion8;
-        bool hasListenerMuffleSettings = isCurrent || version == LegacyVersion11 || version == LegacyVersion10 || version == LegacyVersion9;
-        bool hasTouMceVoiceSettings = isCurrent || version == LegacyVersion11 || version == LegacyVersion10;
-        bool hasHackerJamSetting = isCurrent || version == LegacyVersion11;
-        bool hasMeetingLobbyGhostSetting = isCurrent;
+        bool hasMediumGhostVoice = isCurrent || version is LegacyVersion12 or LegacyVersion11 or LegacyVersion10 or LegacyVersion9 or LegacyVersion8 or LegacyVersion7;
+        bool hasMuteGlitchHacked = isCurrent || version is LegacyVersion12 or LegacyVersion11 or LegacyVersion10 or LegacyVersion9 or LegacyVersion8;
+        bool hasListenerMuffleSettings = isCurrent || version is LegacyVersion12 or LegacyVersion11 or LegacyVersion10 or LegacyVersion9;
+        bool hasTouMceVoiceSettings = isCurrent || version is LegacyVersion12 or LegacyVersion11 or LegacyVersion10;
+        bool hasHackerJamSetting = isCurrent || version is LegacyVersion12 or LegacyVersion11;
+        bool hasMeetingLobbyGhostSetting = isCurrent || version == LegacyVersion12;
+        bool hasTeamRadioInMeetings = isCurrent;
         int roleTailOffset = tailOffset + (hasMeetingLobbyGhostSetting ? 1 : 0);
+        int touMceVoiceOffset = roleTailOffset + (hasHackerJamSetting ? 18 : 17) + (hasTeamRadioInMeetings ? 1 : 0);
+
         settings = new VoiceRoomSettingsSnapshot(
             BinaryPrimitives.ReadInt32LittleEndian(buffer),
             serverUrl,
@@ -189,19 +195,20 @@ public static class VoiceRoomControlCodec
             hasMuteGlitchHacked ? buffer[roleTailOffset + (hasHackerJamSetting ? 15 : 14)] != 0 : true,
             hasListenerMuffleSettings ? buffer[roleTailOffset + (hasHackerJamSetting ? 16 : 15)] != 0 : true,
             hasListenerMuffleSettings ? buffer[roleTailOffset + (hasHackerJamSetting ? 17 : 16)] != 0 : true,
-            hasTouMceVoiceSettings ? buffer[roleTailOffset + (hasHackerJamSetting ? 18 : 17)] != 0 : true,
-            hasTouMceVoiceSettings ? buffer[roleTailOffset + (hasHackerJamSetting ? 19 : 18)] != 0 : true,
+            hasTeamRadioInMeetings && buffer[roleTailOffset + 18] != 0,
+            hasTouMceVoiceSettings ? buffer[touMceVoiceOffset] != 0 : true,
+            hasTouMceVoiceSettings ? buffer[touMceVoiceOffset + 1] != 0 : true,
             hasHackerJamSetting
-                ? BinaryPrimitives.ReadInt32LittleEndian(buffer[(roleTailOffset + 20)..])
-                : hasTouMceVoiceSettings && buffer[roleTailOffset + 19] != 0 ? (int)MediumGhostVoiceMode.Both : (int)MediumGhostVoiceMode.None,
+                ? BinaryPrimitives.ReadInt32LittleEndian(buffer[(touMceVoiceOffset + 2)..])
+                : hasTouMceVoiceSettings && buffer[touMceVoiceOffset + 1] != 0 ? (int)MediumGhostVoiceMode.Both : (int)MediumGhostVoiceMode.None,
             hasHackerJamSetting
-                ? buffer[roleTailOffset + 24] != 0
-                : hasTouMceVoiceSettings && buffer[roleTailOffset + 20] != 0).Clamp();
+                ? buffer[touMceVoiceOffset + 6] != 0
+                : hasTouMceVoiceSettings && buffer[touMceVoiceOffset + 2] != 0).Clamp();
         return true;
     }
 
     private static bool IsSupportedVersion(byte version)
-        => version is Version or LegacyVersion11 or LegacyVersion10 or LegacyVersion9 or LegacyVersion8 or LegacyVersion7 or LegacyVersion6 or LegacyVersion5 or LegacyVersion4;
+        => version is Version or LegacyVersion12 or LegacyVersion11 or LegacyVersion10 or LegacyVersion9 or LegacyVersion8 or LegacyVersion7 or LegacyVersion6 or LegacyVersion5 or LegacyVersion4;
 
     private static int FixedSettingsBytesForVersion(byte version)
         => version switch
@@ -210,11 +217,13 @@ public static class VoiceRoomControlCodec
             LegacyVersion5 => LegacyFixedSettingsBytesV5,
             LegacyVersion6 => LegacyFixedSettingsBytesV6,
             LegacyVersion7 => LegacyFixedSettingsBytesV7,
-            LegacyVersion11 => LegacyFixedSettingsBytesV11,
-            LegacyVersion10 => LegacyFixedSettingsBytesV10,
-            LegacyVersion9 => LegacyFixedSettingsBytesV9,
             LegacyVersion8 => LegacyFixedSettingsBytesV8,
-            _ => FixedSettingsBytes,
+            LegacyVersion9 => LegacyFixedSettingsBytesV9,
+            LegacyVersion10 => LegacyFixedSettingsBytesV10,
+            LegacyVersion11 => LegacyFixedSettingsBytesV11,
+            LegacyVersion12 => LegacyFixedSettingsBytesV12,
+            Version => FixedSettingsBytes,
+            _ => -1,
         };
 
     private static byte ToByte(bool value) => value ? (byte)1 : (byte)0;
