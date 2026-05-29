@@ -20,7 +20,8 @@ internal static class VCSorting
 
 internal static class VCOverlayCamera
 {
-    private const int OverlayLayer = 31;
+    internal const int OverlayLayer = 31;
+    internal static int OverlayLayerMask => 1 << OverlayLayer;
     private static Camera? _camera;
 
     public static void Sync()
@@ -44,7 +45,7 @@ internal static class VCOverlayCamera
             Object.DontDestroyOnLoad(go);
             _camera = go.AddComponent<Camera>();
             _camera.clearFlags = CameraClearFlags.Depth;
-            _camera.cullingMask = 1 << OverlayLayer;
+            _camera.cullingMask = OverlayLayerMask;
             _camera.allowHDR = false;
             _camera.allowMSAA = false;
         }
@@ -79,6 +80,7 @@ public static class PingTrackerPatch
     private const float LevelSmoothSpeed = 12f;
     private const float FadeInSpeed = 7f;
     private const float FadeOutSpeed = 5f;
+    private const float StaleSlotTimeoutSeconds = 2f;
     private static GameObject?       _barRoot;
     private static AspectPosition?   _barAspect;
     private static bool              _layoutVertical;
@@ -160,6 +162,8 @@ public static class PingTrackerPatch
             float level = _activeSpeakerLevels.TryGetValue(id, out var currentLevel) ? currentLevel : 0f;
             if (_slots.TryGetValue(id, out var slot))
             {
+                slot.LastActiveTime = Time.time;
+                if (player != null) slot.LastPlayerSeenTime = Time.time;
                 if (slot.Fingerprint != liveFp)
                 {
                     slot.TargetLevel = level;
@@ -178,7 +182,13 @@ public static class PingTrackerPatch
                     slot.TargetLevel = level;
                     slot.IsSpeaking = true;
                     if (slot.IconGO == null)
+                    {
                         TryCreateSlotIcon(id, slot);
+                    }
+                    else if (!slot.HasCachedPoseIcon && player != null && CrewmateAvatarRenderer.HasCachedCosmeticPose(id, player))
+                    {
+                        TryCreateSlotIcon(id, slot, replaceExisting: true, requireCachedCosmetics: true);
+                    }
                     continue;
                 }
             }
@@ -189,7 +199,7 @@ public static class PingTrackerPatch
 
         _fadedSlotIds.Clear();
         foreach (var kv in _slots)
-            if (!kv.Value.IsSpeaking && kv.Value.Visibility <= 0.01f)
+            if ((!kv.Value.IsSpeaking && kv.Value.Visibility <= 0.01f) || ShouldForceRemoveSlot(kv.Key, kv.Value))
                 _fadedSlotIds.Add(kv.Key);
         foreach (var id in _fadedSlotIds) RemoveSlot(id);
 
@@ -270,8 +280,17 @@ public static class PingTrackerPatch
 
     private static void TrackAvatarIdlePoses()
     {
-        foreach (var pc in PlayerControl.AllPlayerControls)
-            CrewmateAvatarRenderer.TrackIdlePose(pc);
+        try
+        {
+            var players = PlayerControl.AllPlayerControls;
+            if (players == null) return;
+            foreach (var pc in players)
+                CrewmateAvatarRenderer.TrackIdlePose(pc);
+        }
+        catch
+        {
+            // Scene transitions can temporarily invalidate the player collection.
+        }
     }
 
     private static void ApplySortingGroup(GameObject go, int order)
@@ -353,7 +372,9 @@ public static class PingTrackerPatch
             Level = voiceLevel,
             TargetLevel = voiceLevel,
             SmoothedLevel = NormalizeVoiceLevel(voiceLevel),
-            IsSpeaking = true
+            IsSpeaking = true,
+            LastActiveTime = Time.time,
+            LastPlayerSeenTime = player != null ? Time.time : 0f
         };
 
         TryCreateSlotIcon(playerId, slot);
@@ -378,7 +399,7 @@ public static class PingTrackerPatch
         _layoutDirty = true;
     }
 
-    private static bool TryCreateSlotIcon(byte playerId, SpeakerSlot slot, bool replaceExisting = false)
+    private static bool TryCreateSlotIcon(byte playerId, SpeakerSlot slot, bool replaceExisting = false, bool requireCachedCosmetics = false)
     {
         if (_barRoot == null) return false;
         if (slot.IconGO != null && !replaceExisting) return true;
@@ -386,9 +407,17 @@ public static class PingTrackerPatch
         var player = FindPlayer(playerId);
         if (player != null && CrewmateAvatarRenderer.TryCreate(playerId, player, _barRoot.transform, out var iconGO))
         {
+            bool hasCachedCosmeticPose = CrewmateAvatarRenderer.HasCachedCosmeticPose(playerId, player);
+            if (requireCachedCosmetics && !hasCachedCosmeticPose)
+            {
+                if (iconGO != null) Object.Destroy(iconGO);
+                return false;
+            }
+
             if (slot.IconGO != null) Object.Destroy(slot.IconGO);
             slot.IconGO = iconGO;
             slot.Fingerprint = GetFingerprint(playerId);
+            slot.HasCachedPoseIcon = hasCachedCosmeticPose;
             slot.PendingFingerprint = default;
             _layoutDirty = true;
             return true;
@@ -410,6 +439,21 @@ public static class PingTrackerPatch
         if (slot.LabelTMP != null) Object.Destroy(slot.LabelTMP.gameObject);
         _slots.Remove(id);
         _layoutDirty = true;
+    }
+
+    private static bool ShouldForceRemoveSlot(byte id, SpeakerSlot slot)
+    {
+        if (slot.IsSpeaking) return false;
+        if (Time.time - slot.LastActiveTime > StaleSlotTimeoutSeconds) return true;
+
+        var player = FindPlayer(id);
+        if (player != null)
+        {
+            slot.LastPlayerSeenTime = Time.time;
+            return false;
+        }
+
+        return slot.LastPlayerSeenTime > 0f && Time.time - slot.LastPlayerSeenTime > StaleSlotTimeoutSeconds;
     }
 
     private static void CreateRing(byte playerId, SpeakerSlot slot)
@@ -516,6 +560,8 @@ public static class PingTrackerPatch
     {
         _activeSpeakerIds.Clear();
         _activeSpeakerLevels.Clear();
+        _fadedSlotIds.Clear();
+        VoiceOverlayState.InvalidateCache();
         DestroySpeakingBarSlots();
         _layoutDirty = false;
         if (_barRoot != null)
@@ -539,6 +585,11 @@ public static class PingTrackerPatch
         private static void Postfix()
         {
             DestroySpeakingBarSlots();
+            _activeSpeakerIds.Clear();
+            _activeSpeakerLevels.Clear();
+            _fadedSlotIds.Clear();
+            VoiceOverlayState.InvalidateCache();
+            CrewmateAvatarRenderer.ClearCache();
             _layoutDirty = false;
             if (_barRoot != null) { Object.Destroy(_barRoot); _barRoot = null; }
             _barAspect = null;
@@ -574,7 +625,7 @@ public static class PingTrackerPatch
         var outfit = GetDisplayOutfit(pc);
         return new OutfitFingerprint(
             GetDisplayOutfitId(pc),
-            outfit.ColorId,
+            GetPlayerColorId(pc),
             outfit.HatId,
             outfit.SkinId,
             outfit.VisorId,
@@ -583,18 +634,39 @@ public static class PingTrackerPatch
 
     private static PlayerControl? FindPlayer(byte id)
     {
-        foreach (var pc in PlayerControl.AllPlayerControls)
-            if (pc != null && pc.PlayerId == id) return pc;
+        try
+        {
+            var players = PlayerControl.AllPlayerControls;
+            if (players == null) return null;
+            foreach (var pc in players)
+                if (pc != null && pc.PlayerId == id) return pc;
+        }
+        catch
+        {
+            return null;
+        }
         return null;
     }
 
     private static Color GetPaletteColor(PlayerControl? pc)
     {
         if (pc?.Data == null) return new Color(0.18f, 0.80f, 0.44f, 1f);
-        int cid = GetDisplayOutfit(pc).ColorId;
+        int cid = GetPlayerColorId(pc);
         return cid >= 0 && cid < Palette.PlayerColors.Length
             ? (Color)Palette.PlayerColors[cid]
             : Color.white;
+    }
+
+    private static int GetPlayerColorId(PlayerControl pc)
+    {
+        try
+        {
+            return pc.cosmetics.bodyMatProperties.ColorId;
+        }
+        catch
+        {
+            return GetDisplayOutfit(pc).ColorId;
+        }
     }
 
     private static NetworkedPlayerInfo.PlayerOutfit GetDisplayOutfit(PlayerControl pc)
@@ -679,11 +751,14 @@ public static class PingTrackerPatch
         public TextMeshPro?      LabelTMP;
         public OutfitFingerprint Fingerprint;
         public OutfitFingerprint PendingFingerprint;
+        public bool              HasCachedPoseIcon;
         public Color             PlayerColor;
         public float             Level;
         public float             TargetLevel;
         public float             SmoothedLevel;
         public float             Visibility;
+        public float             LastActiveTime;
+        public float             LastPlayerSeenTime;
         public bool              IsSpeaking;
     }
 }
