@@ -33,19 +33,25 @@ internal static class CrewmateAvatarRenderer
 
     public static void TrackIdlePose(PlayerControl? pc)
     {
-        if (!IsRightFacingIdle(pc))
+        try
+        {
+            if (!IsRightFacingIdle(pc))
+            {
+                ClearIdleCandidate(pc);
+                return;
+            }
+
+            if (!UpdateIdleCandidate(pc!, out var candidate)) return;
+            if (!candidate.Promoted && candidate.StableFrames >= StableIdleFrameThreshold)
+            {
+                var snapshot = CaptureCurrentPose(pc!);
+                IdlePoseCache[pc!.PlayerId] = snapshot;
+                candidate.Promoted = true;
+            }
+        }
+        catch
         {
             ClearIdleCandidate(pc);
-            return;
-        }
-
-        if (!UpdateIdleCandidate(pc!, out var candidate)) return;
-        if (!candidate.Promoted && candidate.StableFrames >= StableIdleFrameThreshold)
-        {
-            var snapshot = CaptureCurrentPose(pc!);
-            if (snapshot.Layers.Count <= 0) return;
-            IdlePoseCache[pc!.PlayerId] = snapshot;
-            candidate.Promoted = true;
         }
     }
 
@@ -53,10 +59,10 @@ internal static class CrewmateAvatarRenderer
     {
         iconGO = null;
         if (pc?.Data == null || parent == null) return false;
-        if (!IsAvatarReady(pc)) return false;
 
+        // Best effort only. Live cosmetic pose capture is allowed to fail during
+        // lobby/game transitions, movement, intro, or late cosmetic loading.
         TrackIdlePose(pc);
-        if (!HasCachedPose(playerId, pc)) return false;
 
         int colorId = GetPlayerColorId(pc);
         bool isRainbow = IsRainbowColorId(colorId);
@@ -70,8 +76,8 @@ internal static class CrewmateAvatarRenderer
 
         var bodyRenderer = AddSprite(root.transform, "VC_Body_Base", baseSprite, Vector3.zero, Quaternion.identity, Vector3.one * BodyScale, Color.white, BodyOrder);
         if (isRainbow) AddRainbowBodyAnimator(bodyRenderer);
-        if (!TryAddCachedPose(root.transform, playerId, pc))
-            return DestroyIncompleteIcon(root);
+        if (HasCachedPose(playerId, pc))
+            _ = TryAddCachedPose(root.transform, playerId, pc);
         ApplySorting(root);
         VCOverlayCamera.EnsureOnTop(root);
         iconGO = root;
@@ -82,6 +88,24 @@ internal static class CrewmateAvatarRenderer
         => pc?.Data != null
            && IdlePoseCache.TryGetValue(playerId, out var snapshot)
            && snapshot.Matches(pc);
+
+    public static bool HasCachedCosmeticPose(byte playerId, PlayerControl? pc)
+        => pc?.Data != null
+           && IdlePoseCache.TryGetValue(playerId, out var snapshot)
+           && snapshot.Layers.Count > 0
+           && snapshot.Matches(pc);
+
+    internal static void ClearCache()
+    {
+        IdlePoseCache.Clear();
+        IdlePoseCandidates.Clear();
+    }
+
+    internal static void ClearPlayer(byte playerId)
+    {
+        IdlePoseCache.Remove(playerId);
+        IdlePoseCandidates.Remove(playerId);
+    }
 
     public static bool IsCustomIcon(GameObject go)
         => go != null && go.name.StartsWith("VC_SpriteIcon_");
@@ -308,18 +332,27 @@ internal static class CrewmateAvatarRenderer
 
     private static bool TryAddCachedPose(Transform root, byte playerId, PlayerControl pc)
     {
-        if (!IdlePoseCache.TryGetValue(playerId, out var snapshot)) return false;
-        if (!snapshot.Matches(pc)) return false;
-
-        foreach (var layer in snapshot.Layers)
+        try
         {
-            var target = AddSprite(root, layer.Name, layer.Sprite, layer.LocalPosition, layer.LocalRotation, layer.LocalScale, layer.Color, layer.SortOrder);
-            target.flipX = false;
-            target.flipY = false;
-            if (layer.SharedMaterial != null)
-                target.sharedMaterial = layer.SharedMaterial;
+            if (!IdlePoseCache.TryGetValue(playerId, out var snapshot)) return false;
+            if (!snapshot.Matches(pc)) return false;
+
+            foreach (var layer in snapshot.Layers)
+            {
+                if (layer.Sprite == null) continue;
+                var target = AddSprite(root, layer.Name, layer.Sprite, layer.LocalPosition, layer.LocalRotation, layer.LocalScale, layer.Color, layer.SortOrder);
+                target.flipX = false;
+                target.flipY = false;
+                if (layer.SharedMaterial != null)
+                    target.sharedMaterial = layer.SharedMaterial;
+            }
+            return true;
         }
-        return true;
+        catch
+        {
+            ClearPlayer(playerId);
+            return false;
+        }
     }
 
     private static void ClearIdleCandidate(PlayerControl? pc)
@@ -330,13 +363,6 @@ internal static class CrewmateAvatarRenderer
     private static bool UpdateIdleCandidate(PlayerControl pc, out IdlePoseCandidate candidate)
     {
         var fingerprint = CapturePoseFingerprint(pc);
-        if (fingerprint.LayerCount <= 0)
-        {
-            IdlePoseCandidates.Remove(pc.PlayerId);
-            candidate = null!;
-            return false;
-        }
-
         if (!IdlePoseCandidates.TryGetValue(pc.PlayerId, out var existing) || !existing.Matches(fingerprint))
         {
             candidate = new IdlePoseCandidate(fingerprint);

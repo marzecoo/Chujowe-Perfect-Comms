@@ -46,6 +46,7 @@ internal static class VoiceCameraState
     {
         _activeCameraMinigame = null;
         _activeCameraInstanceId = 0;
+        SurveillanceCameraStatePatches.RestoreVoiceOverlayCameraMasks();
     }
 
     public static bool TryGetActiveMinigame(out Minigame minigame)

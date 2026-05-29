@@ -49,14 +49,26 @@ internal sealed class VoiceOverlayState
         return _cachedState;
     }
 
+    internal static void InvalidateCache()
+    {
+        _cachedFrame = -1;
+        _cachedRoom = null;
+        _cachedState = Empty;
+    }
+
     private static VoiceOverlayState Build(VoiceChatRoom? room)
     {
         if (room == null)
             return Empty;
 
+        var snapshot = room.CurrentSnapshot;
         var remotePlayers = new List<VoiceRemoteOverlayState>(16);
         foreach (var remote in room.InterstellarRemoteOverlayStates)
+        {
+            if (!IsLiveRemoteSpeaker(remote.PlayerId, snapshot))
+                continue;
             remotePlayers.Add(remote);
+        }
 
         var local = new VoiceLocalOverlayState(
             VoiceChatHudState.IsMuted,
@@ -67,5 +79,19 @@ internal sealed class VoiceOverlayState
             room.UsingSpeaker);
 
         return new VoiceOverlayState(local, remotePlayers);
+    }
+
+    private static bool IsLiveRemoteSpeaker(byte playerId, VoiceGameStateSnapshot? snapshot)
+    {
+        if (snapshot == null || playerId == byte.MaxValue)
+            return false;
+
+        if (!snapshot.TryGetPlayer(playerId, out var player))
+            return false;
+
+        return !player.IsLocal
+               && !player.Disconnected
+               && !player.IsDummy
+               && player.ClientId >= 0;
     }
 }

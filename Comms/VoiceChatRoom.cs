@@ -127,6 +127,16 @@ public class VoiceChatRoom
         Current = null;
     }
 
+    internal static void ClearVoiceUiForLifecycleReset(string reason)
+    {
+        PingTrackerPatch.ClearSpeakingBar();
+        MeetingSpeakingIndicatorPatch.ClearAllIndicators();
+        VoiceOverlayState.InvalidateCache();
+        CrewmateAvatarRenderer.ClearCache();
+        VoiceCameraState.Clear();
+        VoiceDiagnostics.Log("voice.ui.clear", $"reason={LogSafe(reason)}");
+    }
+
     // ======================================================================
     // Constructor
     // ======================================================================
@@ -444,8 +454,7 @@ public class VoiceChatRoom
         VoiceDiagnostics.Log("voice.refresh.applied",
             $"{sender.ToDiagnosticFields()} nonce={nonce} trigger={trigger} backend={_activeBackend} room={LogSafe(_activeRoomCode ?? "unknown")} region={LogSafe(_activeRegion ?? "unknown")} peers={_voiceBackend?.PeerCount ?? 0}");
 
-        PingTrackerPatch.ClearSpeakingBar();
-        MeetingSpeakingIndicatorPatch.ClearAllIndicators();
+        ClearVoiceUiForLifecycleReset($"host voice refresh: {trigger}");
         StartTransitionTrace($"host voice refresh: {trigger}", snapshot);
         Rejoin("host voice refresh");
     }
@@ -456,8 +465,7 @@ public class VoiceChatRoom
         VoiceDiagnostics.Log("voice.refresh.local.applied",
             $"trigger={trigger} backend={_activeBackend} room={LogSafe(_activeRoomCode ?? "unknown")} region={LogSafe(_activeRegion ?? "unknown")} peers={_voiceBackend?.PeerCount ?? 0}");
 
-        PingTrackerPatch.ClearSpeakingBar();
-        MeetingSpeakingIndicatorPatch.ClearAllIndicators();
+        ClearVoiceUiForLifecycleReset($"local voice refresh: {trigger}");
         StartTransitionTrace($"local voice refresh: {trigger}", snapshot);
         Rejoin("local voice refresh");
     }
@@ -568,6 +576,7 @@ public class VoiceChatRoom
 
         var endpointLabel = endpoint.IsInterstellar ? VoiceEndpointSettings.BuildInterstellarRoomUrl(endpoint.ServerUrl) : endpoint.ServerUrl;
         VoiceDiagnostics.Log("transport.switch", $"backend={endpoint.Backend} room={roomCode} region={region} endpoint={endpointLabel}");
+        ClearVoiceUiForLifecycleReset("transport switch");
         _voiceBackend?.Dispose();
         _voiceBackend = null;
         _interstellarVoice = null;
@@ -638,6 +647,7 @@ public class VoiceChatRoom
             $"backend={_activeBackend} reason=missing-peer remotePlayers={remotePlayers} peers={mappedPeers} rawPeers={_voiceBackend.PeerCount} " +
             $"room={_activeRoomCode ?? "unknown"} region={_activeRegion ?? "unknown"} " +
             $"liveClients=[{DescribeExpectedRemotePlayers(snapshot)}]");
+        ClearVoiceUiForLifecycleReset("missing peer recovery");
         _voiceBackend.Rejoin();
         ResetSettingsSyncState();
         StartBootstrapWindow("missing voice backend peer");
@@ -945,6 +955,7 @@ public class VoiceChatRoom
 
     private void Rejoin(string reason)
     {
+        ClearVoiceUiForLifecycleReset(reason);
         _voiceBackend?.Dispose();
         _voiceBackend = null;
         _interstellarVoice = null;
@@ -977,6 +988,7 @@ public class VoiceChatRoom
 
     public void Close()
     {
+        ClearVoiceUiForLifecycleReset("room close");
         _voiceBackend?.Dispose();
         _voiceBackend = null;
         _interstellarVoice = null;
