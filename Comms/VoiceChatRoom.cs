@@ -239,19 +239,13 @@ public class VoiceChatRoom
 
     internal static void SendJailVoicePacket(byte jailedPlayerId, bool allowed)
     {
-        var current = Current;
         var local = PlayerControl.LocalPlayer;
         if (local == null) return;
 
-        var payload = new[]
-        {
-            (byte)'P', (byte)'C', (byte)'J', (byte)'V',
-            local.PlayerId,
-            jailedPlayerId,
-            allowed ? (byte)1 : (byte)0,
-        };
-
-        current?._voiceBackend?.SendCustomMessage(payload);
+        // Jail-voice authority is sent ONLY over the authenticated Among Us RPC, which binds to the
+        // InnerNet sender (VoiceJailVoiceRpc rejects unless __instance.PlayerId == jailorId). The
+        // voice transport side-channel is NOT used for authority because its sender identity is
+        // self-asserted, which would let any peer forge a jailor's mute/unmute.
         VoiceJailVoiceRpc.Send(local.PlayerId, jailedPlayerId, allowed);
     }
 
@@ -479,8 +473,9 @@ public class VoiceChatRoom
         if (!force && _lastSentHostSettings.HasValue && _lastSentHostSettings.Value.Equals(settings))
             return;
 
-        var payload = VoiceRoomControlCodec.EncodeHostSettingsSnapshot(settings);
-        _voiceBackend.SendCustomMessage(payload);
+        // Settings authority flows ONLY over the authenticated Among Us RPC. The voice transport
+        // side-channel is not used because its sender identity is self-asserted (a peer can claim
+        // the host's client id), which would let any peer forge host voice settings.
         VoiceRoomSettingsRpc.SendSnapshot(settings);
         _lastSentHostSettings = settings;
         VoiceDiagnostics.Log("settings.sent", $"kind=host-snapshot transport={_activeBackend} rpc=true");
@@ -765,8 +760,7 @@ public class VoiceChatRoom
         if ((now - _lastHostSettingsRequestUtc).TotalSeconds < 5)
             return;
 
-        var payload = VoiceRoomControlCodec.EncodeHostSettingsRequest();
-        _voiceBackend.SendCustomMessage(payload);
+        // Request the host snapshot over the authenticated RPC only (see SendHostSettingsSnapshot).
         VoiceRoomSettingsRpc.SendRequest();
         _lastHostSettingsRequestUtc = now;
         VoiceDiagnostics.Log("settings.requested", $"kind=host-snapshot transport={_activeBackend} rpc=true reason={reason} force={force}");
@@ -791,6 +785,19 @@ public class VoiceChatRoom
         current._hostSettingsResyncPending = false;
         current._lastHostSettingsRequestUtc = DateTime.MinValue;
         VoiceDiagnostics.Log("settings.host.resync_applied", $"transport={transport} hostClient={hostClientId} hostPlayer={hostPlayerId}");
+    }
+
+    internal static void NoteHostSettingsSnapshotRejected()
+    {
+        // A host snapshot was rejected (e.g. a stale cached host id during a migration window).
+        // Ask the tick loop to re-request a fresh snapshot so settings converge once the host id
+        // resolves, instead of waiting for the host's next periodic broadcast. The request itself
+        // is still bounded by the 5s throttle in RequestHostSettingsSnapshot, so this cannot storm.
+        var current = Current;
+        if (current == null || current.IsLocalHost())
+            return;
+
+        current._hostSettingsResyncPending = true;
     }
 
     private void RespondToHostSettingsRequestFromSender(VoiceHostSenderIdentity sender)
@@ -868,47 +875,14 @@ public class VoiceChatRoom
 
     private void ProcessBackendCustomMessage(VoiceBackendCustomMessage backendMessage)
     {
-        var payload = backendMessage.Payload;
-        if (payload.Length == 7
-            && payload[0] == (byte)'P'
-            && payload[1] == (byte)'C'
-            && payload[2] == (byte)'J'
-            && payload[3] == (byte)'V')
-        {
-            VoiceRoleMuteState.ApplyRemoteJailVoice(payload[4], payload[5], payload[6] != 0);
-            return;
-        }
-
-        if (!VoiceRoomControlCodec.TryDecode(payload, out var controlMessage))
-            return;
-
-        if (controlMessage.Kind == VoiceRoomControlMessageKind.HostSettingsRequest)
-        {
-            RespondToHostSettingsRequestFromSender(VoiceHostAuthority.FromBackendMessage(backendMessage, _activeBackend.ToString()));
-            return;
-        }
-
-        if (controlMessage.Kind == VoiceRoomControlMessageKind.HostSettingsSnapshot && !IsLocalHost())
-        {
-            var sender = VoiceHostAuthority.FromBackendMessage(backendMessage, _activeBackend.ToString());
-            if (!VoiceHostAuthority.IsTrustedHostSender(
-                    backendMessage,
-                    CurrentSnapshot,
-                    _activeBackend.ToString(),
-                    out var reason,
-                    out var hostClientId,
-                    out var hostPlayerId))
-            {
-                VoiceDiagnostics.Log("settings.snapshot.rejected",
-                    $"{sender.ToDiagnosticFields()} reason={reason} hostClient={hostClientId} hostPlayer={hostPlayerId}");
-                return;
-            }
-
-            VoiceRoomSettingsState.ApplyRemote(controlMessage.Settings);
-            NoteHostSettingsSnapshotApplied(_activeBackend.ToString(), hostClientId, hostPlayerId);
-            VoiceDiagnostics.Log("settings.snapshot.applied",
-                $"{sender.ToDiagnosticFields()} hostClient={hostClientId} hostPlayer={hostPlayerId}");
-        }
+        // SECURITY: the voice transport side-channel carries a SELF-ASSERTED sender identity
+        // (BetterCrewLink relays whatever client id a peer announces; Interstellar cannot expose a
+        // sender at all). It is therefore NOT trusted for authority. Host settings (RpcId 203) and
+        // jail-voice (RpcId 204) now flow exclusively over the authenticated Among Us RPC path,
+        // which binds to the InnerNet sender. Any legacy control payload (host-settings snapshot/
+        // request or 'PCJV' jail-voice) that still arrives here, e.g. from an older peer, is ignored
+        // rather than applied, closing the side-channel host/jailor spoofing vector.
+        _ = backendMessage;
     }
 
     private static bool CheckCommsSabotage(out string source)

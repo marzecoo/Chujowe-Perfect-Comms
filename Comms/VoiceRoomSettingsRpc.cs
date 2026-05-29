@@ -10,6 +10,11 @@ internal static class VoiceRoomSettingsRpc
     private const byte SnapshotKind = 1;
     private const byte RequestKind = 2;
 
+    // Defensive cap on the host-selected backend URL so a malformed/oversized RPC cannot inflate
+    // a client's settings string (mirrors VoiceRoomControlCodec.MaxServerUrlBytes). Real ws/wss
+    // endpoints are far shorter than this.
+    private const int MaxBackendServerUrlChars = 512;
+
     public static void SendSnapshot(VoiceRoomSettingsSnapshot settings)
     {
         var writer = StartWriter();
@@ -91,6 +96,8 @@ internal static class VoiceRoomSettingsRpc
     {
         int backend = reader.ReadInt32();
         string backendServerUrl = reader.ReadString();
+        if (backendServerUrl.Length > MaxBackendServerUrlChars)
+            backendServerUrl = backendServerUrl.Substring(0, MaxBackendServerUrlChars);
         float maxChatDistance = reader.ReadSingle();
         int falloffMode = reader.ReadInt32();
         int occlusionMode = reader.ReadInt32();
@@ -211,6 +218,9 @@ internal static class VoiceRoomSettingsRpc
                     {
                         VoiceDiagnostics.Log("settings.snapshot.rejected",
                             $"{sender.ToDiagnosticFields()} reason={reason} hostClient={hostClientId} hostPlayer={hostPlayerId}");
+                        // Recover from a stale-host-id rejection window (e.g. just after a host
+                        // migration): ask the tick loop to re-request a fresh snapshot.
+                        VoiceChatRoom.NoteHostSettingsSnapshotRejected();
                         return;
                     }
 

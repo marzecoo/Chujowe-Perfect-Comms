@@ -224,24 +224,11 @@ internal static class VoiceSnapshotBuilder
         return mapId;
     }
 
+    // Use the shared, robust resolver (candidate-name fallback + caching + one-time diagnostics)
+    // so host discovery stays consistent between the snapshot and VoiceHostAuthority. Host id is
+    // best-effort; settings sync refuses unauthenticated snapshots when it is unknown.
     private static int ResolveHostClientId()
-    {
-        try
-        {
-            var client = AmongUsClient.Instance;
-            if (client == null) return -1;
-
-            var hostIdProperty = client.GetType().GetProperty("HostId");
-            if (hostIdProperty?.GetValue(client) is int hostId)
-                return hostId;
-        }
-        catch
-        {
-            // Host id is best-effort; settings sync will refuse unauthenticated snapshots when unknown.
-        }
-
-        return -1;
-    }
+        => VoiceHostAuthority.ResolveLiveHostClientId();
 
     private static int ResolveClientId(PlayerControl player, NetworkedPlayerInfo? data)
     {
