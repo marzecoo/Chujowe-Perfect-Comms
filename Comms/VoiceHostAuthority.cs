@@ -113,9 +113,10 @@ internal static class VoiceHostAuthority
     }
 
     // HostId member name varies across Among Us/IL2CPP rebuilds: try candidates, cache the hit, log
-    // once on total failure (otherwise every host snapshot is rejected as "unknown-sender"). Each
-    // candidate is probed as a FIELD as well as a property: HostId is a public field on the GameLibs
-    // InnerNetClient, so the previous property-only lookup never matched and always returned -1.
+    // once on total failure (otherwise every host snapshot is rejected as "unknown-sender").
+    // Il2CppInterop surfaces native il2cpp fields (like InnerNetClient.HostId) as MANAGED PROPERTIES on
+    // the generated proxy, so the property probe is the one that actually resolves HostId; the field
+    // probe is a defensive fallback for any future build that exposes a genuine managed field.
     private static readonly string[] HostIdPropertyNames = { "HostId", "HostClientId", "hostId" };
     private static string? _cachedHostIdPropertyName;
     private static bool _hostIdReflectionFailureLogged;
@@ -158,16 +159,26 @@ internal static class VoiceHostAuthority
     private static bool TryReadHostIdMember(object client, Type type, string name, out int hostId)
     {
         hostId = 0;
-        if (type.GetProperty(name)?.GetValue(client) is int propertyHostId)
+        try
         {
-            hostId = propertyHostId;
-            return true;
-        }
+            // Property probe: resolves an il2cpp field that Il2CppInterop exposed as a managed property.
+            if (type.GetProperty(name)?.GetValue(client) is int propertyHostId)
+            {
+                hostId = propertyHostId;
+                return true;
+            }
 
-        if (type.GetField(name)?.GetValue(client) is int fieldHostId)
+            // Field probe: defensive fallback for a genuine managed field (inert for il2cpp proxies).
+            if (type.GetField(name)?.GetValue(client) is int fieldHostId)
+            {
+                hostId = fieldHostId;
+                return true;
+            }
+        }
+        catch
         {
-            hostId = fieldHostId;
-            return true;
+            // A reflection access on this candidate threw; treat as "not this member" so the caller
+            // moves on to the next candidate instead of aborting the whole resolution.
         }
 
         return false;

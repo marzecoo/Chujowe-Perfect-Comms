@@ -18,7 +18,6 @@ public static class MeetingSpeakingIndicatorPatch
     private static readonly Dictionary<byte, SpriteRenderer> _cardGlows = new();
     private static readonly Dictionary<byte, float> _speakingLevels = new();
     private static readonly Dictionary<byte, SmoothVisualState> _visualStates = new();
-    private static readonly Dictionary<byte, Color> _playerColors = new();
     // Vanilla HighlightedFX state captured before tinting, so the vote-card selection outline is restored intact.
     private static readonly Dictionary<byte, BuiltInHighlightSnapshot> _highlightSnapshots = new();
     private static Sprite? _cardGlowSprite;
@@ -68,7 +67,6 @@ public static class MeetingSpeakingIndicatorPatch
     internal static void ClearAllIndicators()
     {
         _speakingLevels.Clear();
-        _playerColors.Clear(); // re-resolve colors after lifecycle resets
         DisableAll();
     }
 
@@ -295,8 +293,11 @@ public static class MeetingSpeakingIndicatorPatch
             snapshot.Restore(highlight);
             _highlightSnapshots.Remove(id);
         }
-        else
+        else if (highlight.sortingOrder == VCSorting.Ring)
         {
+            // Only clear a highlight WE turned into a speaking tint (sortingOrder == Ring) whose snapshot
+            // was already consumed. A highlight we never touched (e.g. vanilla's live vote-selection
+            // outline) is left entirely to the game so we don't force it off every frame.
             highlight.enabled = false;
         }
     }
@@ -566,7 +567,6 @@ public static class MeetingSpeakingIndicatorPatch
         _cardGlows.Clear();
         _speakingLevels.Clear();
         _visualStates.Clear();
-        _playerColors.Clear();
         _highlightSnapshots.Clear();
     }
 
@@ -604,9 +604,10 @@ public static class MeetingSpeakingIndicatorPatch
 
     private static Color GetPlayerColor(byte playerId)
     {
-        if (_playerColors.TryGetValue(playerId, out var cached))
-            return cached;
-
+        // Resolve live every call (no persistent cache): the glow color must follow conceal-state
+        // changes mid-meeting (camouflage on/off) so it never shows a stale real color for a now-
+        // concealed speaker, nor a stale grey for one whose camo ended. Only called for visible
+        // speakers (Visibility > 0.01f), so the per-call player scan is cheap.
         var fallback = new Color(0.18f, 0.80f, 0.44f, 1f); // voice fallback green
         try
         {
@@ -617,10 +618,9 @@ public static class MeetingSpeakingIndicatorPatch
                 if (pc == null || pc.Data == null) continue;
                 if (pc.PlayerId != playerId) continue;
 
-                // Same color source as the speaking bar (live body color w/ transient-red guard) for parity.
-                var color = CrewmateAvatarRenderer.GetPaletteColor(pc);
-                _playerColors[playerId] = color; // cache only a resolved color
-                return color;
+                // Same color source as the speaking bar (live body color w/ transient-red guard,
+                // concealed-aware grey) for parity.
+                return CrewmateAvatarRenderer.GetPaletteColor(pc);
             }
         }
         catch
@@ -628,7 +628,7 @@ public static class MeetingSpeakingIndicatorPatch
             // AllPlayerControls can be null/throw during scene transitions.
         }
 
-        return fallback; // not cached, so it re-resolves once player Data is available
+        return fallback;
     }
 
     private sealed class SmoothVisualState

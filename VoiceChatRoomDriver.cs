@@ -139,7 +139,7 @@ internal static class VoiceChatRoomDriver
         bool inEndGame = VoiceSceneState.IsEndGameActive;
         if (inEndGame && !_wasInEndGame)
         {
-            // Clear UI before Rejoin so teardown runs once.
+            // EndGame transition: rejoin once so the room/backend resets cleanly for the next round.
             VoiceChatRoom.Current.Rejoin();
             VoiceChatRoom.Current.ForceUpdateLocalProfile();
             _pendingRemap = false;

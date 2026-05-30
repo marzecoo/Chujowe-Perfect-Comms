@@ -241,8 +241,11 @@ internal static class VoiceLobbyBrowserUi
         _editorOpen = false;
         // Release the live BCL browser socket when the panel is dismissed; otherwise the Socket.IO
         // connection and its reconnect loop leak on the main menu until a scene change or source
-        // switch (EnsureBclLive reconnects it when the panel is reopened).
-        BetterCrewLinkLobbyBrowserClient.Disconnect();
+        // switch (EnsureBclLive reconnects it when the panel is reopened). Keep the socket alive while
+        // a join is still in flight (JoinLobbyAsync awaits a server ack on it); CompleteBclJoinIfReady
+        // closes the panel again once the join resolves, which disconnects then.
+        if (_bclJoinTask is not { IsCompleted: false })
+            BetterCrewLinkLobbyBrowserClient.Disconnect();
         _lastBclLiveListings = Array.Empty<VoiceLobbyListing>();
         _panelClosing = _panelRoot != null && _panelAnimation > 0f;
         if (_panelRoot == null) return;
@@ -457,6 +460,7 @@ internal static class VoiceLobbyBrowserUi
         if (task.IsFaulted)
         {
             SetStatus("Join failed: " + (task.Exception?.GetBaseException().Message ?? "unknown"));
+            ReleaseBclSocketIfPanelClosed();
             return;
         }
 
@@ -464,6 +468,7 @@ internal static class VoiceLobbyBrowserUi
         if (!result.Success || string.IsNullOrWhiteSpace(result.Code))
         {
             SetStatus("Join failed: " + (string.IsNullOrWhiteSpace(result.Error) ? "Lobby is not joinable" : result.Error));
+            ReleaseBclSocketIfPanelClosed();
             return;
         }
 
@@ -476,6 +481,20 @@ internal static class VoiceLobbyBrowserUi
         catch (Exception ex)
         {
             SetStatus("Join failed: " + ex.Message);
+            ReleaseBclSocketIfPanelClosed();
+        }
+    }
+
+    // If the panel was dismissed while this join was in flight, ClosePanel skipped the BCL socket
+    // Disconnect to keep the ack alive. On a failed/faulted/timed-out join the success path's ClosePanel
+    // never runs, so release the socket here to avoid leaking the Socket.IO client + its reconnect loop
+    // on the menu. When the panel is still open we keep the socket so the user can retry.
+    private static void ReleaseBclSocketIfPanelClosed()
+    {
+        if (!_panelVisible)
+        {
+            BetterCrewLinkLobbyBrowserClient.Disconnect();
+            _lastBclLiveListings = Array.Empty<VoiceLobbyListing>();
         }
     }
 

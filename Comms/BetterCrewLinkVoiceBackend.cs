@@ -1173,11 +1173,28 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
     {
         var now = DateTime.UtcNow;
         if (now - _lastOfferRetryUtc < OfferRetryInterval) return;
-        var retryPeers = SnapshotPeers()
+        var peers = SnapshotPeers();
+        var retryPeers = peers
             .Where(peer => ShouldInitiateOffer(peer.SocketId)
                 && (IsRetryableDataChannelState(peer.DataChannel?.readyState) || IsStuckConnecting(peer, now)))
             .ToArray();
-        if (retryPeers.Length == 0) return;
+        // Answerer side can't offer (would glare) and OnPeerConnectionDied only fires its one-shot
+        // request-offer on the failed/closed *transition*. If our link to the elected initiator is
+        // hard-dead but no fresh offer came back, re-ask on the same cadence so a dropped request-offer
+        // or a slow/asymmetric initiator self-heals without waiting for a meeting/scene reset. Restricted
+        // to failed/closed (NOT 'connecting' setup, NOT transient 'disconnected') so this never produces
+        // a duplicate offer during normal establishment; the initiator still only re-offers if ITS own
+        // link needs a rebuild.
+        var rerequestPeers = peers
+            .Where(peer =>
+            {
+                if (ShouldInitiateOffer(peer.SocketId) || IsLocalSocket(peer.SocketId)) return false;
+                var conn = peer.Connection;
+                return conn != null
+                    && conn.connectionState is RTCPeerConnectionState.failed or RTCPeerConnectionState.closed;
+            })
+            .ToArray();
+        if (retryPeers.Length == 0 && rerequestPeers.Length == 0) return;
         _lastOfferRetryUtc = now;
         foreach (var peer in retryPeers)
         {
@@ -1187,6 +1204,11 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             // first so StartOfferAsync sees a null channel and proceeds.
             if (stuck) RecreatePeerConnection(peer.SocketId);
             _ = StartOfferAsync(peer.SocketId);
+        }
+        foreach (var peer in rerequestPeers)
+        {
+            VoiceDiagnostics.Log("bcl.offer", $"reason=re-request socket={peer.SocketId} client={peer.ClientId} state=connection-{peer.Connection?.connectionState.ToString().ToLowerInvariant() ?? "none"}");
+            RequestOfferFromPeer(peer.SocketId);
         }
     }
 
@@ -1237,6 +1259,11 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         };
     }
 
+    // Includes 'disconnected' on purpose: used by the offer-gate (LocalLinkNeedsRebuild) and the
+    // request-offer handling, where a sustained disconnect should still permit a rebuild. The edge-
+    // triggered onconnectionstatechange handler above deliberately acts only on failed/closed so a
+    // TRANSIENT 'disconnected' (which SIPSorcery often auto-recovers to 'connected') doesn't trigger a
+    // premature teardown. The two predicates diverge intentionally; keep them in sync only on purpose.
     private static bool IsDeadConnectionState(RTCPeerConnectionState state)
         => state is RTCPeerConnectionState.failed or RTCPeerConnectionState.closed or RTCPeerConnectionState.disconnected;
 
@@ -2444,7 +2471,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
                     // successor's, not the lost frame's.
                     var frameSize = decodeFec
                         ? AudioHelpers.FrameSize
-                        : Math.Max(AudioHelpers.FrameSize, (int)frame.Duration);
+                        : NormalizeOpusFrameSize(Math.Max(AudioHelpers.FrameSize, (int)frame.Duration));
                     if (!DecodeAndAddSamples(payload, decodeFec, frameSize, out error, out var decoded))
                         return false;
                     decodedFrames += decoded > 0 ? 1 : 0;
@@ -2471,7 +2498,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
                     // successor's, not the lost frame's.
                     var frameSize = decodeFec
                         ? AudioHelpers.FrameSize
-                        : Math.Max(AudioHelpers.FrameSize, (int)frame.Duration);
+                        : NormalizeOpusFrameSize(Math.Max(AudioHelpers.FrameSize, (int)frame.Duration));
                     if (!DecodeAndAddSamples(payload, decodeFec, frameSize, out error, out var decoded))
                         return false;
                     decodedFrames += decoded > 0 ? 1 : 0;
@@ -2479,6 +2506,23 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
 
                 return true;
             }
+        }
+
+        // Opus only accepts exact frame durations (2.5/5/10/20/40/60 ms => 120/240/480/960/1920/2880
+        // samples @ 48 kHz). This build's encoder is a strict 20 ms framer (960), so this is a no-op for
+        // all real traffic; it only hardens the decoder against a non-conformant peer whose advertised
+        // duration isn't a valid Opus size (e.g. > 2880), which would otherwise reach Opus as an invalid
+        // frame_size. Clamps down to the nearest valid size.
+        private static readonly int[] OpusFrameSizes = { 120, 240, 480, 960, 1920, 2880 };
+        private static int NormalizeOpusFrameSize(int frameSize)
+        {
+            int best = OpusFrameSizes[0];
+            foreach (var size in OpusFrameSizes)
+            {
+                if (size <= frameSize) best = size;
+                else break;
+            }
+            return best;
         }
 
         private void ScheduleTailFlushLocked()

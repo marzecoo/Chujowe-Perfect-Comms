@@ -270,7 +270,9 @@ internal static class VanillaLobbyMetadataCache
         // No fuzzy map+player-count fallback: a coincidental match (e.g. a Skeld 1/15 lobby) would
         // attach an unrelated lobby's host/status to this row. Only exact game-code matches are
         // trusted; on a miss the caller falls back to neutral metadata.
-        VanillaLobbyDiagnostics.Limited("cache.tryget.listing.miss", "cache", $"miss code={code} gameId={listing.GameId} map={listing.MapId} players={listing.PlayerCount}/{listing.MaxPlayers} cached={Games.Count}", first: 20, every: 120);
+        // Cache count intentionally omitted here: this runs outside the Gate lock, and the inner
+        // TryGet(code) above already logs the count under lock.
+        VanillaLobbyDiagnostics.Limited("cache.tryget.listing.miss", "cache", $"miss code={code} gameId={listing.GameId} map={listing.MapId} players={listing.PlayerCount}/{listing.MaxPlayers}", first: 20, every: 120);
         metadata = null!;
         return false;
     }

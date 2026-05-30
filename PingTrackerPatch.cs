@@ -175,7 +175,20 @@ public static class PingTrackerPatch
                     {
                         slot.TargetLevel = level;
                         slot.IsSpeaking = true;
-                        slot.PlayerColor = GetPaletteColor(player);
+                        slot.PlayerColor = GetPaletteColor(player); // ring/glow tracks color live every frame
+
+                        // Defer a *color-only* fingerprint change by one frame: the live body color can
+                        // read a transient wrong value for a single frame during cosmetics init / role
+                        // swaps, and we don't want to destroy+recreate the icon GameObject for a flicker.
+                        // Structural changes (outfit type, hat/skin/visor/name) always rebuild immediately
+                        // so the icon never goes stale.
+                        bool structuralChange = !StructureMatches(slot.Fingerprint, liveFp);
+                        if (!structuralChange && slot.PendingFingerprint != liveFp)
+                        {
+                            slot.PendingFingerprint = liveFp; // stage; rebuild next frame only if it persists
+                            continue;
+                        }
+
                         if (slot.PendingFingerprint != liveFp)
                         {
                             slot.PendingFingerprint = liveFp;
@@ -668,6 +681,15 @@ public static class PingTrackerPatch
             outfit.VisorId,
             outfit.PlayerName);
     }
+
+    // Color-blind fingerprint compare: true when at most the body ColorId differs. Lets the consumer
+    // loop debounce a single-frame live-color blip without ever deferring a real (structural) change.
+    private static bool StructureMatches(in OutfitFingerprint a, in OutfitFingerprint b)
+        => a.OutfitTypeId == b.OutfitTypeId
+        && a.HatId == b.HatId
+        && a.SkinId == b.SkinId
+        && a.VisorId == b.VisorId
+        && a.PlayerName == b.PlayerName;
 
     // Built once per frame so FindPlayer is O(1) instead of re-scanning the IL2CPP list per speaker.
     private static void RebuildPlayerLookup()

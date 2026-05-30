@@ -150,7 +150,9 @@ internal static class CrewmateAvatarRenderer
         }
         catch
         {
-            return false;
+            // Fail closed: if the outfit type can't be read, treat the speaker as concealed so an
+            // indeterminate state defaults to the anonymized grey body instead of leaking identity.
+            return true;
         }
     }
 
@@ -604,6 +606,9 @@ internal static class CrewmateAvatarRenderer
         }
         catch
         {
+            // Deliberately fail OPEN (0 = Default) here: this is the rebuild fingerprint's outfit id, and
+            // 0 just avoids force-rebuilding the icon on a transient throw. The anti-leak decision lives in
+            // IsConcealed, which fails CLOSED (treats a throw as concealed) so identity can never leak.
             return 0;
         }
     }
