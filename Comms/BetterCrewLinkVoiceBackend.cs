@@ -54,6 +54,13 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
     private volatile List<RTCIceServer> _iceServers = DefaultIceServers.ToList();
     private static readonly TimeSpan JoinRetryInterval = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan OfferRetryInterval = TimeSpan.FromSeconds(3);
+    // A data channel that has not left 'connecting' after this long is treated as a failed handshake
+    // (lost answer / failed ICE) and re-offered on a fresh RTCPeerConnection. Kept well above
+    // OfferRetryInterval so a normally-negotiating channel is never torn down mid-handshake.
+    private static readonly TimeSpan StuckConnectingTimeout = TimeSpan.FromSeconds(8);
+    // Minimum spacing between connection-state-driven recovery attempts for a single peer, so a
+    // peer that keeps failing cannot spin a re-offer storm.
+    private static readonly TimeSpan PeerRecoveryDebounce = TimeSpan.FromSeconds(3);
     private DateTime _lastStatsLogUtc = DateTime.MinValue;
     private DateTime _lastJoinAttemptUtc = DateTime.MinValue;
     private DateTime _lastOfferRetryUtc = DateTime.MinValue;
@@ -173,12 +180,30 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         .Where(peer => peer.PlayerId != byte.MaxValue)
         .Select(peer => peer.ToOverlayState());
 
+    // Runs every frame from the missing-peer recovery check, so it must stay allocation-free:
+    // no SnapshotPeers() array, no per-peer LINQ closure. Counts peers whose mapped PlayerId
+    // matches a live (non-local, connected, non-dummy) snapshot player — identical semantics to the
+    // previous LINQ form (an unmapped peer has PlayerId == byte.MaxValue, which no real player uses).
     public int CountMappedRemotePeers(VoiceGameStateSnapshot snapshot)
-        => SnapshotPeers().Count(peer => snapshot.Players.Any(player =>
-            !player.IsLocal &&
-            !player.Disconnected &&
-            !player.IsDummy &&
-            player.PlayerId == peer.PlayerId));
+    {
+        var count = 0;
+        lock (_peerSync)
+        {
+            foreach (var peer in _peersBySocket.Values)
+            {
+                if (peer.PlayerId == byte.MaxValue) continue;
+                foreach (var player in snapshot.Players)
+                {
+                    if (!player.IsLocal && !player.Disconnected && !player.IsDummy && player.PlayerId == peer.PlayerId)
+                    {
+                        count++;
+                        break;
+                    }
+                }
+            }
+        }
+        return count;
+    }
 
     public void SetMute(bool mute)
     {
@@ -1156,13 +1181,19 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         var now = DateTime.UtcNow;
         if (now - _lastOfferRetryUtc < OfferRetryInterval) return;
         var retryPeers = SnapshotPeers()
-            .Where(peer => IsRetryableDataChannelState(peer.DataChannel?.readyState) && ShouldInitiateOffer(peer.SocketId))
+            .Where(peer => ShouldInitiateOffer(peer.SocketId)
+                && (IsRetryableDataChannelState(peer.DataChannel?.readyState) || IsStuckConnecting(peer, now)))
             .ToArray();
         if (retryPeers.Length == 0) return;
         _lastOfferRetryUtc = now;
         foreach (var peer in retryPeers)
         {
-            VoiceDiagnostics.Log("bcl.offer", $"reason=retry socket={peer.SocketId} client={peer.ClientId} state={peer.DataChannel?.readyState.ToString() ?? "none"}");
+            var stuck = IsStuckConnecting(peer, now);
+            VoiceDiagnostics.Log("bcl.offer", $"reason={(stuck ? "stuck-connecting" : "retry")} socket={peer.SocketId} client={peer.ClientId} state={peer.DataChannel?.readyState.ToString() ?? "none"}");
+            // A channel wedged in 'connecting' cannot be re-offered on the same connection (the offer
+            // guard rejects non-null/closed state and the half-open ICE attempt will not restart), so
+            // rebuild it first; StartOfferAsync then sees a null channel and proceeds.
+            if (stuck) RecreatePeerConnection(peer.SocketId);
             _ = StartOfferAsync(peer.SocketId);
         }
     }
@@ -1178,25 +1209,118 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             var leftRoute = _leftPlayback.Generate(playbackGroupId);
             var rightRoute = _rightPlayback.Generate(playbackGroupId);
             var peer = new PeerConnection(socketId, clientId, playbackGroupId, leftRoute, rightRoute);
-            var pc = new RTCPeerConnection(new RTCConfiguration { iceServers = _iceServers });
-            peer.Connection = pc;
-            pc.ondatachannel += dc =>
-            {
-                lock (_peerSync)
-                    peer.DataChannel = dc;
-                dc.onopen += () => VoiceDiagnostics.Log("bcl.channel", $"socket={socketId} client={peer.ClientId} state=open inbound=true");
-                dc.onmessage += (_, _, data) => OnDataChannelMessage(peer, data);
-            };
-            pc.onicecandidate += candidate =>
-            {
-                if (candidate == null || _socket == null) return;
-                var signalData = JsonSerializer.Serialize(new { candidate = candidate.candidate, sdpMid = candidate.sdpMid, sdpMLineIndex = candidate.sdpMLineIndex });
-                _ = _socket.EmitAsync("signal", new object[] { new { to = socketId, data = signalData } });
-            };
+            WireNewPeerConnection(peer, socketId);
             _peersBySocket[socketId] = peer;
             VoiceDiagnostics.Log("bcl.peer.created", $"socket={socketId} client={clientId} playbackGroup={playbackGroupId} provisional={(clientId < 0).ToString().ToLowerInvariant()}");
             VoiceDiagnostics.Log("bcl.peer-connected", $"socket={socketId} client={clientId}");
             return peer;
+        }
+    }
+
+    // Builds a fresh RTCPeerConnection for the peer and wires its data-channel, ICE-candidate, and
+    // connection-state handlers. Caller MUST hold _peerSync. Shared by EnsurePeer (first contact) and
+    // RecreatePeerConnection (recovery) so both paths stay byte-for-byte identical.
+    private void WireNewPeerConnection(PeerConnection peer, string socketId)
+    {
+        var pc = new RTCPeerConnection(new RTCConfiguration { iceServers = _iceServers });
+        peer.Connection = pc;
+        pc.ondatachannel += dc =>
+        {
+            lock (_peerSync)
+                peer.DataChannel = dc;
+            dc.onopen += () => VoiceDiagnostics.Log("bcl.channel", $"socket={socketId} client={peer.ClientId} state=open inbound=true");
+            dc.onmessage += (_, _, data) => OnDataChannelMessage(peer, data);
+        };
+        pc.onicecandidate += candidate =>
+        {
+            if (candidate == null || _socket == null) return;
+            var signalData = JsonSerializer.Serialize(new { candidate = candidate.candidate, sdpMid = candidate.sdpMid, sdpMLineIndex = candidate.sdpMLineIndex });
+            _ = _socket.EmitAsync("signal", new object[] { new { to = socketId, data = signalData } });
+        };
+        // Liveness: SIPSorcery raises this on a background thread when ICE/DTLS fails or closes.
+        // Without it, a peer whose handshake died (lost answer, failed ICE) stayed silent until a
+        // manual full refresh re-rolled the whole mesh — the root cause of the "refresh re-rolls who
+        // you can hear" report. Marshal recovery to the main thread; the captured pc lets the handler
+        // ignore late events from a connection we have already replaced.
+        pc.onconnectionstatechange += state =>
+        {
+            if (state is RTCPeerConnectionState.failed or RTCPeerConnectionState.closed)
+                _mainThreadActions.Enqueue(() => OnPeerConnectionDied(socketId, pc, state));
+        };
+    }
+
+    private static bool IsDeadConnectionState(RTCPeerConnectionState state)
+        => state is RTCPeerConnectionState.failed or RTCPeerConnectionState.closed or RTCPeerConnectionState.disconnected;
+
+    private static bool IsStuckConnecting(PeerConnection peer, DateTime now)
+        => peer.DataChannel?.readyState == RTCDataChannelState.connecting
+           && peer.OfferStartedUtc != DateTime.MinValue
+           && now - peer.OfferStartedUtc > StuckConnectingTimeout;
+
+    // Replaces ONLY the RTCPeerConnection + data channel for one peer, keeping its playback routes,
+    // decoder, jitter buffer, and socket<->client mapping intact, so one failed handshake can be
+    // rebuilt without the global Rejoin that re-rolls every other (working) peer.
+    private void RecreatePeerConnection(string socketId)
+    {
+        lock (_peerSync)
+        {
+            if (IsLocalSocket(socketId)) return;
+            if (!_peersBySocket.TryGetValue(socketId, out var peer)) return;
+            try { peer.DataChannel?.close(); } catch { }
+            try { peer.Connection?.close(); } catch { }
+            peer.DataChannel = null;
+            peer.OfferStartedUtc = DateTime.MinValue;
+            WireNewPeerConnection(peer, socketId);
+        }
+        VoiceDiagnostics.Log("bcl.peer.recreated", $"socket={socketId}");
+    }
+
+    // Main-thread recovery for a peer whose connection died. The elected initiator rebuilds and
+    // re-offers; the answerer asks the initiator for a fresh offer (it must not offer itself or it
+    // would create glare). Debounced per peer so a chronically-failing link cannot storm re-offers.
+    private void OnPeerConnectionDied(string socketId, RTCPeerConnection pc, RTCPeerConnectionState state)
+    {
+        lock (_peerSync)
+        {
+            if (!_peersBySocket.TryGetValue(socketId, out var peer)) return;
+            if (!ReferenceEquals(peer.Connection, pc)) return; // event from a connection we already replaced
+        }
+        if (!TryBeginRecovery(socketId)) return;
+
+        VoiceDiagnostics.Log("bcl.peer.recovery", $"socket={socketId} reason=connection-{state.ToString().ToLowerInvariant()} initiator={ShouldInitiateOffer(socketId)}");
+        if (ShouldInitiateOffer(socketId))
+        {
+            RecreatePeerConnection(socketId);
+            _ = StartOfferAsync(socketId);
+        }
+        else
+        {
+            RequestOfferFromPeer(socketId);
+        }
+    }
+
+    // Answerer-side recovery: ask the elected initiator to send a fresh offer. The initiator handles
+    // this in HandleSignalAsync by rebuilding its connection and re-offering.
+    private void RequestOfferFromPeer(string socketId)
+    {
+        var socket = _socket;
+        if (socket == null) return;
+        var signalData = JsonSerializer.Serialize(new { type = "request-offer" });
+        _ = socket.EmitAsync("signal", new object[] { new { to = socketId, data = signalData } });
+        VoiceDiagnostics.Log("bcl.offer", $"reason=request socket={socketId}");
+    }
+
+    // Per-peer recovery debounce shared by the connection-state handler and inbound request-offer
+    // messages, so neither path (nor both firing together) can spin a re-offer/recreate storm.
+    private bool TryBeginRecovery(string socketId)
+    {
+        lock (_peerSync)
+        {
+            if (!_peersBySocket.TryGetValue(socketId, out var peer)) return false;
+            var now = DateTime.UtcNow;
+            if (now - peer.LastRecoveryUtc < PeerRecoveryDebounce) return false;
+            peer.LastRecoveryUtc = now;
+            return true;
         }
     }
 
@@ -1215,7 +1339,10 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         VoiceDiagnostics.Log("bcl.offer", $"reason=start socket={socketId} client={peer.ClientId} state={peer.DataChannel?.readyState.ToString() ?? "none"}");
         var channel = await peer.Connection.createDataChannel("audio", new RTCDataChannelInit { ordered = false, maxRetransmits = 0 });
         lock (_peerSync)
+        {
             peer.DataChannel = channel;
+            peer.OfferStartedUtc = DateTime.UtcNow;
+        }
         channel.onopen += () => VoiceDiagnostics.Log("bcl.channel", $"socket={socketId} client={peer.ClientId} state=open inbound=false");
         channel.onmessage += (_, _, data) => OnDataChannelMessage(peer, data);
         var offer = peer.Connection.createOffer(null);
@@ -1249,8 +1376,34 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         var peer = EnsurePeer(fromSocketId);
         if (peer?.Connection == null || _socket == null) return;
         VoiceDiagnostics.Log("bcl.signal.accepted", $"fromSocket={fromSocketId} client={peer.ClientId} type={signal.Kind}");
+        if (signal.Kind == "request-offer")
+        {
+            // Answerer asked us to re-offer (its side of the handshake died). Only the elected
+            // initiator may offer, so honour it exactly like our own connection-state recovery, and
+            // share the same debounce so a request arriving right after a self-recovery is ignored.
+            if (ShouldInitiateOffer(fromSocketId) && TryBeginRecovery(fromSocketId))
+            {
+                RecreatePeerConnection(fromSocketId);
+                _ = StartOfferAsync(fromSocketId);
+            }
+            return;
+        }
         if (signal.Kind == "offer")
         {
+            // If our side of this peer's connection has already died, rebuild it so a renegotiation
+            // offer (e.g. after the remote recovered from an ICE failure) lands on a clean connection.
+            // A first-contact offer arrives on a 'new' connection and is left untouched.
+            if (IsDeadConnectionState(peer.Connection.connectionState))
+            {
+                RecreatePeerConnection(fromSocketId);
+                PeerConnection? rebuilt = null;
+                lock (_peerSync)
+                {
+                    if (_peersBySocket.TryGetValue(fromSocketId, out var found)) rebuilt = found;
+                }
+                if (rebuilt?.Connection == null) return;
+                peer = rebuilt;
+            }
             peer.Connection.setRemoteDescription(new RTCSessionDescriptionInit { type = RTCSdpType.offer, sdp = signal.Sdp });
             var answer = peer.Connection.createAnswer(null);
             await peer.Connection.setLocalDescription(answer);
@@ -1305,6 +1458,13 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
                 }
 
                 var type = typeProp.GetString() ?? string.Empty;
+                if (type == "request-offer")
+                {
+                    // Control message (no SDP) used for symmetric handshake recovery: the answerer
+                    // asks the elected initiator to send a fresh offer.
+                    signal = DecodedSignal.Control("request-offer");
+                    return true;
+                }
                 if (type != "offer" && type != "answer")
                 {
                     reason = "unsupported-type";
@@ -2084,6 +2244,11 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         public int PlaybackGroupId { get; }
         public RTCPeerConnection? Connection { get; set; }
         public RTCDataChannel? DataChannel { get; set; }
+        // Set when the elected initiator creates the data channel; lets the backend detect a channel
+        // wedged in 'connecting' (a failed handshake) and re-offer it on a fresh connection.
+        public DateTime OfferStartedUtc { get; set; } = DateTime.MinValue;
+        // Last time connection-state recovery rebuilt this peer; debounces re-offer storms.
+        public DateTime LastRecoveryUtc { get; set; } = DateTime.MinValue;
 #pragma warning disable CS0618
         public OpusDecoder Decoder { get; } = new(AudioHelpers.ClockRate, AudioHelpers.Channels);
 #pragma warning restore CS0618
@@ -2394,6 +2559,9 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
     {
         public static DecodedSignal Session(string kind, string sdp)
             => new(kind, sdp, null, null, 0);
+
+        public static DecodedSignal Control(string kind)
+            => new(kind, null, null, null, 0);
 
         public static DecodedSignal CandidateSignal(string candidate, string? sdpMid, ushort sdpMLineIndex)
             => new("candidate", null, candidate, sdpMid, sdpMLineIndex);

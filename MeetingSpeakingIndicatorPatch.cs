@@ -583,6 +583,7 @@ public static class MeetingSpeakingIndicatorPatch
         const float Feather = 14f;
 
         var tex = new Texture2D(Width, Height, TextureFormat.RGBA32, false);
+        var pixels = new Color[Width * Height];
         for (int y = 0; y < Height; y++)
         for (int x = 0; x < Width; x++)
         {
@@ -590,9 +591,12 @@ public static class MeetingSpeakingIndicatorPatch
             float edgeGlow = Mathf.Pow(1f - Mathf.Clamp01(edge / Feather), 1.15f);
             float fill = 0.24f;
             float a = Mathf.Clamp01(fill + edgeGlow * 0.62f);
-            tex.SetPixel(x, y, new Color(1f, 1f, 1f, a));
+            // Unity SetPixels is row-major, bottom-to-top: index == x + y * Width (identical ordering
+            // to the previous per-pixel SetPixel(x, y) loop).
+            pixels[x + y * Width] = new Color(1f, 1f, 1f, a);
         }
 
+        tex.SetPixels(pixels);
         tex.Apply();
         _cardGlowSprite = Sprite.Create(
             tex,

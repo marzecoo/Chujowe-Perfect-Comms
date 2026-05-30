@@ -206,17 +206,30 @@ internal static partial class VoiceRoleMuteState
         InvalidateRoleStateCache();
     }
 
+    // Memoizes type lookups (hits AND misses) keyed by the loaded-assembly count. The meeting phase
+    // flip used to re-run 14 of these, each doing a full AppDomain scan on a miss (worst case in a
+    // non-TownOfUs lobby where every name misses) — a measurable main-thread spike on meeting open.
+    // A cached result is reused unless a new assembly has loaded since, which is exactly when a
+    // previously-missing TownOfUs type could become resolvable, so resolution semantics are unchanged.
+    private static readonly System.Collections.Generic.Dictionary<string, (Type? Type, int AssemblyCount)> _typeResolveCache = new();
+
     private static Type? ResolveType(string fullName)
     {
-        Type? type = AccessTools.TypeByName(fullName);
-        if (type != null) return type;
+        int assemblyCount = AppDomain.CurrentDomain.GetAssemblies().Length;
+        if (_typeResolveCache.TryGetValue(fullName, out var cached) && cached.AssemblyCount == assemblyCount)
+            return cached.Type;
 
-        foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+        Type? type = AccessTools.TypeByName(fullName);
+        if (type == null)
         {
-            type = asm.GetType(fullName, false);
-            if (type != null) break;
+            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                type = asm.GetType(fullName, false);
+                if (type != null) break;
+            }
         }
 
+        _typeResolveCache[fullName] = (type, assemblyCount);
         return type;
     }
 
