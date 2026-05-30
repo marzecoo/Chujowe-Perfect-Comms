@@ -100,23 +100,77 @@ internal static class VoiceHostAuthority
 
     public static int ResolveHostClientId(VoiceGameStateSnapshot? snapshot)
     {
+        // Prefer the live host id; the cached snapshot lags host migration by a refresh cycle,
+        // briefly rejecting the new host as "non-host". Fall back to snapshot if live unavailable.
+        var live = ResolveLiveHostClientId();
+        if (live >= 0)
+            return live;
+
         if (snapshot?.HostClientId >= 0)
             return snapshot.HostClientId;
 
+        return VoiceBackendCustomMessage.UnknownClientId;
+    }
+
+    // HostId member name varies across Among Us/IL2CPP rebuilds: try candidates, cache the hit, log
+    // once on total failure (otherwise every host snapshot is rejected as "unknown-sender"). Each
+    // candidate is probed as a FIELD as well as a property: HostId is a public field on the GameLibs
+    // InnerNetClient, so the previous property-only lookup never matched and always returned -1.
+    private static readonly string[] HostIdPropertyNames = { "HostId", "HostClientId", "hostId" };
+    private static string? _cachedHostIdPropertyName;
+    private static bool _hostIdReflectionFailureLogged;
+
+    internal static int ResolveLiveHostClientId()
+    {
         try
         {
             var client = AmongUsClient.Instance;
             if (client == null) return VoiceBackendCustomMessage.UnknownClientId;
 
-            var hostIdProperty = client.GetType().GetProperty("HostId");
-            if (hostIdProperty?.GetValue(client) is int hostId)
-                return hostId;
+            var type = client.GetType();
+            if (_cachedHostIdPropertyName != null
+                && TryReadHostIdMember(client, type, _cachedHostIdPropertyName, out int cachedHostId))
+                return cachedHostId;
+
+            foreach (var name in HostIdPropertyNames)
+            {
+                if (TryReadHostIdMember(client, type, name, out int hostId))
+                {
+                    _cachedHostIdPropertyName = name;
+                    return hostId;
+                }
+            }
+
+            if (!_hostIdReflectionFailureLogged)
+            {
+                _hostIdReflectionFailureLogged = true;
+                VoiceDiagnostics.Log("host.resolve.failed",
+                    $"reason=no-hostid-member type=\"{type.FullName}\"");
+            }
         }
         catch
         {
         }
 
         return VoiceBackendCustomMessage.UnknownClientId;
+    }
+
+    private static bool TryReadHostIdMember(object client, Type type, string name, out int hostId)
+    {
+        hostId = 0;
+        if (type.GetProperty(name)?.GetValue(client) is int propertyHostId)
+        {
+            hostId = propertyHostId;
+            return true;
+        }
+
+        if (type.GetField(name)?.GetValue(client) is int fieldHostId)
+        {
+            hostId = fieldHostId;
+            return true;
+        }
+
+        return false;
     }
 
     private static byte ResolveHostPlayerId(VoiceGameStateSnapshot? snapshot, int hostClientId)

@@ -68,6 +68,9 @@ public class VoiceChatRoom
     private VoiceTeamRadioChannel _lastRadioRpcChannel = VoiceTeamRadioChannel.None;
     private DateTime _lastRadioRpcSentUtc = DateTime.MinValue;
     private VoiceTransportBackend _activeBackend = VoiceTransportBackend.BetterCrewLink;
+    // Set by missing-peer recovery to make EnsureVoiceBackend fully rebuild the active backend, used
+    // for Interstellar whose VCRoom.Rejoin (RequestReload) cannot repopulate cleared peers.
+    private bool _forceBackendRebuild;
     private string? _activeEndpoint;
     private string? _activeRoomCode;
     private string? _activeRegion;
@@ -557,7 +560,11 @@ public class VoiceChatRoom
         if (snapshot == null || !TryGetVoiceRoomIdentity(snapshot, endpoint.Backend, out var roomCode, out var region))
             return;
 
-        if (_voiceBackend != null
+        bool forceRebuild = _forceBackendRebuild;
+        _forceBackendRebuild = false;
+
+        if (!forceRebuild
+            && _voiceBackend != null
             && _activeBackend == endpoint.Backend
             && string.Equals(_activeEndpoint, endpoint.ServerUrl, StringComparison.Ordinal)
             && string.Equals(_activeRoomCode, roomCode, StringComparison.Ordinal)
@@ -638,7 +645,19 @@ public class VoiceChatRoom
             $"backend={_activeBackend} reason=missing-peer remotePlayers={remotePlayers} peers={mappedPeers} rawPeers={_voiceBackend.PeerCount} " +
             $"room={_activeRoomCode ?? "unknown"} region={_activeRegion ?? "unknown"} " +
             $"liveClients=[{DescribeExpectedRemotePlayers(snapshot)}]");
-        _voiceBackend.Rejoin();
+        ClearVoiceUiForLifecycleReset("missing peer recovery");
+        if (_activeBackend == VoiceTransportBackend.Interstellar)
+        {
+            // Interstellar's VCRoom.Rejoin only sends RequestReload and never clears the library's
+            // audioInstances, so onConnectClient never re-fires and the cleared peers are never
+            // repopulated (every remote peer stays silent permanently). Force a full backend rebuild
+            // instead, which re-establishes the connection and recreates each peer via onConnectClient.
+            _forceBackendRebuild = true;
+        }
+        else
+        {
+            _voiceBackend.Rejoin();
+        }
         ResetSettingsSyncState();
         StartBootstrapWindow("missing voice backend peer");
         ForceUpdateLocalProfile();
