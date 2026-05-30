@@ -16,9 +16,8 @@ namespace VoiceChatPlugin.VoiceChat;
 internal sealed class InterstellarVoiceBackend : IVoiceBackend
 {
     private readonly VCRoom _room;
-    // Concurrent: the Interstellar VCRoom invokes OnConnectClient/OnUpdateProfile/OnDisconnect
-    // on background relay/socket threads while the Unity main thread reads/iterates here.
-    // ConcurrentDictionary enumeration never throws on concurrent mutation (unlike Dictionary).
+    // Concurrent: VCRoom callbacks fire on relay/socket threads while the Unity thread iterates;
+    // ConcurrentDictionary enumeration never throws on concurrent mutation (Dictionary would).
     private readonly ConcurrentDictionary<int, Peer> _peers = new();
     private readonly StereoRouter _imager;
     private readonly VolumeRouter _normalVolume;
@@ -99,10 +98,7 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
     {
         get
         {
-            // Enumerate the concurrent dictionary directly into one materialized list rather than
-            // _peers.Values.Where().Select() (which allocates a Values snapshot plus two LINQ
-            // iterators every overlay rebuild). ConcurrentDictionary enumeration is read-safe, and
-            // a freshly-built list is returned so there is no aliasing with the reused overlay buffer.
+            // Build a fresh list directly to avoid the Values snapshot + LINQ allocations per rebuild.
             var states = new List<VoiceRemoteOverlayState>(_peers.Count);
             foreach (var kv in _peers)
             {
@@ -773,7 +769,7 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
         {
             if (peer.PlayerId == playerId)
             {
-                peer.RadioChannel = channel;
+                peer.ApplyRadioChannel(channel);
                 VoiceDiagnostics.Log("interstellar.radio.rx", $"client={peer.ClientId} player={playerId} active={VoiceTeamRadioChannels.IsActive(channel)} channel={channel}");
             }
         }
@@ -960,10 +956,8 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
             && payload[2] == RadioStateMagic[2]
             && payload[3] == RadioStateMagic[3])
         {
-            // The Interstellar message handler does not expose the sending client, so this
-            // custom-message copy cannot be authenticated against a sender. Ignore it and
-            // rely on the authenticated Hazel radio-state RPC (VoiceRadioStateRpc), which
-            // is sent in parallel and binds to the network sender.
+            // No sender identity on this path, so it can't be authenticated; rely on the
+            // parallel authenticated Hazel RPC (VoiceRadioStateRpc) instead.
             return;
         }
 
@@ -1090,6 +1084,8 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
         public string PlayerName { get; private set; } = "Unknown";
         public float WallCoefficient { get; private set; } = 1f;
         private VoiceTeamRadioChannel _radioChannel = VoiceTeamRadioChannel.None;
+        // Owner of the cached _radioChannel: transient unmap keeps it, remap to another player drops it.
+        private byte _radioChannelOwner = byte.MaxValue;
         public bool RadioActive
         {
             get => VoiceTeamRadioChannels.IsActive(_radioChannel);
@@ -1102,6 +1098,13 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
         {
             get => _radioChannel;
             set => _radioChannel = VoiceTeamRadioChannels.Normalize(value);
+        }
+
+        // Apply a radio channel and record its owning PlayerId (see _radioChannelOwner).
+        public void ApplyRadioChannel(VoiceTeamRadioChannel channel)
+        {
+            _radioChannel = VoiceTeamRadioChannels.Normalize(channel);
+            _radioChannelOwner = PlayerId;
         }
         private VoiceProximityResult _currentRoute = VoiceProximityResult.Muted(VoiceProximityReason.Unmapped);
         private float _levelPeakSinceStats;
@@ -1146,6 +1149,15 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
             if (PlayerId == playerId && PlayerName == normalizedName)
                 return false;
 
+            // Drop cached radio channel / wall coef only on a real remap to a different player;
+            // a transient unmap-and-remap to the same player keeps it (avoids radio dropout).
+            if (playerId != _radioChannelOwner)
+            {
+                _radioChannel = VoiceTeamRadioChannel.None;
+                _radioChannelOwner = byte.MaxValue;
+                WallCoefficient = 1f;
+            }
+
             PlayerId = playerId;
             PlayerName = normalizedName;
             return true;
@@ -1153,12 +1165,8 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
 
         public void ResetMappingNoMute()
         {
-            // Clear per-mapping state too, so a slot remapped to another player mid-game
-            // doesn't inherit the previous player's radio channel or wall coefficient
-            // (mirrors BetterCrewLinkVoiceBackend.PeerConnection.ResetMappingNoMute()).
+            // Clear only the mapping; radio/wall are dropped in UpdateProfile on a genuine remap.
             PlayerId = byte.MaxValue;
-            _radioChannel = VoiceTeamRadioChannel.None;
-            WallCoefficient = 1f;
         }
 
         public void SetVolume(float volume)

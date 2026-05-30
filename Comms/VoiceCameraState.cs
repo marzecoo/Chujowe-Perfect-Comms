@@ -46,7 +46,9 @@ internal static class VoiceCameraState
     {
         _activeCameraMinigame = null;
         _activeCameraInstanceId = 0;
-        SurveillanceCameraStatePatches.RestoreVoiceOverlayCameraMasks();
+        // Only un-mask when no camera view is open, else a mid-match reset bleeds the overlay into the feed.
+        if (!IsUsableCameraMinigame(Minigame.Instance))
+            SurveillanceCameraStatePatches.RestoreVoiceOverlayCameraMasks();
     }
 
     public static bool TryGetActiveMinigame(out Minigame minigame)

@@ -51,9 +51,8 @@ internal static partial class VoiceRoleMuteState
         }
         catch
         {
-            // AllPlayerControls can be invalidated by a scene transition mid-enumeration. Keep the
-            // partial/empty cache and retry on the next refresh rather than throwing into the
-            // unguarded per-frame UpdateHud path.
+            // AllPlayerControls can be invalidated mid-enumeration during scene transitions. Keep the
+            // partial/empty cache and retry next refresh instead of throwing into the UpdateHud path.
         }
     }
 
@@ -206,11 +205,8 @@ internal static partial class VoiceRoleMuteState
         InvalidateRoleStateCache();
     }
 
-    // Memoizes type lookups (hits AND misses) keyed by the loaded-assembly count. The meeting phase
-    // flip used to re-run 14 of these, each doing a full AppDomain scan on a miss (worst case in a
-    // non-TownOfUs lobby where every name misses) — a measurable main-thread spike on meeting open.
-    // A cached result is reused unless a new assembly has loaded since, which is exactly when a
-    // previously-missing TownOfUs type could become resolvable, so resolution semantics are unchanged.
+    // Memoizes type lookups (hits and misses) keyed by assembly count to avoid repeated AppDomain
+    // scans; a new assembly load invalidates the entry, the only time a miss could become resolvable.
     private static readonly System.Collections.Generic.Dictionary<string, (Type? Type, int AssemblyCount)> _typeResolveCache = new();
 
     private static Type? ResolveType(string fullName)

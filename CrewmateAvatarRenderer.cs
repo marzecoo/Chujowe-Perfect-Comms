@@ -31,9 +31,7 @@ internal static class CrewmateAvatarRenderer
     private static int templateWidth;
     private static int templateHeight;
     private static Sprite? concealedBaseSprite;
-    // Neutral grey used to mirror the game hiding a player's identity (camouflage / Mushroom
-    // Mixup / swoop). When concealed the bar shows a grey body, no cosmetics, and no name so
-    // the overlay never reveals the real color/cosmetics/name of a concealed speaker.
+    // Neutral grey for concealed players: grey body, no cosmetics, no name.
     private static readonly Color32 ConcealedColor = new(0x7f, 0x7f, 0x7f, 0xff);
     private static readonly Color32 ConcealedShadowColor = new(0x4a, 0x4a, 0x4a, 0xff);
 
@@ -66,12 +64,10 @@ internal static class CrewmateAvatarRenderer
         iconGO = null;
         if (pc?.Data == null || parent == null) return false;
 
-        // Best effort only. Live cosmetic pose capture is allowed to fail during
-        // lobby/game transitions, movement, intro, or late cosmetic loading.
+        // Best effort: live pose capture may fail during transitions/movement/intro.
         TrackIdlePose(pc);
 
-        // Concealed (camouflaged/mixed-up/swooped) players render as a neutral grey body with no
-        // rainbow animation and no cosmetic pose, mirroring how the game hides their identity.
+        // Concealed players render as a neutral grey body with no rainbow/cosmetics.
         bool concealed = IsConcealed(pc);
         int colorId = GetPlayerColorId(pc);
         bool isRainbow = !concealed && IsRainbowColorId(colorId);
@@ -106,8 +102,7 @@ internal static class CrewmateAvatarRenderer
            && snapshot.Layers.Count > 0
            && snapshot.Matches(pc);
 
-    // Add cached cosmetic layers onto an already-created (body-only) icon in place,
-    // avoiding a destroy/recreate of the whole icon GameObject when cosmetics finish loading.
+    // Add cached cosmetic layers onto a body-only icon in place, avoiding destroy/recreate.
     internal static bool TryUpgradeWithCachedPose(GameObject? iconRoot, byte playerId, PlayerControl? pc)
     {
         if (iconRoot == null || pc?.Data == null) return false;
@@ -134,23 +129,17 @@ internal static class CrewmateAvatarRenderer
     public static bool IsCustomIcon(GameObject go)
         => go != null && go.name.StartsWith("VC_SpriteIcon_");
 
-    // Shared palette color for speaking overlays (bar + meeting), using the same
-    // body-color source so both stay in parity.
+    // Shared palette color for bar + meeting overlays, kept in parity with the body.
     internal static Color GetPaletteColor(PlayerControl? pc)
     {
         if (pc?.Data == null) return new Color(0.18f, 0.80f, 0.44f, 1f); // voice fallback green
         if (IsConcealed(pc)) return (Color)ConcealedColor;
-        // Out-of-range / modded color ids fall back to the SAME palette index (red) that the body
-        // sprite uses via ClampColorId, so the ring/meeting glow never disagrees with the body
-        // (previously the body recolored to red while the ring/card glowed white).
+        // Clamp via the same index the body uses so ring/glow never disagrees with the body.
         return (Color)Palette.PlayerColors[ClampColorId(GetPlayerColorId(pc))];
     }
 
-    // A player is "concealed" when the game hides their identity so others cannot tell who is
-    // speaking. The numeric CurrentOutfitType space is shared between vanilla PlayerOutfitType and
-    // Town of Us' TownOfUsAppearances: 3 = MushroomMixUp, 4 = Swooper, 6 = Camouflage — all grey
-    // every body. Disguises (Shapeshift=1, Mimic=5, Morph=7) intentionally show the disguised
-    // appearance and are NOT treated as concealed.
+    // CurrentOutfitType (vanilla + Town of Us share the space): 3=MushroomMixUp, 4=Swooper,
+    // 6=Camouflage grey every body. Disguises (1/5/7) intentionally show through, not concealed.
     internal static bool IsConcealed(PlayerControl? pc)
     {
         if (pc?.Data == null) return false;
@@ -581,9 +570,8 @@ internal static class CrewmateAvatarRenderer
         try { bodyColor = pc.cosmetics.bodyMatProperties.ColorId; }
         catch { try { return GetDisplayOutfit(pc).ColorId; } catch { return 0; } }
 
-        // bodyMatProperties briefly reads 0 (red) before cosmetics initialize during
-        // lobby/intro/transition. If the authoritative networked outfit reports a
-        // different, valid color, trust it so the fallback body isn't transiently red.
+        // bodyMatProperties briefly reads 0 (red) before cosmetics init; trust the
+        // networked outfit color when it reports a valid non-zero id instead.
         if (bodyColor == 0)
         {
             try

@@ -292,23 +292,25 @@ internal class MonoToStereoSampleProvider : ISampleProvider
 
         int read = _src.Read(_mono, 0, monoCount);
 
-        // Interleave: L = R = mono sample
         for (int i = 0; i < read; i++)
         {
             buffer[offset + i * 2]     = _mono[i];
             buffer[offset + i * 2 + 1] = _mono[i];
         }
 
-        // Zero any unfilled stereo pairs
         if (read < monoCount)
             Array.Clear(buffer, offset + read * 2, (monoCount - read) * 2);
 
-        // Harmonize odd-count handling with BclStereoPlaybackProvider: a final
-        // unpaired element (odd requested count) has no stereo partner — zero it.
+        // Odd count: zero the unpaired tail; report full count on a filled source so NAudio sees no short read.
+        int produced = read * 2;
         if ((count & 1) == 1)
+        {
             buffer[offset + count - 1] = 0f;
+            if (read == monoCount)
+                produced = count;
+        }
 
-        return read * 2;
+        return produced;
     }
 }
 
@@ -387,7 +389,7 @@ internal class ReverbSampleProvider : ISampleProvider
     {
         _src   = src;
         int n  = (int)(src.WaveFormat.SampleRate * (delayMs / 1000f)) * src.WaveFormat.Channels;
-        _delay = new float[Math.Max(1, n)]; // guard a zero-length delay line (modulo-by-zero / OOB on _delay[_pos])
+        _delay = new float[Math.Max(1, n)]; // avoid zero-length line (modulo-by-zero on _delay[_pos])
         Decay     = decay;
         WetDryMix = wetDry;
     }

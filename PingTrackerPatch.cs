@@ -302,8 +302,7 @@ public static class PingTrackerPatch
         _barRoot.transform.localPosition = new Vector3(pos.x, pos.y, -100f);
         ApplySortingGroup(_barRoot, VCSorting.Ring);
         VCOverlayCamera.Sync(); // must follow the main camera every frame
-        // The per-slot re-stamp allocates via GetComponentsInChildren; only run it when
-        // the slot set or an icon actually changed, not every frame.
+        // Re-stamp allocates via GetComponentsInChildren; only run on actual change.
         if (_sortingDirty)
         {
             ApplySpeakingBarSorting();
@@ -670,8 +669,7 @@ public static class PingTrackerPatch
             outfit.PlayerName);
     }
 
-    // Rebuilt once per Postfix frame; FindPlayer then resolves O(1) instead of scanning
-    // the IL2CPP-backed AllPlayerControls collection many times per speaker per frame.
+    // Built once per frame so FindPlayer is O(1) instead of re-scanning the IL2CPP list per speaker.
     private static void RebuildPlayerLookup()
     {
         _playerLookup.Clear();
@@ -691,8 +689,7 @@ public static class PingTrackerPatch
     private static PlayerControl? FindPlayer(byte id)
         => _playerLookup.TryGetValue(id, out var pc) && pc != null ? pc : null;
 
-    // Shared with the meeting overlay so the bar ring, meeting glow, and synthetic body stay in
-    // parity — including the concealed-grey path and the out-of-range/modded color fallback.
+    // Shared with the meeting overlay to keep ring/glow/body color in parity (concealed-grey and fallback paths).
     private static Color GetPaletteColor(PlayerControl? pc)
         => CrewmateAvatarRenderer.GetPaletteColor(pc);
 
@@ -702,9 +699,8 @@ public static class PingTrackerPatch
         try { bodyColor = pc.cosmetics.bodyMatProperties.ColorId; }
         catch { try { return GetDisplayOutfit(pc).ColorId; } catch { return 0; } }
 
-        // bodyMatProperties briefly reads 0 (red) before cosmetics initialize during
-        // lobby/intro/transition. If the authoritative networked outfit reports a
-        // different, valid color, trust it so the fallback body isn't transiently red.
+        // bodyMatProperties reads 0 (red) before cosmetics init; prefer the networked
+        // outfit color when valid so the fallback body isn't transiently red.
         if (bodyColor == 0)
         {
             try
@@ -744,8 +740,7 @@ public static class PingTrackerPatch
     private static string GetDisplayName(PlayerControl? player)
     {
         if (player?.Data == null) return "?";
-        // Hide the real name of a concealed (camouflaged/mixed-up/swooped) speaker, matching how
-        // the game hides floating names so the overlay can't be used to identify them.
+        // Hide name of a concealed (camo/mixed-up/swooped) speaker so the overlay can't identify them.
         if (CrewmateAvatarRenderer.IsConcealed(player)) return string.Empty;
         try
         {

@@ -573,9 +573,8 @@ internal static partial class VoiceRoleMuteState
         }
         catch
         {
-            // AllPlayerControls can be invalidated by a scene transition mid-enumeration. Fail
-            // closed (no jailor unmute available this frame) rather than let the throw escape into
-            // the unguarded UpdateHud path and strand the local mute state.
+            // AllPlayerControls can be invalidated by a mid-enumeration scene transition; fail closed
+            // (no jailor unmute available this frame) so the throw doesn't escape the UpdateHud path.
         }
 
         return false;

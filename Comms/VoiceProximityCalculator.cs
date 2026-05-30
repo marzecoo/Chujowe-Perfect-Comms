@@ -12,8 +12,7 @@ internal static class VoiceProximityCalculator
 
     internal static Func<bool>? LocalListenerBlindedOrFlashedProvider { get; set; }
 
-    // Reset transient per-process spatial state on game/lobby lifecycle transitions so a
-    // stale light radius from a prior game can't shrink hearing range in a new one.
+    // Clear stale light radius on lifecycle transitions so a prior game can't shrink new-game hearing range.
     internal static void ResetSightState() => _lastUnimpairedLocalLightRadius = 0f;
 
     public static VoiceProximityResult CalculateLobby(
@@ -79,8 +78,7 @@ internal static class VoiceProximityCalculator
                 return new(0f, 0f, 1f, 0f, VoiceAudioFilterMode.Radio,
                     true, VoiceProximityReason.TeamRadio, 1f);
 
-            // Living non-teammates are hard-muted from the radio channel; dead listeners
-            // fall through so ghosts still hear a living radio user normally.
+            // Living non-teammates hard-muted; dead listeners fall through so ghosts still hear them.
             if (!localDead)
                 return VoiceProximityResult.Muted(VoiceProximityReason.TeamRadioMuted);
         }
@@ -97,10 +95,8 @@ internal static class VoiceProximityCalculator
             true, VoiceProximityReason.MeetingLiving, 1f);
     }
 
-    // Team radio routing only applies during meetings when the host explicitly enables it.
-    // When disabled (default), CalculateMeeting ignores targetRadioActive entirely so a
-    // radio-holding teammate is heard via normal meeting audibility instead of being
-    // hard-muted to all non-teammates (and impostors get no private meeting channel).
+    // Meeting radio routing requires the host opt-in; when off, radio is ignored and teammates
+    // are heard via normal meeting audibility (no private meeting channel).
 
     public static VoiceProximityResult CalculateTaskPhase(
         VoicePlayerSnapshot? localPlayer,
@@ -174,8 +170,7 @@ internal static class VoiceProximityCalculator
                 return new(0f, 0f, 1f, 0f, VoiceAudioFilterMode.Radio,
                     true, VoiceProximityReason.TeamRadio, previousWallCoefficient);
 
-            // Living non-teammates are hard-muted from the radio channel; dead listeners
-            // fall through so ghosts still hear a living radio user via proximity below.
+            // Living non-teammates hard-muted; dead listeners fall through to proximity below.
             if (!localDead)
                 return VoiceProximityResult.Muted(VoiceProximityReason.TeamRadioMuted, previousWallCoefficient);
         }
@@ -522,8 +517,7 @@ internal static class VoiceProximityCalculator
         if (!local.IsLover || !target.IsLover)
             return false;
 
-        // Match only on explicit partner ids. byte.MaxValue is the "partner unresolved"
-        // sentinel; treating it as a wildcard let unrelated lover pairs hear each other.
+        // Explicit partner ids only; byte.MaxValue (unresolved sentinel) as wildcard let unrelated pairs match.
         return local.LoverPartnerId == target.PlayerId ||
                target.LoverPartnerId == local.PlayerId;
     }

@@ -224,7 +224,7 @@ public static class VoiceRoomControlCodec
             LegacyVersion11 => LegacyFixedSettingsBytesV11,
             LegacyVersion12 => LegacyFixedSettingsBytesV12,
             Version => FixedSettingsBytes,
-            _ => -1, // fail closed: reject unknown versions instead of guessing the current layout
+            _ => -1, // fail closed: reject unknown versions
         };
 
     private static byte ToByte(bool value) => value ? (byte)1 : (byte)0;

@@ -520,17 +520,14 @@ public class VoiceChatLocalSettings : LocalSettingsTab
     }
 }
 
-// NOT an attribute-discovered [HarmonyPatch]: its target (MiraAPI's LocalEnumSetting display
-// method) is resolved by reflection and may be absent on a mismatched MiraAPI version.
-// Auto-discovery would make HarmonyX throw "Undefined target method" when the resolver returns
-// null (the same shape as the old FungleCameraOnDestroyPatch bug). Instead it is applied
-// manually from Load() only when the target resolves, and cleanly skipped otherwise.
+// No [HarmonyPatch]: target is resolved by reflection and may be absent on a mismatched MiraAPI
+// version, which would make auto-discovery throw "Undefined target method". Applied manually from Load().
 public static class DeviceLabelPatch
 {
     internal static void TryApply(Harmony harmony)
     {
         var target = TargetMethod();
-        if (target == null) return; // TargetMethod already logged why it couldn't resolve
+        if (target == null) return; // TargetMethod already logged the reason
 
         try
         {

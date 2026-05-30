@@ -30,8 +30,8 @@ internal sealed class VoiceOverlayState
     private static int _cachedFrame = -1;
     private static VoiceChatRoom? _cachedRoom;
     private static VoiceOverlayState _cachedState = Empty;
-    // Reused once per frame: Build only runs on a cache miss (frame/room change), and no
-    // caller retains RemotePlayers across frames, so clearing-and-refilling is safe.
+    // Scratch reused per frame (Build runs only on cache miss); ToArray copies out so the
+    // cached state never aliases next frame's refill.
     private static readonly List<VoiceRemoteOverlayState> _remoteBuffer = new(16);
 
     private VoiceOverlayState(VoiceLocalOverlayState local, IReadOnlyList<VoiceRemoteOverlayState> remotePlayers)
@@ -68,9 +68,8 @@ internal sealed class VoiceOverlayState
         _remoteBuffer.Clear();
         foreach (var remote in room.InterstellarRemoteOverlayStates)
         {
-            // Only suppress remotes we can positively classify as not-live. When the
-            // snapshot is briefly null (e.g. one tick after a Rejoin/transport switch),
-            // keep showing speakers instead of dropping all of them for a frame.
+            // Only suppress positively not-live remotes; a briefly-null snapshot (one tick after
+            // Rejoin/transport switch) keeps speakers rather than dropping all for a frame.
             if (snapshot != null && !IsLiveRemoteSpeaker(remote.PlayerId, snapshot))
                 continue;
             _remoteBuffer.Add(remote);
@@ -84,16 +83,20 @@ internal sealed class VoiceOverlayState
             room.UsingMicrophone,
             room.UsingSpeaker);
 
-        return new VoiceOverlayState(local, _remoteBuffer);
+        return new VoiceOverlayState(local, _remoteBuffer.ToArray());
     }
 
     private static bool IsLiveRemoteSpeaker(byte playerId, VoiceGameStateSnapshot? snapshot)
     {
-        if (snapshot == null || playerId == byte.MaxValue)
+        if (playerId == byte.MaxValue)
             return false;
 
+        if (snapshot == null)
+            return true;
+
+        // Absent from a partial snapshot: keep showing; only suppress players it classifies not-live.
         if (!snapshot.TryGetPlayer(playerId, out var player))
-            return false;
+            return true;
 
         return !player.IsLocal
                && !player.Disconnected

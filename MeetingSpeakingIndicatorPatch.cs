@@ -19,9 +19,7 @@ public static class MeetingSpeakingIndicatorPatch
     private static readonly Dictionary<byte, float> _speakingLevels = new();
     private static readonly Dictionary<byte, SmoothVisualState> _visualStates = new();
     private static readonly Dictionary<byte, Color> _playerColors = new();
-    // Original vanilla HighlightedFX state captured before we tint it for the speaking overlay,
-    // so the vote-card selection outline (color/sorting/mask/enabled) is restored intact when the
-    // player stops speaking instead of being force-disabled and left re-sorted onto the UI layer.
+    // Vanilla HighlightedFX state captured before tinting, so the vote-card selection outline is restored intact.
     private static readonly Dictionary<byte, BuiltInHighlightSnapshot> _highlightSnapshots = new();
     private static Sprite? _cardGlowSprite;
     private static DateTime _lastUpdateLogUtc;
@@ -70,7 +68,7 @@ public static class MeetingSpeakingIndicatorPatch
     internal static void ClearAllIndicators()
     {
         _speakingLevels.Clear();
-        _playerColors.Clear(); // drop cached colors so they re-resolve after lifecycle resets
+        _playerColors.Clear(); // re-resolve colors after lifecycle resets
         DisableAll();
     }
 
@@ -272,8 +270,8 @@ public static class MeetingSpeakingIndicatorPatch
         var highlight = state.HighlightedFX;
         if (highlight == null) return;
 
-        // Remember the untouched vanilla state once, before the first tint, so it can be restored.
-        if (!_highlightSnapshots.ContainsKey(state.TargetPlayerId))
+        // Recapture vanilla state when renderer isn't our tint (sortingOrder != Ring) so a mid-speak selection survives Restore.
+        if (highlight.sortingOrder != VCSorting.Ring || !_highlightSnapshots.ContainsKey(state.TargetPlayerId))
             _highlightSnapshots[state.TargetPlayerId] = new BuiltInHighlightSnapshot(highlight);
 
         var highlightColor = color;
@@ -293,8 +291,7 @@ public static class MeetingSpeakingIndicatorPatch
         byte id = state.TargetPlayerId;
         if (_highlightSnapshots.TryGetValue(id, out var snapshot))
         {
-            // Hand the renderer back to the game exactly as we found it (color, sorting layer/order,
-            // mask interaction, enabled) so a live vote-target selection outline is not clobbered.
+            // Restore vanilla state so a live vote-target selection outline isn't clobbered.
             snapshot.Restore(highlight);
             _highlightSnapshots.Remove(id);
         }
@@ -558,8 +555,7 @@ public static class MeetingSpeakingIndicatorPatch
     [HarmonyPatch(typeof(MeetingHud), nameof(MeetingHud.OnDestroy))]
     private static class DestroyPatch
     {
-        // Use a finalizer (not a postfix) so meeting state is cleared even if vanilla OnDestroy
-        // throws — otherwise stale glows and highlight snapshots could leak into the next meeting.
+        // Finalizer (not postfix) so state clears even if vanilla OnDestroy throws, avoiding leaks into the next meeting.
         [HarmonyFinalizer]
         private static void Finalizer() => ClearDestroyedMeetingState();
     }
@@ -591,8 +587,7 @@ public static class MeetingSpeakingIndicatorPatch
             float edgeGlow = Mathf.Pow(1f - Mathf.Clamp01(edge / Feather), 1.15f);
             float fill = 0.24f;
             float a = Mathf.Clamp01(fill + edgeGlow * 0.62f);
-            // Unity SetPixels is row-major, bottom-to-top: index == x + y * Width (identical ordering
-            // to the previous per-pixel SetPixel(x, y) loop).
+            // SetPixels is row-major bottom-to-top: index == x + y * Width.
             pixels[x + y * Width] = new Color(1f, 1f, 1f, a);
         }
 
@@ -622,8 +617,7 @@ public static class MeetingSpeakingIndicatorPatch
                 if (pc == null || pc.Data == null) continue;
                 if (pc.PlayerId != playerId) continue;
 
-                // Share the bar's color source (live body color w/ transient-red guard)
-                // so the meeting overlay stays in parity with the speaking bar.
+                // Same color source as the speaking bar (live body color w/ transient-red guard) for parity.
                 var color = CrewmateAvatarRenderer.GetPaletteColor(pc);
                 _playerColors[playerId] = color; // cache only a resolved color
                 return color;
@@ -644,8 +638,7 @@ public static class MeetingSpeakingIndicatorPatch
         public float Visibility;
     }
 
-    // Snapshot of a vanilla PlayerVoteArea.HighlightedFX renderer's visual state so the speaking
-    // overlay can tint it while a player talks and then restore it byte-for-byte afterwards.
+    // Vanilla HighlightedFX visual state so the overlay can tint then restore it exactly.
     private readonly struct BuiltInHighlightSnapshot
     {
         public readonly Color Color;

@@ -47,8 +47,7 @@ internal static class VoiceJailVoiceRpc
                 var jailedPlayerId = reader.ReadByte();
                 var allowed = reader.ReadBoolean();
 
-                // Bind to the network sender: only the jailor themselves may set jail-voice
-                // (ApplyRemoteJailVoice additionally validates jailorId is the real jailor).
+                // Sender netId is spoofable on a relay; ApplyRemoteJailVoice does the authoritative jailor check.
                 if (__instance == null || __instance.PlayerId != jailorId)
                 {
                     VoiceDiagnostics.Log("jailvoice.rpc.reject",

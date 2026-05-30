@@ -10,9 +10,7 @@ internal static class VoiceRoomSettingsRpc
     private const byte SnapshotKind = 1;
     private const byte RequestKind = 2;
 
-    // Defensive cap on the host-selected backend URL so a malformed/oversized RPC cannot inflate
-    // a client's settings string (mirrors VoiceRoomControlCodec.MaxServerUrlBytes). Real ws/wss
-    // endpoints are far shorter than this.
+    // Cap untrusted host backend URL (mirrors VoiceRoomControlCodec.MaxServerUrlBytes).
     private const int MaxBackendServerUrlChars = 512;
 
     public static void SendSnapshot(VoiceRoomSettingsSnapshot settings)
@@ -218,8 +216,7 @@ internal static class VoiceRoomSettingsRpc
                     {
                         VoiceDiagnostics.Log("settings.snapshot.rejected",
                             $"{sender.ToDiagnosticFields()} reason={reason} hostClient={hostClientId} hostPlayer={hostPlayerId}");
-                        // Recover from a stale-host-id rejection window (e.g. just after a host
-                        // migration): ask the tick loop to re-request a fresh snapshot.
+                        // Stale host id (e.g. post-migration): re-request a fresh snapshot.
                         VoiceChatRoom.NoteHostSettingsSnapshotRejected();
                         return;
                     }

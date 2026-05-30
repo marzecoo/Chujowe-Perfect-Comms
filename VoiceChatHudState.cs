@@ -412,10 +412,8 @@ public static class VoiceChatHudState
         && !TryGetLocalTransmitBlockReason(out _)
         && !TeamRadioBlockedByMeetingPolicy();
 
-    // Team radio is disabled during meetings/exile unless the host enabled "Team Radio -
-    // Usable in Meetings". Gating both the input (CanUseTeamRadioInput) and the active-mode
-    // check here means the local player can never enter radio mode mid-meeting when the host
-    // forbids it, so they are never silently hard-muted to non-teammates during discussion.
+    // Gating both input and active-mode prevents entering radio mid-meeting when host forbids it,
+    // avoiding a silent hard-mute to non-teammates during discussion.
     private static bool TeamRadioBlockedByMeetingPolicy()
         => !VoiceRoomSettingsState.Current.TeamRadioInMeetings
            && VoiceSceneState.IsMeetingVoicePhase(VoiceSceneState.ResolvePhase());

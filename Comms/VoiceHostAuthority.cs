@@ -100,10 +100,8 @@ internal static class VoiceHostAuthority
 
     public static int ResolveHostClientId(VoiceGameStateSnapshot? snapshot)
     {
-        // Prefer the LIVE host id. The cached snapshot.HostClientId can lag a host migration by
-        // up to one snapshot-refresh cycle, which would briefly cause the new host's settings to
-        // be rejected as "non-host". Fall back to the cached snapshot only when the live value is
-        // unavailable (e.g. AmongUsClient not ready yet during a scene transition).
+        // Prefer the live host id; the cached snapshot lags host migration by a refresh cycle,
+        // briefly rejecting the new host as "non-host". Fall back to snapshot if live unavailable.
         var live = ResolveLiveHostClientId();
         if (live >= 0)
             return live;
@@ -114,10 +112,8 @@ internal static class VoiceHostAuthority
         return VoiceBackendCustomMessage.UnknownClientId;
     }
 
-    // Reflection is intentional: the HostId member's name/accessibility has varied across
-    // Among Us / IL2CPP rebuilds. Try a list of candidate names, cache the one that works, and
-    // log once if none resolve, so a future rename is diagnosable instead of silently disabling
-    // host-settings sync (which would otherwise reject every host snapshot as "unknown-sender").
+    // HostId member name varies across Among Us/IL2CPP rebuilds: try candidates, cache the hit,
+    // log once on total failure (otherwise every host snapshot is rejected as "unknown-sender").
     private static readonly string[] HostIdPropertyNames = { "HostId", "HostClientId", "hostId" };
     private static string? _cachedHostIdPropertyName;
     private static bool _hostIdReflectionFailureLogged;

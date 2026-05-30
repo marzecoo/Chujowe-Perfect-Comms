@@ -409,8 +409,7 @@ public class LevelMeterRouter : AbstractAudioNodeProvider<LevelMeterRouter.Prope
         public int Read(float[] buffer, int offset, int count)
         {
             int r = _src.Read(buffer, offset, count);
-            // Decay is per-second; convert element count to per-channel frame count so
-            // stereo branches don't decay twice as fast as mono ones.
+            // Per-second decay: use per-channel frame count so stereo doesn't decay twice as fast.
             int channels = WaveFormat.Channels > 0 ? WaveFormat.Channels : 1;
             Level -= Decay * ((float)count / channels / AudioHelpers.ClockRate);
             if (Level < 0f) Level = 0f;

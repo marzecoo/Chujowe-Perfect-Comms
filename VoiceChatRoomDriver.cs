@@ -139,7 +139,7 @@ internal static class VoiceChatRoomDriver
         bool inEndGame = VoiceSceneState.IsEndGameActive;
         if (inEndGame && !_wasInEndGame)
         {
-            VoiceChatRoom.ClearVoiceUiForLifecycleReset("end game transition");
+            // Clear UI before Rejoin so teardown runs once.
             VoiceChatRoom.Current.Rejoin();
             VoiceChatRoom.Current.ForceUpdateLocalProfile();
             _pendingRemap = false;

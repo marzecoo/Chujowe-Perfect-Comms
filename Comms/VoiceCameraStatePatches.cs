@@ -11,14 +11,17 @@ namespace VoiceChatPlugin.VoiceChat;
 [HarmonyPatch(typeof(SurveillanceMinigame))]
 internal static class SurveillanceCameraStatePatches
 {
-    private static bool _reportedCullingFailure;
+    private const float DeepScanIntervalSeconds = 1f;
+    private const float CullingFailureLogThrottleSeconds = 5f;
+    private static float _lastDeepScanTime = float.NegativeInfinity;
+    private static float _lastCullingFailureLogTime = float.NegativeInfinity;
     private static readonly Dictionary<int, CameraMaskSnapshot> _changedCameraMasks = new();
 
     [HarmonyPostfix, HarmonyPatch(nameof(SurveillanceMinigame.Begin))]
     private static void Begin_Postfix(SurveillanceMinigame __instance)
     {
         VoiceCameraState.Open(__instance);
-        ExcludeVoiceOverlayFromSurveillanceCameras(__instance);
+        ExcludeVoiceOverlayFromSurveillanceCameras(__instance, forceDeepScan: true);
     }
 
     [HarmonyPostfix, HarmonyPatch(nameof(SurveillanceMinigame.Update))]
@@ -42,25 +45,35 @@ internal static class SurveillanceCameraStatePatches
         RestoreVoiceOverlayCameraMasks();
     }
 
-    internal static void ExcludeVoiceOverlayFromSurveillanceCameras(object? minigame)
+    internal static void ExcludeVoiceOverlayFromSurveillanceCameras(object? minigame, bool forceDeepScan = false)
     {
+        // Cheap path every frame, isolated so the reflection walk below can't suppress it.
         try
         {
-            ApplyToObject(minigame, 0);
-            ApplyToObject(ShipStatus.Instance, 0);
-
             foreach (var camera in Camera.allCameras)
             {
                 if (camera == null || camera.targetTexture == null) continue;
                 ExcludeVoiceOverlay(camera);
             }
         }
-        catch (Exception ex)
-        {
-            if (_reportedCullingFailure) return;
-            _reportedCullingFailure = true;
-            VoiceDiagnostics.DebugError("[VC] Surveillance camera overlay culling failed: " + ex.Message);
-        }
+        catch (Exception ex) { ReportCullingFailure(ex); }
+
+        // Reflection walk for cameras not yet in Camera.allCameras; throttled to ~1/s (forced on Begin).
+        float now = Time.unscaledTime;
+        if (!forceDeepScan && now - _lastDeepScanTime < DeepScanIntervalSeconds) return;
+        _lastDeepScanTime = now;
+
+        try { ApplyToObject(minigame, 0); } catch (Exception ex) { ReportCullingFailure(ex); }
+        try { ApplyToObject(ShipStatus.Instance, 0); } catch (Exception ex) { ReportCullingFailure(ex); }
+    }
+
+    private static void ReportCullingFailure(Exception ex)
+    {
+        // Time-throttled, not latched, so a persistent failure stays visible.
+        float now = Time.unscaledTime;
+        if (now - _lastCullingFailureLogTime < CullingFailureLogThrottleSeconds) return;
+        _lastCullingFailureLogTime = now;
+        VoiceDiagnostics.DebugError("[VC] Surveillance camera overlay culling failed: " + ex.Message);
     }
 
     private static void ApplyToObject(object? value, int depth)
@@ -174,7 +187,7 @@ internal static class PlanetCameraStatePatches
     private static void Begin_Postfix(PlanetSurveillanceMinigame __instance)
     {
         VoiceCameraState.Open(__instance);
-        SurveillanceCameraStatePatches.ExcludeVoiceOverlayFromSurveillanceCameras(__instance);
+        SurveillanceCameraStatePatches.ExcludeVoiceOverlayFromSurveillanceCameras(__instance, forceDeepScan: true);
     }
 
     [HarmonyPostfix, HarmonyPatch(nameof(PlanetSurveillanceMinigame.Update))]
@@ -206,7 +219,7 @@ internal static class FungleCameraStatePatches
     private static void Begin_Postfix(FungleSurveillanceMinigame __instance)
     {
         VoiceCameraState.Open(__instance);
-        SurveillanceCameraStatePatches.ExcludeVoiceOverlayFromSurveillanceCameras(__instance);
+        SurveillanceCameraStatePatches.ExcludeVoiceOverlayFromSurveillanceCameras(__instance, forceDeepScan: true);
     }
 
     [HarmonyPostfix, HarmonyPatch(nameof(FungleSurveillanceMinigame.Update))]

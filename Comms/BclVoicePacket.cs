@@ -188,10 +188,8 @@ internal sealed class BclVoiceJitterBuffer
     private int _fecFrames;
     private int _maxDepth;
     private DateTime _lastEnqueueUtc = DateTime.MinValue;
-    // Reused per-buffer scratch lists for the returned playout frames. Enqueue and DrainDue are
-    // only ever called under PeerConnection._sync and their results are fully consumed (synchronous
-    // foreach) before the lock is released, so reusing a list avoids a List allocation on every
-    // received packet / tail-timer tick on the network/decode threads with no aliasing risk.
+    // Reused scratch: Enqueue/DrainDue run under PeerConnection._sync and results are consumed
+    // before the lock releases, so sharing a list avoids a per-packet alloc with no aliasing risk.
     private readonly List<BclVoicePlayoutFrame> _enqueueScratch = new(MaxDrainFramesPerPacket);
     private readonly List<BclVoicePlayoutFrame> _drainScratch = new(MaxDrainFramesPerPacket);
 
@@ -226,8 +224,7 @@ internal sealed class BclVoiceJitterBuffer
 
         _lastEnqueueUtc = DateTime.UtcNow;
 
-        // Manual scan instead of LINQ .Any() — avoids an iterator + closure allocation on
-        // every received packet on the audio/network thread.
+        // Manual scan instead of LINQ .Any(): avoids per-packet iterator + closure allocation.
         bool anyBufferedAfter = false;
         foreach (var existing in _packets.Keys)
         {
@@ -240,9 +237,8 @@ internal sealed class BclVoiceJitterBuffer
         _packets[packet.Sequence] = packet;
         _maxDepth = Math.Max(_maxDepth, _packets.Count);
 
-        // On overflow drop the newest (furthest-future) frame, not the next-to-play one:
-        // FindNextSequence returns the playout head, so evicting it forced an avoidable
-        // extra concealment/dropout every overflow.
+        // On overflow drop the newest (furthest-future) frame, not the playout head, to avoid
+        // an extra concealment/dropout per overflow.
         while (_packets.Count > _maxBufferedFrames)
         {
             var newest = FindHighestSequence();

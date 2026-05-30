@@ -242,10 +242,8 @@ public class VoiceChatRoom
         var local = PlayerControl.LocalPlayer;
         if (local == null) return;
 
-        // Jail-voice authority is sent ONLY over the authenticated Among Us RPC, which binds to the
-        // InnerNet sender (VoiceJailVoiceRpc rejects unless __instance.PlayerId == jailorId). The
-        // voice transport side-channel is NOT used for authority because its sender identity is
-        // self-asserted, which would let any peer forge a jailor's mute/unmute.
+        // Authority only via authenticated Among Us RPC (binds InnerNet sender); the voice
+        // side-channel's self-asserted identity would let any peer forge a jailor's mute.
         VoiceJailVoiceRpc.Send(local.PlayerId, jailedPlayerId, allowed);
     }
 
@@ -449,7 +447,7 @@ public class VoiceChatRoom
         VoiceDiagnostics.Log("voice.refresh.applied",
             $"{sender.ToDiagnosticFields()} nonce={nonce} trigger={trigger} backend={_activeBackend} room={LogSafe(_activeRoomCode ?? "unknown")} region={LogSafe(_activeRegion ?? "unknown")} peers={_voiceBackend?.PeerCount ?? 0}");
 
-        ClearVoiceUiForLifecycleReset($"host voice refresh: {trigger}");
+        // Rejoin() begins with ClearVoiceUiForLifecycleReset, so the UI teardown runs exactly once.
         StartTransitionTrace($"host voice refresh: {trigger}", snapshot);
         Rejoin("host voice refresh");
     }
@@ -460,7 +458,7 @@ public class VoiceChatRoom
         VoiceDiagnostics.Log("voice.refresh.local.applied",
             $"trigger={trigger} backend={_activeBackend} room={LogSafe(_activeRoomCode ?? "unknown")} region={LogSafe(_activeRegion ?? "unknown")} peers={_voiceBackend?.PeerCount ?? 0}");
 
-        ClearVoiceUiForLifecycleReset($"local voice refresh: {trigger}");
+        // Rejoin() begins with ClearVoiceUiForLifecycleReset, so the UI teardown runs exactly once.
         StartTransitionTrace($"local voice refresh: {trigger}", snapshot);
         Rejoin("local voice refresh");
     }
@@ -473,9 +471,8 @@ public class VoiceChatRoom
         if (!force && _lastSentHostSettings.HasValue && _lastSentHostSettings.Value.Equals(settings))
             return;
 
-        // Settings authority flows ONLY over the authenticated Among Us RPC. The voice transport
-        // side-channel is not used because its sender identity is self-asserted (a peer can claim
-        // the host's client id), which would let any peer forge host voice settings.
+        // Authority only via authenticated Among Us RPC; the side-channel's self-asserted
+        // sender id would let any peer forge host voice settings.
         VoiceRoomSettingsRpc.SendSnapshot(settings);
         _lastSentHostSettings = settings;
         VoiceDiagnostics.Log("settings.sent", $"kind=host-snapshot transport={_activeBackend} rpc=true");
@@ -789,10 +786,8 @@ public class VoiceChatRoom
 
     internal static void NoteHostSettingsSnapshotRejected()
     {
-        // A host snapshot was rejected (e.g. a stale cached host id during a migration window).
-        // Ask the tick loop to re-request a fresh snapshot so settings converge once the host id
-        // resolves, instead of waiting for the host's next periodic broadcast. The request itself
-        // is still bounded by the 5s throttle in RequestHostSettingsSnapshot, so this cannot storm.
+        // Snapshot rejected (e.g. stale host id during migration): flag a re-request so settings
+        // converge once the host id resolves. The 5s throttle in RequestHostSettingsSnapshot bounds it.
         var current = Current;
         if (current == null || current.IsLocalHost())
             return;
@@ -875,13 +870,8 @@ public class VoiceChatRoom
 
     private void ProcessBackendCustomMessage(VoiceBackendCustomMessage backendMessage)
     {
-        // SECURITY: the voice transport side-channel carries a SELF-ASSERTED sender identity
-        // (BetterCrewLink relays whatever client id a peer announces; Interstellar cannot expose a
-        // sender at all). It is therefore NOT trusted for authority. Host settings (RpcId 203) and
-        // jail-voice (RpcId 204) now flow exclusively over the authenticated Among Us RPC path,
-        // which binds to the InnerNet sender. Any legacy control payload (host-settings snapshot/
-        // request or 'PCJV' jail-voice) that still arrives here, e.g. from an older peer, is ignored
-        // rather than applied, closing the side-channel host/jailor spoofing vector.
+        // SECURITY: side-channel sender id is self-asserted, so it is NOT trusted for authority;
+        // host settings and jail-voice flow only over authenticated RPC. Legacy payloads are ignored.
         _ = backendMessage;
     }
 

@@ -63,10 +63,8 @@ internal class VCManager : MonoBehaviour
         }
     }
 
-    // UpdateHud recomputes the local mute decision every frame and walks AllPlayerControls (the
-    // jailor-unmute scan + role-state refresh). An IL2CPP scene transition can invalidate that
-    // collection mid-frame; a throw here must not abort Update or the player would be stranded in
-    // whatever mute state they were last in (wrongly muted, or wrongly audible).
+    // IL2CPP scene transitions can invalidate AllPlayerControls mid-walk; swallow the throw so
+    // Update isn't aborted, which would strand the player in their last (possibly wrong) mute state.
     private static void SafeUpdateHud()
     {
         try

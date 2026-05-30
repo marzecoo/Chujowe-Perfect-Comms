@@ -50,7 +50,7 @@ internal static class VoiceRadioStateRpc
                     active,
                     reader.BytesRemaining > 0 ? reader.ReadByte() : null);
 
-                // Bind to the network sender: a client may only set its OWN radio state.
+                // Claimed id must match dispatched PlayerControl; PlayerId is netId-derived, not auth, so spoofable on a relay.
                 if (__instance == null || __instance.PlayerId != playerId)
                 {
                     VoiceDiagnostics.Log("radio.rpc.reject",

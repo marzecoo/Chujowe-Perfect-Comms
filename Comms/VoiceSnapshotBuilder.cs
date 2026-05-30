@@ -104,9 +104,10 @@ internal static class VoiceSnapshotBuilder
         }
         catch
         {
-            // Scene transitions can momentarily invalidate AllPlayerControls; emit a
-            // snapshot with whatever was collected rather than dropping the whole frame.
+            // Scene transitions can invalidate AllPlayerControls mid-loop; keep what was collected.
         }
+
+        ApplyLoverPairingFallback(players);
 
         return new VoiceGameStateSnapshot(
             VoiceSceneState.ResolvePhase(),
@@ -124,6 +125,28 @@ internal static class VoiceSnapshotBuilder
             MeetingHud.Instance != null,
             ResolveCameraCount(),
             ResolveClosedDoorCount());
+    }
+
+    // If partner-id reflection failed (byte.MaxValue) a genuine pair would be false-muted on the lovers
+    // radio. Lovers are always a pair of two, so when exactly two exist, pair them explicitly.
+    private static void ApplyLoverPairingFallback(List<VoicePlayerSnapshot> players)
+    {
+        int firstIndex = -1, secondIndex = -1, loverCount = 0;
+        for (int i = 0; i < players.Count; i++)
+        {
+            if (!players[i].IsLover) continue;
+            loverCount++;
+            if (firstIndex < 0) firstIndex = i;
+            else if (secondIndex < 0) secondIndex = i;
+        }
+        if (loverCount != 2) return;
+
+        var first = players[firstIndex];
+        var second = players[secondIndex];
+        if (first.LoverPartnerId == byte.MaxValue)
+            players[firstIndex] = first with { LoverPartnerId = second.PlayerId };
+        if (second.LoverPartnerId == byte.MaxValue)
+            players[secondIndex] = second with { LoverPartnerId = first.PlayerId };
     }
 
     private static int ResolveMapId()
@@ -224,9 +247,8 @@ internal static class VoiceSnapshotBuilder
         return mapId;
     }
 
-    // Use the shared, robust resolver (candidate-name fallback + caching + one-time diagnostics)
-    // so host discovery stays consistent between the snapshot and VoiceHostAuthority. Host id is
-    // best-effort; settings sync refuses unauthenticated snapshots when it is unknown.
+    // Shared resolver keeps host discovery consistent with VoiceHostAuthority; host id is
+    // best-effort, settings sync refuses unauthenticated snapshots when it is unknown.
     private static int ResolveHostClientId()
         => VoiceHostAuthority.ResolveLiveHostClientId();
 
