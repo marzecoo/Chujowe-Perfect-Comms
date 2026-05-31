@@ -48,8 +48,8 @@ public readonly record struct VoiceRoomSettingsSnapshot(
     public const float MaxChatDistanceLimit = 20f;
 
     public static VoiceRoomSettingsSnapshot Defaults { get; } = new(
-        (int)VoiceTransportBackend.BetterCrewLink,
-        VoiceEndpointSettings.DefaultBetterCrewLinkServerUrl,
+        (int)VoiceTransportBackend.Interstellar,
+        VoiceEndpointSettings.DefaultInterstellarServerUrl,
         6f,
         (int)VoiceFalloffMode.Smooth,
         (int)VoiceOcclusionMode.VisionOnly,
@@ -144,7 +144,7 @@ public readonly record struct VoiceRoomSettingsSnapshot(
     {
         return this with
         {
-            Backend = Enum.IsDefined(typeof(VoiceTransportBackend), Backend) ? Backend : (int)VoiceTransportBackend.BetterCrewLink,
+            Backend = Enum.IsDefined(typeof(VoiceTransportBackend), Backend) ? Backend : (int)VoiceTransportBackend.Interstellar,
             BackendServerUrl = NormalizeBackendServerUrl(Backend, BackendServerUrl),
             MaxChatDistance = Math.Clamp(MaxChatDistance, MinChatDistance, MaxChatDistanceLimit),
             FalloffMode = Enum.IsDefined(typeof(VoiceFalloffMode), FalloffMode) ? FalloffMode : (int)VoiceFalloffMode.Smooth,

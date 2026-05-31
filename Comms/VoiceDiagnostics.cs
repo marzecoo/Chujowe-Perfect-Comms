@@ -9,7 +9,7 @@ namespace VoiceChatPlugin.VoiceChat;
 
 internal static class VoiceDiagnostics
 {
-    private const double FlushIntervalSeconds = 5.0;
+    private const double FlushIntervalSeconds = 30.0;
     private static readonly object Lock = new();
     private static readonly DateTime StartedUtc = DateTime.UtcNow;
     private static StreamWriter? _writer;

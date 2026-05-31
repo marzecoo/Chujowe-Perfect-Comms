@@ -377,7 +377,7 @@ public class VoiceChatLocalSettings : LocalSettingsTab
             new ConfigDescription("Scale for voice HUD buttons",
                 new AcceptableValueRange<float>(0.75f, 3.00f)));
 
-        NoiseSuppressionEnabled = config.Bind("Audio", "NoiseSuppressionEnabled", true,
+        NoiseSuppressionEnabled = config.Bind("Audio", "NoiseSuppressionEnabled", false,
             new ConfigDescription("Use RNNoise to suppress outgoing microphone background noise."));
 
         DebugVoiceStats = config.Bind("Debug", "DebugVoiceStats", false,

@@ -343,6 +343,8 @@ internal static class VoiceSnapshotBuilder
 
     private static void MaybeLogCameraDiagnostic(Minigame minigame, int mapId, CameraView cameraView)
     {
+        if (!VoiceDiagnostics.IsEnabled) return;
+
         var now = DateTime.UtcNow;
         string members = DescribeCameraMembers(minigame);
         string key =
@@ -360,6 +362,8 @@ internal static class VoiceSnapshotBuilder
 
     private static void MaybeLogCameraError(int mapId, Exception ex)
     {
+        if (!VoiceDiagnostics.IsEnabled) return;
+
         var now = DateTime.UtcNow;
         string key = $"error|{mapId}|{ex.GetType().Name}|{ex.Message}";
         if (string.Equals(key, _lastCameraDiagnosticKey, StringComparison.Ordinal) &&

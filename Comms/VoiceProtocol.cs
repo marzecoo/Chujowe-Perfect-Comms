@@ -44,7 +44,7 @@ internal static class VoiceProtocol
     public const int MaxSenderBytesPerSecond = 320_000;
     public const double MaxQueuedFrameAgeSeconds = 0.50;
     public const double MaxHttpQueuedFrameAgeSeconds = 0.50;
-    public static readonly TimeSpan StatsLogInterval = TimeSpan.FromSeconds(5);
+    public static readonly TimeSpan StatsLogInterval = TimeSpan.FromSeconds(15);
 
     public const VoiceFeatureFlags CurrentFeatures =
         VoiceFeatureFlags.ReliableAudio |

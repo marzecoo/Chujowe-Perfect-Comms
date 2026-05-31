@@ -73,7 +73,9 @@ public static class PingTrackerPatch
 {
     private const float LabelSize   = 0.95f;
     private const float SlotWidth   = 0.52f;
-    private const float SlotHeight  = 0.58f;
+    // Vertical-stack pitch (vertical layout only). Kept a touch above icon+name height so the lower slot's ring
+    // (outer half-height ~0.236 at RingScale) clears the name of the slot above it (name sits at -LabelOffset).
+    private const float SlotHeight  = 0.64f;
     private const float LabelOffset = 0.34f;
     private const float BottomNameLift = 0.12f;
     private const float RingScale   = 0.48f;
@@ -181,7 +183,6 @@ public static class PingTrackerPatch
         try
         {
             RebuildPlayerLookup();
-            TrackAvatarIdlePoses();
 
             var room = VoiceChatRoom.Current;
             var overlay = VoiceOverlayState.Current(room);
@@ -230,7 +231,6 @@ public static class PingTrackerPatch
                     {
                         slot.TargetLevel = level;
                         slot.IsSpeaking = true;
-                        slot.PlayerColor = GetPaletteColor(player); // ring/glow tracks color live every frame
 
                         // Defer a *color-only* fingerprint change by one frame: the live body color can
                         // read a transient wrong value for a single frame during cosmetics init / role
@@ -260,15 +260,13 @@ public static class PingTrackerPatch
                         {
                             TryCreateSlotIcon(id, slot);
                         }
-                        else if (!slot.HasCachedPoseIcon && player != null && CrewmateAvatarRenderer.HasCachedCosmeticPose(id, player))
+                        else if (!slot.CosmeticsComplete && player != null && CrewmateAvatarRenderer.OutfitCosmeticsResolved(player))
                         {
-                            // Upgrade body-only icon to cosmetics in place — no destroy/recreate pop.
-                            if (CrewmateAvatarRenderer.TryUpgradeWithCachedPose(slot.IconGO, id, player))
-                            {
-                                slot.HasCachedPoseIcon = true;
-                                _layoutDirty = true;
-                                _sortingDirty = true;
-                            }
+                            // The player's cosmetics finished loading — attach them in place (no destroy/recreate pop).
+                            CrewmateAvatarRenderer.TryRefreshOutfitCosmetics(slot.IconGO, player);
+                            slot.CosmeticsComplete = true;
+                            _layoutDirty = true;
+                            _sortingDirty = true;
                         }
                         continue;
                     }
@@ -525,21 +523,6 @@ public static class PingTrackerPatch
         return 0f;
     }
 
-    private static void TrackAvatarIdlePoses()
-    {
-        try
-        {
-            var players = PlayerControl.AllPlayerControls;
-            if (players == null) return;
-            foreach (var pc in players)
-                CrewmateAvatarRenderer.TrackIdlePose(pc);
-        }
-        catch
-        {
-            // Scene transitions can temporarily invalidate the player collection.
-        }
-    }
-
     private static void ApplySortingGroup(GameObject go, int order)
     {
         var group = go.GetComponent<SortingGroup>() ?? go.AddComponent<SortingGroup>();
@@ -615,7 +598,6 @@ public static class PingTrackerPatch
         var slot = new SpeakerSlot
         {
             Fingerprint = fp,
-            PlayerColor = GetPaletteColor(player),
             Level = voiceLevel,
             TargetLevel = voiceLevel,
             SmoothedLevel = NormalizeVoiceLevel(voiceLevel),
@@ -647,7 +629,7 @@ public static class PingTrackerPatch
         _sortingDirty = true;
     }
 
-    private static bool TryCreateSlotIcon(byte playerId, SpeakerSlot slot, bool replaceExisting = false, bool requireCachedCosmetics = false)
+    private static bool TryCreateSlotIcon(byte playerId, SpeakerSlot slot, bool replaceExisting = false)
     {
         if (_barRoot == null) return false;
         if (slot.IconGO != null && !replaceExisting) return true;
@@ -655,17 +637,10 @@ public static class PingTrackerPatch
         var player = FindPlayer(playerId);
         if (player != null && CrewmateAvatarRenderer.TryCreate(playerId, player, _barRoot.transform, out var iconGO))
         {
-            bool hasCachedCosmeticPose = CrewmateAvatarRenderer.HasCachedCosmeticPose(playerId, player);
-            if (requireCachedCosmetics && !hasCachedCosmeticPose)
-            {
-                if (iconGO != null) Object.Destroy(iconGO);
-                return false;
-            }
-
             if (slot.IconGO != null) Object.Destroy(slot.IconGO);
             slot.IconGO = iconGO;
             slot.Fingerprint = GetFingerprint(playerId);
-            slot.HasCachedPoseIcon = hasCachedCosmeticPose;
+            slot.CosmeticsComplete = CrewmateAvatarRenderer.OutfitCosmeticsResolved(player);
             slot.PendingFingerprint = default;
             _layoutDirty = true;
             _sortingDirty = true;
@@ -743,7 +718,9 @@ public static class PingTrackerPatch
             slot.Level = slot.TargetLevel;
 
             float brightness = Mathf.SmoothStep(0f, 1f, slot.SmoothedLevel);
-            Color color = Color.Lerp(slot.PlayerColor, new Color(0.55f, 1f, 0f, 1f), 0.72f);
+            // Fixed BetterCrewLink "talking" green (#2ecc71) for every speaker — the ring never carries the player's
+            // color, so rainbow is treated exactly like any other color; only its opacity tracks the voice level.
+            Color color = (Color)new Color32(46, 204, 113, 255);
             color.a = Mathf.Lerp(0.22f, 0.92f, brightness) * slot.Visibility;
             slot.RingRenderer.color = color;
             slot.RingGO.transform.localScale = Vector3.one * RingScale;
@@ -913,10 +890,6 @@ public static class PingTrackerPatch
     private static PlayerControl? FindPlayer(byte id)
         => _playerLookup.TryGetValue(id, out var pc) && pc != null ? pc : null;
 
-    // Shared with the meeting overlay to keep ring/glow/body color in parity (concealed-grey and fallback paths).
-    private static Color GetPaletteColor(PlayerControl? pc)
-        => CrewmateAvatarRenderer.GetPaletteColor(pc);
-
     private static int GetPlayerColorId(PlayerControl pc)
     {
         int bodyColor;
@@ -1026,8 +999,7 @@ public static class PingTrackerPatch
         public TextMeshPro?      LabelTMP;
         public OutfitFingerprint Fingerprint;
         public OutfitFingerprint PendingFingerprint;
-        public bool              HasCachedPoseIcon;
-        public Color             PlayerColor;
+        public bool              CosmeticsComplete;
         public float             Level;
         public float             TargetLevel;
         public float             SmoothedLevel;

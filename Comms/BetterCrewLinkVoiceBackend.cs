@@ -18,19 +18,19 @@ namespace VoiceChatPlugin.VoiceChat;
 internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
 {
     private const int DataControlPrefixLength = 4;
-    private static readonly int BclOpusBitrate = 48_000;
-    private static readonly bool BclOpusUseConstrainedVbr = true;
-    private static readonly bool BclOpusUseInbandFec = false;
-    private static readonly int BclOpusPacketLossPercent = 0;
-    private const int BclPlaybackLatencyMs = 60;
-    private const int BclJitterTargetDelayFrames = 2;
-    private const int BclJitterMaxBufferedFrames = 8;
+    private static readonly int BclOpusBitrate = 96_000;
+    private static readonly bool BclOpusUseConstrainedVbr = false;
+    private static readonly bool BclOpusUseInbandFec = true;
+    private static readonly int BclOpusPacketLossPercent = 15;
+    private const int BclPlaybackLatencyMs = 100;
+    private const int BclJitterTargetDelayFrames = 5;
+    private const int BclJitterMaxBufferedFrames = 18;
     private const float RemoteSpeakingThreshold = 0.004f;
     private const double SyntheticToneFrequency = 220.0;
     private const float SyntheticToneAmplitude = 0.012f;
     private static readonly TimeSpan RemoteActivityHold = TimeSpan.FromMilliseconds(250);
     private static readonly TimeSpan MicCalibrationLogInterval = TimeSpan.FromSeconds(5);
-    private static readonly TimeSpan BclQuietTailFlushDelay = TimeSpan.FromMilliseconds(30);
+    private static readonly TimeSpan BclQuietTailFlushDelay = TimeSpan.FromMilliseconds(100);
     private static readonly TimeSpan BclQuietTailFlushTimerDelay = BclQuietTailFlushDelay + TimeSpan.FromMilliseconds(10);
     private static readonly TimeSpan SignalRejectLogInterval = TimeSpan.FromSeconds(5);
     private static readonly byte[] DataControlPrefix = [(byte)'P', (byte)'C', (byte)'B', (byte)'C'];
@@ -2027,8 +2027,10 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
 
     private void MaybeLogStats(VoiceGameStateSnapshot? snapshot, string reason)
     {
+        if (!VoiceDiagnostics.IsEnabled) return;
+
         var now = DateTime.UtcNow;
-        if ((now - _lastStatsLogUtc).TotalSeconds < 5) return;
+        if (now - _lastStatsLogUtc < VoiceProtocol.StatsLogInterval) return;
         _lastStatsLogUtc = now;
         var peers = SnapshotPeers();
         var diagnostics = peers.Select(peer => peer.ConsumeDiagnostics()).ToArray();
@@ -2113,6 +2115,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
 
     private static void LogNoiseSuppressionStats(string message)
     {
+        if (!VoiceDiagnostics.IsEnabled) return;
         VoiceDiagnostics.Log("bcl.rnnoise.stats", message);
         try
         {
@@ -2139,7 +2142,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         encoder.SignalType = OpusSignal.OPUS_SIGNAL_VOICE;
         encoder.UseVBR = true;
         encoder.UseConstrainedVBR = BclOpusUseConstrainedVbr;
-        encoder.UseDTX = true; // shrinks any quiet frames that pass the ShouldTransmit gate
+        encoder.UseDTX = false;
         encoder.UseInbandFEC = BclOpusUseInbandFec;
         encoder.PacketLossPercent = BclOpusPacketLossPercent;
         return encoder;

@@ -29,8 +29,8 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
     // The vendored Interstellar client reserves Custom messages for its audio relay fallback.
     // Keep app-level controls local until they are explicitly multiplexed around relay traffic.
     private static readonly bool InterstellarCustomControlEnabled = false;
-    private const float RadioHighPassFrequency = 650f;
-    private const float RadioDistortionThreshold = 0.85f;
+    private const float RadioHighPassFrequency = 350f;
+    private const float RadioDistortionThreshold = 0.97f;
     private const double SyntheticToneFrequency = 220.0;
     private const float SyntheticToneAmplitude = 0.012f;
     private const int InterstellarReceiveBufferSamples = 2048;
@@ -71,6 +71,7 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
     private int _windowsMicLastGainMilli;
 #endif
     private DateTime _lastStatsLogUtc = DateTime.MinValue;
+    private DateTime _lastConnectionRecoveryUtc = DateTime.MinValue;
     private byte _lastPlayerId = byte.MaxValue;
     private string _lastPlayerName = string.Empty;
     private VoiceCaptureRuntimeOptions _captureOptions;
@@ -164,7 +165,7 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
         var listenerMuffleReverb = new ReverbRouter(41, 0.55f, 0.65f) { IsGlobalRouter = true };
         var ghostReverb1 = new ReverbRouter(53, 0.7f, 0.2f) { IsGlobalRouter = true };
         var ghostReverb2 = new ReverbRouter(173, 0.4f, 0.6f) { IsGlobalRouter = true };
-        var radioHighpass = FilterRouter.CreateHighPassFilter(RadioHighPassFrequency, 3.2f);
+        var radioHighpass = FilterRouter.CreateHighPassFilter(RadioHighPassFrequency, 1.4f);
         var radioDistort = new DistortionFilter { IsGlobalRouter = true, DefaultThreshold = RadioDistortionThreshold };
         var masterRouter = new VolumeRouter { IsGlobalRouter = true };
 
@@ -933,9 +934,11 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
 
     private void MaybeLogStats(VoiceGameStateSnapshot? snapshot, string reason)
     {
-        _room.TickConnectionRecovery();
+        TickConnectionRecoveryThrottled();
+        if (!VoiceDiagnostics.IsEnabled) return;
+
         var now = DateTime.UtcNow;
-        if ((now - _lastStatsLogUtc).TotalSeconds < 5)
+        if (now - _lastStatsLogUtc < VoiceProtocol.StatsLogInterval)
             return;
 
         _lastStatsLogUtc = now;
@@ -977,6 +980,17 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
 #else
             $"micReady={_microphoneReady} speakerReady={_speakerReady} localMeterReady={_localMicMeter != null} syntheticTone={_captureOptions.SyntheticMicToneEnabled} syntheticFrames={Volatile.Read(ref _syntheticFrames)}");
 #endif
+    }
+
+
+    private void TickConnectionRecoveryThrottled()
+    {
+        var now = DateTime.UtcNow;
+        if ((now - _lastConnectionRecoveryUtc).TotalMilliseconds < 500)
+            return;
+
+        _lastConnectionRecoveryUtc = now;
+        _room.TickConnectionRecovery();
     }
 
     private static void ApplySavedVolume(Peer peer)

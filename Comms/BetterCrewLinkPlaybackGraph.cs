@@ -33,8 +33,8 @@ internal sealed class BclMonoPlaybackGraph
         var listenerMuffleReverb = new ReverbRouter(41, 0.55f, 0.65f) { IsGlobalRouter = true };
         var ghostReverb1 = new ReverbRouter(53, 0.7f, 0.2f) { IsGlobalRouter = true };
         var ghostReverb2 = new ReverbRouter(173, 0.4f, 0.6f) { IsGlobalRouter = true };
-        var radioHighpass = FilterRouter.CreateHighPassFilter(650f, 3.2f);
-        var radioDistort = new DistortionFilter { IsGlobalRouter = true, DefaultThreshold = 0.85f };
+        var radioHighpass = FilterRouter.CreateHighPassFilter(350f, 1.4f);
+        var radioDistort = new DistortionFilter { IsGlobalRouter = true, DefaultThreshold = 0.97f };
         var masterRouter = new VolumeRouter { IsGlobalRouter = true };
 
         source.Connect(_clientVolume);

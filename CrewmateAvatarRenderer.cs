@@ -16,17 +16,15 @@ internal static class CrewmateAvatarRenderer
     private const int BackCosmeticOrder = VCSorting.Base - 2;
     private const int CosmeticOrder = VCSorting.Base - 1;
     private const int FrontCosmeticOrder = VCSorting.Base;
-    private const float IdleVelocityEpsilon = 0.0004f;
-    private const int StableIdleFrameThreshold = 8;
-    private const float PoseTransformEpsilon = 0.0025f;
     private const int RainbowFrameCount = 48;
     private const float RainbowHueSpeed = 0.3f;
     private const string BaseCrewmatePngBase64 = "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";
 
     private static readonly Dictionary<int, Sprite> BaseSpriteCache = new();
     private static readonly Dictionary<int, Sprite> RainbowSpriteCache = new();
-    private static readonly Dictionary<byte, AvatarSnapshot> IdlePoseCache = new();
-    private static readonly Dictionary<byte, IdlePoseCandidate> IdlePoseCandidates = new();
+    // Memoized "is this color id the animated Rainbow color?" so the per-frame ring/glow/highlight color path
+    // never repeats IsRainbowColorId's assembly-scanning reflection. Cleared per game by ClearCache().
+    private static readonly Dictionary<int, bool> RainbowColorIdCache = new();
     private static Color32[]? templatePixels;
     private static int templateWidth;
     private static int templateHeight;
@@ -35,37 +33,10 @@ internal static class CrewmateAvatarRenderer
     private static readonly Color32 ConcealedColor = new(0x7f, 0x7f, 0x7f, 0xff);
     private static readonly Color32 ConcealedShadowColor = new(0x4a, 0x4a, 0x4a, 0xff);
 
-    public static void TrackIdlePose(PlayerControl? pc)
-    {
-        try
-        {
-            if (!IsRightFacingIdle(pc))
-            {
-                ClearIdleCandidate(pc);
-                return;
-            }
-
-            if (!UpdateIdleCandidate(pc!, out var candidate)) return;
-            if (!candidate.Promoted && candidate.StableFrames >= StableIdleFrameThreshold)
-            {
-                var snapshot = CaptureCurrentPose(pc!);
-                IdlePoseCache[pc!.PlayerId] = snapshot;
-                candidate.Promoted = true;
-            }
-        }
-        catch
-        {
-            ClearIdleCandidate(pc);
-        }
-    }
-
     public static bool TryCreate(byte playerId, PlayerControl pc, Transform parent, out GameObject? iconGO)
     {
         iconGO = null;
         if (pc?.Data == null || parent == null) return false;
-
-        // Best effort: live pose capture may fail during transitions/movement/intro.
-        TrackIdlePose(pc);
 
         // Concealed players render as a neutral grey body with no rainbow/cosmetics.
         bool concealed = IsConcealed(pc);
@@ -83,48 +54,192 @@ internal static class CrewmateAvatarRenderer
 
         var bodyRenderer = AddSprite(root.transform, "VC_Body_Base", baseSprite, Vector3.zero, Quaternion.identity, Vector3.one * BodyScale, Color.white, BodyOrder);
         if (isRainbow) AddRainbowBodyAnimator(bodyRenderer);
-        if (!concealed && HasCachedPose(playerId, pc))
-            _ = TryAddCachedPose(root.transform, playerId, pc);
+        // Cosmetics are built straight from the player's live outfit (hat/skin/visor), so they render
+        // immediately and reliably — no idle-pose capture, GameObject-name matching, or fingerprint gate.
+        if (!concealed)
+            TryAddOutfitCosmetics(root.transform, pc);
         ApplySorting(root);
         VCOverlayCamera.EnsureOnTop(root);
         iconGO = root;
         return true;
     }
 
-    public static bool HasCachedPose(byte playerId, PlayerControl? pc)
-        => pc?.Data != null
-           && IdlePoseCache.TryGetValue(playerId, out var snapshot)
-           && snapshot.Matches(pc);
+    // ── Outfit-driven cosmetics ────────────────────────────────────────────────
+    // Empty/sentinel cosmetic ids (Among Us): a slot carrying one of these has no cosmetic to render.
+    private const string EmptyHatId   = "hat_NoHat";
+    private const string EmptySkinId  = "skin_None";
+    private const string EmptyVisorId = "visor_EmptyVisor";
 
-    public static bool HasCachedCosmeticPose(byte playerId, PlayerControl? pc)
-        => pc?.Data != null
-           && IdlePoseCache.TryGetValue(playerId, out var snapshot)
-           && snapshot.Layers.Count > 0
-           && snapshot.Matches(pc);
+    private static bool IsEmptyCosmeticId(string? id)
+        => string.IsNullOrEmpty(id) || id == EmptyHatId || id == EmptySkinId || id == EmptyVisorId;
 
-    // Add cached cosmetic layers onto a body-only icon in place, avoiding destroy/recreate.
-    internal static bool TryUpgradeWithCachedPose(GameObject? iconRoot, byte playerId, PlayerControl? pc)
+    // Typed cosmetic SpriteRenderers, read straight off the player's live CosmeticsLayer — no GameObject-name
+    // matching and no idle-pose gating. These are the very renderers the player's in-world body uses, so for any
+    // cosmetic the player actually wears they already hold the correct (incl. disguised) sprite + material.
+    private static SpriteRenderer? HatFrontRenderer(CosmeticsLayer c) { try { return c.hat   != null ? c.hat.FrontLayer : null; } catch { return null; } }
+    private static SpriteRenderer? HatBackRenderer(CosmeticsLayer c)  { try { return c.hat   != null ? c.hat.BackLayer  : null; } catch { return null; } }
+    private static SpriteRenderer? SkinRenderer(CosmeticsLayer c)     { try { return c.skin  != null ? c.skin.layer     : null; } catch { return null; } }
+    private static SpriteRenderer? VisorRenderer(CosmeticsLayer c)    { try { return c.visor != null ? c.visor.Image    : null; } catch { return null; } }
+
+    // The skin's IDLE frame, from its loaded view data. Many skins (e.g. "pompousPerson") are WALK-ANIMATED, so
+    // the live skin renderer's sprite cycles Walk####/Spawn#### frames while the player moves. Baking those into
+    // the icon is what made the icon "morph as you move". Using the fixed IdleFrame keeps the icon a calm standing
+    // crewmate regardless of the player's walk animation. Falls back to the live sprite if the idle frame is null.
+    private static Sprite? SkinIdleSprite(CosmeticsLayer c)
     {
-        if (iconRoot == null || pc?.Data == null) return false;
-        if (IsConcealed(pc)) return false; // never attach real cosmetics onto a concealed body
-        if (!HasCachedCosmeticPose(playerId, pc)) return false;
-        if (!TryAddCachedPose(iconRoot.transform, playerId, pc)) return false;
+        try { return c.skin != null && c.skin.skin != null ? c.skin.skin.IdleFrame : null; } catch { return null; }
+    }
+
+    // The hat/visor IDLE frames, from their loaded view data — the same morph-proofing the skin gets. Some hats and
+    // visors are SpriteAnimNodeSync-animated, so the live FrontLayer/BackLayer/Image sprite cycles while the player
+    // walks; baking those frames is what makes an animated hat/visor "morph as you move" on the icon. HatViewData
+    // exposes MainImage (front) + BackImage (back); VisorViewData exposes IdleFrame. We read them through the
+    // cosmetic layer's loaded AddressableAsset and fall back to the live sprite (null override) for static cosmetics.
+    private static Sprite? HatFrontIdleSprite(CosmeticsLayer c)
+    {
+        try { var v = c.hat != null ? c.hat.viewAsset.GetAsset() : null; return v != null ? v.MainImage : null; } catch { return null; }
+    }
+
+    private static Sprite? HatBackIdleSprite(CosmeticsLayer c)
+    {
+        try { var v = c.hat != null ? c.hat.viewAsset.GetAsset() : null; return v != null ? v.BackImage : null; } catch { return null; }
+    }
+
+    private static Sprite? VisorIdleSprite(CosmeticsLayer c)
+    {
+        try { var v = c.visor != null ? c.visor.viewAsset.GetAsset() : null; return v != null ? v.IdleFrame : null; } catch { return null; }
+    }
+
+    // The game's own "current cosmetic finished loading" flags. Gating readiness on these (not merely sprite!=null)
+    // (a) covers back-only hats whose FrontLayer sprite is permanently null, and (b) stays false while a freshly
+    // assigned outfit (morph/shapeshift/spawn) is still async-loading, so we never latch a stale previous sprite.
+    private static bool HatLoaded(CosmeticsLayer c)   { try { return c.hat   != null && c.hat.IsLoaded;   } catch { return false; } }
+    private static bool SkinLoaded(CosmeticsLayer c)  { try { return c.skin  != null && c.skin.IsLoaded;  } catch { return false; } }
+    private static bool VisorLoaded(CosmeticsLayer c) { try { return c.visor != null && c.visor.IsLoaded; } catch { return false; } }
+
+    // True once every cosmetic the outfit DECLARES has finished loading, i.e. nothing is still loading on the
+    // player's own CosmeticsLayer. Concealed players are trivially resolved (they intentionally show no cosmetics).
+    internal static bool OutfitCosmeticsResolved(PlayerControl? pc)
+    {
+        try
+        {
+            if (pc?.Data == null) return false;
+            if (IsConcealed(pc)) return true;
+            var c = pc.cosmetics;
+            if (c == null) return false;
+            var outfit = GetDisplayOutfit(pc);
+            return (IsEmptyCosmeticId(outfit.HatId)   || HatLoaded(c))
+                && (IsEmptyCosmeticId(outfit.SkinId)  || SkinLoaded(c))
+                && (IsEmptyCosmeticId(outfit.VisorId) || VisorLoaded(c));
+        }
+        catch { return false; }
+    }
+
+    // ── Fixed cosmetic placement ────────────────────────────────────────────────
+    // Cosmetics are dropped onto the upright icon body at FIXED offsets — we never copy the player's live
+    // cosmetic transform, which Among Us animates every frame while walking (bounce/lean/flip). That live
+    // transform is what made the icon morph with movement; fixed offsets make the icon identical whether the
+    // player stands still or runs. We still read the LIVE sprite/material/color so modded/Adaptive cosmetics show.
+    // TUNABLE: raise/lower HatVisorAnchor.y if hats sit too high/low; change CosmeticScale if cosmetics look too
+    // big/small; nudge SkinAnchor if the skin sits off the body.
+    private static readonly Vector3 HatVisorAnchor = new(-0.045f, 0.575f, 0f); // head anchor for hat (front+back) & visor
+    private static readonly Vector3 SkinAnchor     = Vector3.zero;             // skin overlays the body
+    private static readonly Vector3 CosmeticScale  = Vector3.one;              // cosmetic size on the icon body
+
+    // Copies hat (back + front) / skin / visor from the player's live cosmetics onto the icon at FIXED offsets,
+    // preserving each cosmetic's real sprite + material + color so Adaptive (color-matched) cosmetics stay correct.
+    internal static void TryAddOutfitCosmetics(Transform root, PlayerControl pc)
+    {
+        try
+        {
+            var c = pc.cosmetics;
+            if (c == null) return;
+            var outfit = GetDisplayOutfit(pc);
+
+            // Only copy a cosmetic once its CURRENT sprite has finished loading, so a stale one is never baked in.
+            bool hatReady = !IsEmptyCosmeticId(outfit.HatId) && HatLoaded(c);
+            if (hatReady)
+                AddCosmeticLayer(root, "VC_HatBack", HatBackRenderer(c), HatVisorAnchor, BackCosmeticOrder, HatBackIdleSprite(c));
+            if (!IsEmptyCosmeticId(outfit.SkinId) && SkinLoaded(c))
+                AddCosmeticLayer(root, "VC_Skin", SkinRenderer(c), SkinAnchor, CosmeticOrder, SkinIdleSprite(c));
+            if (hatReady)
+                AddCosmeticLayer(root, "VC_HatFront", HatFrontRenderer(c), HatVisorAnchor, FrontCosmeticOrder, HatFrontIdleSprite(c));
+            if (!IsEmptyCosmeticId(outfit.VisorId) && VisorLoaded(c))
+                AddCosmeticLayer(root, "VC_Visor", VisorRenderer(c), HatVisorAnchor, VisorOrder(outfit.VisorId), VisorIdleSprite(c));
+        }
+        catch
+        {
+            // Degrade to body-only; the per-frame retry re-attaches as the player's cosmetics finish loading.
+        }
+    }
+
+    // A visor flagged BehindHats sits under the front hat (drawn at the cosmetic order); otherwise in front.
+    private static int VisorOrder(string? visorId)
+    {
+        try
+        {
+            var v = IsEmptyCosmeticId(visorId) ? null : HatManager.Instance?.GetVisorById(visorId);
+            if (v != null && v.BehindHats) return CosmeticOrder;
+        }
+        catch { }
+        return FrontCosmeticOrder;
+    }
+
+    // Drops one live cosmetic sprite onto the icon at a FIXED local offset (never the live walk-animated transform,
+    // so the icon can't morph as the player moves). Reads the live sprite/material/color so modded/Adaptive
+    // cosmetics show. Forces upright + canonical right-facing. Skips disabled renderers (stale hidden BackLayer).
+    private static void AddCosmeticLayer(Transform root, string name, SpriteRenderer? src, Vector3 localPos, int order, Sprite? spriteOverride = null)
+    {
+        try
+        {
+            if (src == null || !src.enabled) return;
+            // Prefer a fixed idle sprite (e.g. the skin's IdleFrame) over the live renderer's current — possibly
+            // walk-animated — sprite, so the icon doesn't change pose as the player moves.
+            var sprite = spriteOverride != null ? spriteOverride : src.sprite;
+            if (sprite == null) return;
+            var layer = AddSprite(root, name, sprite, localPos, Quaternion.identity, CosmeticScale, src.color, order);
+            layer.flipX = false;                   // canonical right-facing icon body
+            layer.flipY = src.flipY;               // preserve the cosmetic's intrinsic vertical orientation
+            if (src.sharedMaterial != null) layer.sharedMaterial = src.sharedMaterial;
+        }
+        catch
+        {
+            // Skip just this layer; the other cosmetics still attach.
+        }
+    }
+
+    // Rebuilds the cosmetic layers in place on an existing icon (no body destroy/recreate). Concealed -> none.
+    internal static void TryRefreshOutfitCosmetics(GameObject? iconRoot, PlayerControl? pc)
+    {
+        if (iconRoot == null || pc?.Data == null) return;
+        RemoveCosmeticLayers(iconRoot);
+        if (!IsConcealed(pc))
+            TryAddOutfitCosmetics(iconRoot.transform, pc);
         ApplySorting(iconRoot);
         VCOverlayCamera.EnsureOnTop(iconRoot);
-        return true;
     }
 
-    internal static void ClearCache()
+    private static readonly List<GameObject> _cosmeticRemovalScratch = new();
+    private static void RemoveCosmeticLayers(GameObject iconRoot)
     {
-        IdlePoseCache.Clear();
-        IdlePoseCandidates.Clear();
+        _cosmeticRemovalScratch.Clear();
+        var t = iconRoot.transform;
+        int count = t.childCount;
+        for (int i = 0; i < count; i++)
+        {
+            var child = t.GetChild(i);
+            var n = child.name;
+            if (n.StartsWith("VC_Hat") || n.StartsWith("VC_Skin") || n.StartsWith("VC_Visor"))
+                _cosmeticRemovalScratch.Add(child.gameObject);
+        }
+        foreach (var go in _cosmeticRemovalScratch) Object.Destroy(go);
+        _cosmeticRemovalScratch.Clear();
     }
 
-    internal static void ClearPlayer(byte playerId)
-    {
-        IdlePoseCache.Remove(playerId);
-        IdlePoseCandidates.Remove(playerId);
-    }
+    // Lifecycle reset hook (called at HudManager.Start). Cosmetics are placed at fixed offsets from the live outfit,
+    // so there is nothing there to clear; we only drop the rainbow color-id memo so a result that happened to resolve
+    // before Town of Us finished registering its colors can never stay stale into the next game.
+    internal static void ClearCache() { RainbowColorIdCache.Clear(); }
 
     public static bool IsCustomIcon(GameObject go)
         => go != null && go.name.StartsWith("VC_SpriteIcon_");
@@ -134,19 +249,58 @@ internal static class CrewmateAvatarRenderer
     {
         if (pc?.Data == null) return new Color(0.18f, 0.80f, 0.44f, 1f); // voice fallback green
         if (IsConcealed(pc)) return (Color)ConcealedColor;
+        // A Rainbow-colored player's palette swatch is solid black (the body only LOOKS rainbow because Town of Us
+        // rewrites its material every frame). Return the SAME animated color the body icon shows this frame so the
+        // ring/glow + meeting highlight cycle rainbow in lockstep instead of rendering a dead black blob.
+        if (IsRainbowPlayer(pc)) return (Color)RainbowBodyColor(GetRainbowFrameIndex(Time.time));
         // Clamp via the same index the body uses so ring/glow never disagrees with the body.
         return (Color)Palette.PlayerColors[ClampColorId(GetPlayerColorId(pc))];
     }
 
-    // CurrentOutfitType (vanilla + Town of Us share the space): 3=MushroomMixUp, 4=Swooper,
-    // 6=Camouflage grey every body. Disguises (1/5/7) intentionally show through, not concealed.
+    // True when this speaker picked the animated "Rainbow" color and is NOT concealed — i.e. GetPaletteColor returns
+    // a time-varying color for them. The speaking bar caches a slot's color and only refreshes it on a fingerprint
+    // change (which never fires for a fixed Rainbow color id), so it consults this to recompute rainbow rings live.
+    internal static bool IsRainbowPlayer(PlayerControl? pc)
+    {
+        if (pc?.Data == null || IsConcealed(pc)) return false;
+        try { return IsRainbowColorIdCached(ClampColorId(GetPlayerColorId(pc))); }
+        catch { return false; }
+    }
+
+    // Per-frame-safe wrapper over IsRainbowColorId: that scan walks every loaded assembly via reflection, far too
+    // costly for GetPaletteColor's per-frame-per-speaker callers, so memoize by color id (reset each game).
+    private static bool IsRainbowColorIdCached(int colorId)
+    {
+        if (RainbowColorIdCache.TryGetValue(colorId, out bool cached)) return cached;
+        bool result = IsRainbowColorId(colorId);
+        RainbowColorIdCache[colorId] = result;
+        return result;
+    }
+
+    // Whether the speaker is hidden by the game and must render as a grey, nameless, cosmetic-less blob (never
+    // leaking their real color/cosmetics/name). CurrentOutfitType (vanilla + Town of Us share the space):
+    //   3=MushroomMixUp, 4=Swooper(invisible), 6=Camouflage, 8=PlayerNameOnly, 9=PlayerOnly(ghost fade).
+    // Disguises (1=Shapeshift, 5=Mimic, 7=Morph) intentionally show the TARGET's look, so they are NOT concealed.
+    // Some TOU concealments keep CurrentOutfitType==0 (Default) and hide identity only via the outfit fields, so
+    // type 0 is additionally treated as concealed when its outfit looks camouflaged (HNS global camo stamps the
+    // name "???"; Venerer camo empties all cosmetics and blanks the name). A normal type-0 player keeps a real
+    // (non-empty) name, so is never falsely concealed.
     internal static bool IsConcealed(PlayerControl? pc)
     {
         if (pc?.Data == null) return false;
         try
         {
             int outfitType = (int)pc.CurrentOutfitType;
-            return outfitType == 3 || outfitType == 4 || outfitType == 6;
+            if (outfitType == 3 || outfitType == 4 || outfitType == 6 || outfitType == 8 || outfitType == 9)
+                return true;
+            if (outfitType == 0)
+            {
+                var o = GetDisplayOutfit(pc);
+                if (o.PlayerName == "???") return true;            // HNS global camouflage (only writer of "???")
+                if (IsEmptyCosmeticId(o.HatId) && IsEmptyCosmeticId(o.SkinId) && IsEmptyCosmeticId(o.VisorId)
+                    && string.IsNullOrEmpty(o.PlayerName)) return true; // Venerer camo: type 0, no cosmetics, no name
+            }
+            return false;
         }
         catch
         {
@@ -161,12 +315,6 @@ internal static class CrewmateAvatarRenderer
         if (concealedBaseSprite != null) return concealedBaseSprite;
         concealedBaseSprite = CreateBaseSprite(ConcealedColor, ConcealedShadowColor);
         return concealedBaseSprite;
-    }
-
-    private static bool DestroyIncompleteIcon(GameObject root)
-    {
-        Object.Destroy(root);
-        return false;
     }
 
     public static void ApplySorting(GameObject go)
@@ -383,135 +531,6 @@ internal static class CrewmateAvatarRenderer
             255);
     }
 
-    private static bool TryAddCachedPose(Transform root, byte playerId, PlayerControl pc)
-    {
-        try
-        {
-            if (!IdlePoseCache.TryGetValue(playerId, out var snapshot)) return false;
-            if (!snapshot.Matches(pc)) return false;
-
-            foreach (var layer in snapshot.Layers)
-            {
-                if (layer.Sprite == null) continue;
-                var target = AddSprite(root, layer.Name, layer.Sprite, layer.LocalPosition, layer.LocalRotation, layer.LocalScale, layer.Color, layer.SortOrder);
-                target.flipX = false;
-                target.flipY = false;
-                if (layer.SharedMaterial != null)
-                    target.sharedMaterial = layer.SharedMaterial;
-            }
-            return true;
-        }
-        catch
-        {
-            ClearPlayer(playerId);
-            return false;
-        }
-    }
-
-    private static void ClearIdleCandidate(PlayerControl? pc)
-    {
-        if (pc != null) IdlePoseCandidates.Remove(pc.PlayerId);
-    }
-
-    private static bool UpdateIdleCandidate(PlayerControl pc, out IdlePoseCandidate candidate)
-    {
-        var fingerprint = CapturePoseFingerprint(pc);
-        if (!IdlePoseCandidates.TryGetValue(pc.PlayerId, out var existing) || !existing.Matches(fingerprint))
-        {
-            candidate = new IdlePoseCandidate(fingerprint);
-            IdlePoseCandidates[pc.PlayerId] = candidate;
-        }
-        else
-        {
-            candidate = existing;
-            candidate.StableFrames++;
-        }
-
-        return true;
-    }
-
-    private static PoseFingerprint CapturePoseFingerprint(PlayerControl pc)
-    {
-        var outfit = GetDisplayOutfit(pc);
-        int outfitTypeId = GetDisplayOutfitId(pc);
-        int colorId = GetPlayerColorId(pc);
-        var cosmetics = pc.cosmetics;
-        var parent = cosmetics.transform;
-        var hash = new HashCode();
-        int layers = 0;
-
-        hash.Add(outfitTypeId);
-        hash.Add(colorId);
-        hash.Add(outfit.HatId ?? string.Empty);
-        hash.Add(outfit.SkinId ?? string.Empty);
-        hash.Add(outfit.VisorId ?? string.Empty);
-        hash.Add(outfit.PlayerName ?? string.Empty);
-
-        foreach (var source in cosmetics.GetComponentsInChildren<SpriteRenderer>(true))
-        {
-            if (source == null || source.sprite == null || !source.enabled || !source.gameObject.activeInHierarchy) continue;
-            if (!ShouldCopyIdlePoseLayer(source)) continue;
-
-            layers++;
-            string parentName = source.transform.parent != null ? source.transform.parent.gameObject.name : string.Empty;
-            var localPosition = parent.InverseTransformPoint(source.transform.position);
-            var localRotation = Quaternion.Inverse(parent.rotation) * source.transform.rotation;
-            var localScale = DivideScale(source.transform.lossyScale, parent.lossyScale);
-
-            hash.Add(source.gameObject.name);
-            hash.Add(parentName);
-            hash.Add(source.sprite.GetInstanceID());
-            hash.Add(QuantizePoseValue(localPosition.x));
-            hash.Add(QuantizePoseValue(localPosition.y));
-            hash.Add(QuantizePoseValue(localRotation.x));
-            hash.Add(QuantizePoseValue(localRotation.y));
-            hash.Add(QuantizePoseValue(localRotation.z));
-            hash.Add(QuantizePoseValue(localRotation.w));
-            hash.Add(QuantizePoseValue(localScale.x));
-            hash.Add(QuantizePoseValue(localScale.y));
-            hash.Add(QuantizePoseValue(localScale.z));
-            hash.Add(CosmeticSortOrder(source));
-        }
-
-        return new PoseFingerprint(
-            outfitTypeId,
-            colorId,
-            outfit.HatId ?? string.Empty,
-            outfit.SkinId ?? string.Empty,
-            outfit.VisorId ?? string.Empty,
-            outfit.PlayerName ?? string.Empty,
-            layers,
-            hash.ToHashCode());
-    }
-
-    private static AvatarSnapshot CaptureCurrentPose(PlayerControl pc)
-    {
-        var outfit = GetDisplayOutfit(pc);
-        int outfitTypeId = GetDisplayOutfitId(pc);
-        int colorId = GetPlayerColorId(pc);
-        var layers = new List<SpriteLayerSnapshot>();
-        var cosmetics = pc.cosmetics;
-        var parent = cosmetics.transform;
-
-        foreach (var source in cosmetics.GetComponentsInChildren<SpriteRenderer>(true))
-        {
-            if (source == null || source.sprite == null || !source.enabled || !source.gameObject.activeInHierarchy) continue;
-            if (!ShouldCopyIdlePoseLayer(source)) continue;
-
-            layers.Add(new SpriteLayerSnapshot(
-                "VC_Cached_" + source.gameObject.name,
-                source.sprite,
-                parent.InverseTransformPoint(source.transform.position),
-                Quaternion.Inverse(parent.rotation) * source.transform.rotation,
-                DivideScale(source.transform.lossyScale, parent.lossyScale),
-                source.color,
-                CosmeticSortOrder(source),
-                source.sharedMaterial));
-        }
-
-        return new AvatarSnapshot(outfitTypeId, colorId, outfit.HatId, outfit.SkinId, outfit.VisorId, outfit.PlayerName, layers);
-    }
-
     private static SpriteRenderer AddSprite(Transform parent, string name, Sprite sprite, Vector3 localPosition, Quaternion localRotation, Vector3 localScale, Color color, int order)
     {
         var go = new GameObject(name);
@@ -528,40 +547,6 @@ internal static class CrewmateAvatarRenderer
         sr.maskInteraction = SpriteMaskInteraction.None;
         return sr;
     }
-
-    private static bool ShouldCopyIdlePoseLayer(SpriteRenderer source)
-    {
-        string name = source.gameObject.name.ToLowerInvariant();
-        string parent = source.transform.parent != null ? source.transform.parent.gameObject.name.ToLowerInvariant() : string.Empty;
-        if (IsBodyLike(name) || IsBodyLike(parent)) return false;
-        if (name.Contains("shadow") || parent.Contains("shadow") || name.Contains("pet") || parent.Contains("pet")) return false;
-        return HasIdlePoseName(name) || HasIdlePoseName(parent);
-    }
-
-    private static bool HasIdlePoseName(string value)
-        => value.Contains("hat") || value.Contains("skin") || value.Contains("visor");
-
-    private static bool IsBodyLike(string value)
-        => value.Contains("body") || value.Contains("bean") || value.Contains("player") || value.Contains("base");
-
-    private static int CosmeticSortOrder(SpriteRenderer source)
-    {
-        string name = source.gameObject.name.ToLowerInvariant();
-        string parent = source.transform.parent != null ? source.transform.parent.gameObject.name.ToLowerInvariant() : string.Empty;
-        if (name.Contains("back") || parent.Contains("back")) return BackCosmeticOrder;
-        if (name.Contains("visor") || parent.Contains("visor")) return FrontCosmeticOrder;
-        if (name.Contains("hat") || parent.Contains("hat")) return FrontCosmeticOrder;
-        return CosmeticOrder;
-    }
-
-    private static Vector3 DivideScale(Vector3 value, Vector3 divisor)
-        => new(SafeDiv(value.x, divisor.x), SafeDiv(value.y, divisor.y), SafeDiv(value.z, divisor.z));
-
-    private static float SafeDiv(float value, float divisor)
-        => Mathf.Abs(divisor) < 0.0001f ? value : value / divisor;
-
-    private static int QuantizePoseValue(float value)
-        => Mathf.RoundToInt(value / PoseTransformEpsilon);
 
     private static int ClampColorId(int colorId)
         => colorId >= 0 && colorId < Palette.PlayerColors.Length ? colorId : 0;
@@ -595,156 +580,6 @@ internal static class CrewmateAvatarRenderer
         catch
         {
             return pc.Data.DefaultOutfit;
-        }
-    }
-
-    private static int GetDisplayOutfitId(PlayerControl pc)
-    {
-        try
-        {
-            return (int)pc.CurrentOutfitType;
-        }
-        catch
-        {
-            // Deliberately fail OPEN (0 = Default) here: this is the rebuild fingerprint's outfit id, and
-            // 0 just avoids force-rebuilding the icon on a transient throw. The anti-leak decision lives in
-            // IsConcealed, which fails CLOSED (treats a throw as concealed) so identity can never leak.
-            return 0;
-        }
-    }
-
-    private static bool IsRightFacingIdle(PlayerControl? pc)
-    {
-        if (!IsAvatarReady(pc)) return false;
-        var player = pc!;
-        if (player.cosmetics.FlipX) return false;
-        var physics = player.MyPhysics;
-        if (physics == null) return false;
-        return physics.Velocity.sqrMagnitude <= IdleVelocityEpsilon;
-    }
-
-    private static bool IsAvatarReady(PlayerControl? pc)
-    {
-        if (pc?.Data == null || pc.cosmetics == null) return false;
-        if (!pc.gameObject.activeInHierarchy || !pc.cosmetics.gameObject.activeInHierarchy) return false;
-        if (!pc.moveable) return false;
-        if (IntroCutscene.Instance != null) return false;
-        return true;
-    }
-
-    private sealed class AvatarSnapshot
-    {
-        public readonly int OutfitTypeId;
-        public readonly int ColorId;
-        public readonly string HatId;
-        public readonly string SkinId;
-        public readonly string VisorId;
-        public readonly string PlayerName;
-        public readonly List<SpriteLayerSnapshot> Layers;
-
-        public AvatarSnapshot(int outfitTypeId, int colorId, string hatId, string skinId, string visorId, string playerName, List<SpriteLayerSnapshot> layers)
-        {
-            OutfitTypeId = outfitTypeId;
-            ColorId = colorId;
-            HatId = hatId ?? string.Empty;
-            SkinId = skinId ?? string.Empty;
-            VisorId = visorId ?? string.Empty;
-            PlayerName = playerName ?? string.Empty;
-            Layers = layers;
-        }
-
-        public bool Matches(PlayerControl pc)
-        {
-            if (pc?.Data == null) return false;
-            var outfit = GetDisplayOutfit(pc);
-            return OutfitTypeId == GetDisplayOutfitId(pc)
-                && ColorId == GetPlayerColorId(pc)
-                && HatId == (outfit.HatId ?? string.Empty)
-                && SkinId == (outfit.SkinId ?? string.Empty)
-                && VisorId == (outfit.VisorId ?? string.Empty)
-                && PlayerName == (outfit.PlayerName ?? string.Empty);
-        }
-    }
-
-    private sealed class IdlePoseCandidate
-    {
-        private readonly PoseFingerprint Fingerprint;
-        public int StableFrames;
-        public bool Promoted;
-
-        public IdlePoseCandidate(PoseFingerprint fingerprint)
-        {
-            Fingerprint = fingerprint;
-            StableFrames = 1;
-        }
-
-        public bool Matches(PoseFingerprint fingerprint)
-            => Fingerprint.Matches(fingerprint);
-    }
-
-    private readonly struct PoseFingerprint
-    {
-        private readonly int OutfitTypeId;
-        private readonly int ColorId;
-        private readonly string HatId;
-        private readonly string SkinId;
-        private readonly string VisorId;
-        private readonly string PlayerName;
-        private readonly int Hash;
-        public readonly int LayerCount;
-
-        public PoseFingerprint(int outfitTypeId, int colorId, string hatId, string skinId, string visorId, string playerName, int layerCount, int hash)
-        {
-            OutfitTypeId = outfitTypeId;
-            ColorId = colorId;
-            HatId = hatId ?? string.Empty;
-            SkinId = skinId ?? string.Empty;
-            VisorId = visorId ?? string.Empty;
-            PlayerName = playerName ?? string.Empty;
-            LayerCount = layerCount;
-            Hash = hash;
-        }
-
-        public bool Matches(PoseFingerprint other)
-            => OutfitTypeId == other.OutfitTypeId
-               && ColorId == other.ColorId
-               && HatId == other.HatId
-               && SkinId == other.SkinId
-               && VisorId == other.VisorId
-               && PlayerName == other.PlayerName
-               && LayerCount == other.LayerCount
-               && Hash == other.Hash;
-    }
-
-    private readonly struct SpriteLayerSnapshot
-    {
-        public readonly string Name;
-        public readonly Sprite Sprite;
-        public readonly Vector3 LocalPosition;
-        public readonly Quaternion LocalRotation;
-        public readonly Vector3 LocalScale;
-        public readonly Color Color;
-        public readonly int SortOrder;
-        public readonly Material? SharedMaterial;
-
-        public SpriteLayerSnapshot(
-            string name,
-            Sprite sprite,
-            Vector3 localPosition,
-            Quaternion localRotation,
-            Vector3 localScale,
-            Color color,
-            int sortOrder,
-            Material? sharedMaterial)
-        {
-            Name = name;
-            Sprite = sprite;
-            LocalPosition = localPosition;
-            LocalRotation = localRotation;
-            LocalScale = localScale;
-            Color = color;
-            SortOrder = sortOrder;
-            SharedMaterial = sharedMaterial;
         }
     }
 }

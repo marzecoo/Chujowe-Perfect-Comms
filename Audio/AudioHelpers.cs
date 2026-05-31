@@ -14,11 +14,11 @@ internal static class AudioHelpers
     public const int ImmediatePlaybackPrebufferSamples = 0; // no startup hold; avoid starvation/prebuffer loops
     public const int PlaybackRecoveryPrebufferSamples = FrameSize * 3; // 60 ms after stream already started
     public const int PlaybackMaxPrebufferWaitMilliseconds = 180; // do not strand short utterances forever
-    public const int OpusBitrate = 48_000;
+    public const int OpusBitrate = 96_000;
     public const int OpusComplexity = 10;
-    public const bool OpusUseConstrainedVbr = true;
-    public const bool OpusUseInbandFec = false;
-    public const int OpusPacketLossPercent = 0;
+    public const bool OpusUseConstrainedVbr = false;
+    public const bool OpusUseInbandFec = true;
+    public const int OpusPacketLossPercent = 15;
     public const float TransmitPeakCeiling = 0.30f;
     public const float TransmitLimiterReleasePerFrame = 0.025f;
     public const float CaptureEncodePeakCeiling = 0.95f;

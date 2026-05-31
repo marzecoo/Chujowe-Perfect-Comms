@@ -26,6 +26,7 @@ public class VoiceChatRoom
     private const float MissingPeerRecoveryGraceSeconds = 8f;
     private const float InterstellarSwitchPeerRecoveryGraceSeconds = 2f;
     private const float MissingPeerRecoveryIntervalSeconds = 5f;
+    private const float MissingPeerRecoveryCheckIntervalSeconds = 0.5f;
     private const double RadioStateRpcHeartbeatSeconds = 1.0;
     private const float TransitionTraceSeconds = 45f;
     private const float TransitionTraceStateInterval = 0.25f;
@@ -105,6 +106,7 @@ public class VoiceChatRoom
     private float  _bootstrapRefreshTimer;
     private float _missingPeerRecoveryReadyTime = -999f;
     private float _lastMissingPeerRecoveryTime = -999f;
+    private float _lastMissingPeerRecoveryCheckTime = -999f;
     private bool _haveTracePhase;
     private VoiceGamePhase _lastTracePhase = VoiceGamePhase.Unknown;
     private DateTime _transitionTraceUntilUtc = DateTime.MinValue;
@@ -210,20 +212,7 @@ public class VoiceChatRoom
 
     public void SetMicrophone(string deviceName)
     {
-#if ANDROID
-        if (VoiceChatPluginMain.ResidentObject != null)
-        {
-            var behaviour = VoiceChatPluginMain.ResidentObject.GetComponent<PermissionHelper>()
-                ?? VoiceChatPluginMain.ResidentObject.AddComponent<PermissionHelper>();
-            behaviour.RequestMicAndStart(this, deviceName ?? string.Empty);
-        }
-        else
-        {
-            StartMicNow(deviceName ?? string.Empty);
-        }
-#else
         StartMicNow(deviceName ?? string.Empty);
-#endif
     }
 
     internal void StartMicNow(string deviceName)
@@ -316,7 +305,7 @@ public class VoiceChatRoom
             _voiceBackend.Update(snapshot, speakerCache, _virtualMics, localInVent, _commsSabActive);
             if (snapshot != null)
                 SendRadioState(snapshot.LocalPlayerId, VoiceChatHudState.ActiveTeamRadioChannel());
-            TryRecoverMissingBackendPeers(snapshot);
+            MaybeRecoverMissingBackendPeers(snapshot);
         }
 
         updateStep = "diagnostics";
@@ -599,11 +588,7 @@ public class VoiceChatRoom
             ApplyMicSensitivity(settings?.NoiseGateThreshold.Value ?? 0.003f, settings?.MicSensitivity.Value ?? 1f),
             ApplyMicSensitivity(settings?.VadThreshold.Value ?? 0.004f, settings?.MicSensitivity.Value ?? 1f));
         _voiceBackend.SetCaptureRuntimeOptions(BuildCaptureRuntimeOptions(settings));
-#if ANDROID
-        SetMicrophone(settings?.MicrophoneDevice ?? string.Empty);
-#else
-        _voiceBackend.SetMicrophone(settings?.MicrophoneDevice ?? string.Empty, settings?.MicVolume.Value ?? 1f);
-#endif
+_voiceBackend.SetMicrophone(settings?.MicrophoneDevice ?? string.Empty, settings?.MicVolume.Value ?? 1f);
 #if WINDOWS
         _voiceBackend.SetSpeaker(settings?.SpeakerDevice ?? string.Empty);
 #else
@@ -624,6 +609,14 @@ public class VoiceChatRoom
         VoiceDiagnostics.Log("transport.selected", $"backend={endpoint.Backend} room={roomCode} region={region} endpoint={endpointLabel} mic={UsingMicrophone} speaker={UsingSpeaker} localLevel={LocalMicLevel:0.000}");
     }
 
+    private void MaybeRecoverMissingBackendPeers(VoiceGameStateSnapshot? snapshot)
+    {
+        if (Time.time - _lastMissingPeerRecoveryCheckTime < MissingPeerRecoveryCheckIntervalSeconds)
+            return;
+
+        _lastMissingPeerRecoveryCheckTime = Time.time;
+        TryRecoverMissingBackendPeers(snapshot);
+    }
     private void TryRecoverMissingBackendPeers(VoiceGameStateSnapshot? snapshot)
     {
         if (_voiceBackend == null || snapshot == null)

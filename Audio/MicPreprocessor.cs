@@ -290,6 +290,7 @@ internal sealed class MicPreprocessor : IDisposable
 
     private static void LogNoiseSuppression(string message)
     {
+        if (!VoiceDiagnostics.IsEnabled) return;
         VoiceDiagnostics.Log("bcl.rnnoise", message);
         try
         {
