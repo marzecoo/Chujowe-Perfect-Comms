@@ -130,6 +130,17 @@ public class VoiceChatRoom
         Current = null;
     }
 
+    internal static void ClearVoiceUiForLifecycleReset(string reason)
+    {
+        PingTrackerPatch.ClearSpeakingBar();
+        MeetingSpeakingIndicatorPatch.ClearAllIndicators();
+        VoiceOverlayState.InvalidateCache();
+        CrewmateAvatarRenderer.ClearCache();
+        VoiceCameraState.Clear();
+        VoiceProximityCalculator.ResetSightState();
+        VoiceDiagnostics.Log("voice.ui.clear", $"reason={LogSafe(reason)}");
+    }
+
     // ======================================================================
     // Constructor
     // ======================================================================
@@ -231,19 +242,11 @@ public class VoiceChatRoom
 
     internal static void SendJailVoicePacket(byte jailedPlayerId, bool allowed)
     {
-        var current = Current;
         var local = PlayerControl.LocalPlayer;
         if (local == null) return;
 
-        var payload = new[]
-        {
-            (byte)'P', (byte)'C', (byte)'J', (byte)'V',
-            local.PlayerId,
-            jailedPlayerId,
-            allowed ? (byte)1 : (byte)0,
-        };
-
-        current?._voiceBackend?.SendCustomMessage(payload);
+        // Authority only via authenticated Among Us RPC (binds InnerNet sender); the voice
+        // side-channel's self-asserted identity would let any peer forge a jailor's mute.
         VoiceJailVoiceRpc.Send(local.PlayerId, jailedPlayerId, allowed);
     }
 
@@ -447,8 +450,7 @@ public class VoiceChatRoom
         VoiceDiagnostics.Log("voice.refresh.applied",
             $"{sender.ToDiagnosticFields()} nonce={nonce} trigger={trigger} backend={_activeBackend} room={LogSafe(_activeRoomCode ?? "unknown")} region={LogSafe(_activeRegion ?? "unknown")} peers={_voiceBackend?.PeerCount ?? 0}");
 
-        PingTrackerPatch.ClearSpeakingBar();
-        MeetingSpeakingIndicatorPatch.ClearAllIndicators();
+        // Rejoin() begins with ClearVoiceUiForLifecycleReset, so the UI teardown runs exactly once.
         StartTransitionTrace($"host voice refresh: {trigger}", snapshot);
         Rejoin("host voice refresh");
     }
@@ -459,8 +461,7 @@ public class VoiceChatRoom
         VoiceDiagnostics.Log("voice.refresh.local.applied",
             $"trigger={trigger} backend={_activeBackend} room={LogSafe(_activeRoomCode ?? "unknown")} region={LogSafe(_activeRegion ?? "unknown")} peers={_voiceBackend?.PeerCount ?? 0}");
 
-        PingTrackerPatch.ClearSpeakingBar();
-        MeetingSpeakingIndicatorPatch.ClearAllIndicators();
+        // Rejoin() begins with ClearVoiceUiForLifecycleReset, so the UI teardown runs exactly once.
         StartTransitionTrace($"local voice refresh: {trigger}", snapshot);
         Rejoin("local voice refresh");
     }
@@ -473,8 +474,8 @@ public class VoiceChatRoom
         if (!force && _lastSentHostSettings.HasValue && _lastSentHostSettings.Value.Equals(settings))
             return;
 
-        var payload = VoiceRoomControlCodec.EncodeHostSettingsSnapshot(settings);
-        _voiceBackend.SendCustomMessage(payload);
+        // Authority only via authenticated Among Us RPC; the side-channel's self-asserted
+        // sender id would let any peer forge host voice settings.
         VoiceRoomSettingsRpc.SendSnapshot(settings);
         _lastSentHostSettings = settings;
         VoiceDiagnostics.Log("settings.sent", $"kind=host-snapshot transport={_activeBackend} rpc=true");
@@ -575,6 +576,7 @@ public class VoiceChatRoom
 
         var endpointLabel = endpoint.IsInterstellar ? VoiceEndpointSettings.BuildInterstellarRoomUrl(endpoint.ServerUrl) : endpoint.ServerUrl;
         VoiceDiagnostics.Log("transport.switch", $"backend={endpoint.Backend} room={roomCode} region={region} endpoint={endpointLabel}");
+        ClearVoiceUiForLifecycleReset("transport switch");
         _voiceBackend?.Dispose();
         _voiceBackend = null;
         _interstellarVoice = null;
@@ -664,11 +666,11 @@ public class VoiceChatRoom
     }
 
     private static int CountExpectedRemotePlayers(VoiceGameStateSnapshot snapshot)
-        => snapshot.Players.Count(player => !player.IsLocal && !VoiceProximityCalculator.IsUnavailableTarget(player) && player.ClientId >= 0);
+        => snapshot.Players.Count(player => !player.IsLocal && !player.Disconnected && !player.IsDummy && player.ClientId >= 0);
 
     private static string DescribeExpectedRemotePlayers(VoiceGameStateSnapshot snapshot)
         => string.Join(",", snapshot.Players
-            .Where(player => !player.IsLocal && !VoiceProximityCalculator.IsUnavailableTarget(player) && player.ClientId >= 0)
+            .Where(player => !player.IsLocal && !player.Disconnected && !player.IsDummy && player.ClientId >= 0)
             .Select(player => $"{player.ClientId}:{LogSafe(player.PlayerName)}"));
 
     private static bool TryGetVoiceRoomIdentity(VoiceGameStateSnapshot? snapshot, VoiceTransportBackend backend, out string roomCode, out string region)
@@ -773,8 +775,7 @@ public class VoiceChatRoom
         if ((now - _lastHostSettingsRequestUtc).TotalSeconds < 5)
             return;
 
-        var payload = VoiceRoomControlCodec.EncodeHostSettingsRequest();
-        _voiceBackend.SendCustomMessage(payload);
+        // Request the host snapshot over the authenticated RPC only (see SendHostSettingsSnapshot).
         VoiceRoomSettingsRpc.SendRequest();
         _lastHostSettingsRequestUtc = now;
         VoiceDiagnostics.Log("settings.requested", $"kind=host-snapshot transport={_activeBackend} rpc=true reason={reason} force={force}");
@@ -799,6 +800,17 @@ public class VoiceChatRoom
         current._hostSettingsResyncPending = false;
         current._lastHostSettingsRequestUtc = DateTime.MinValue;
         VoiceDiagnostics.Log("settings.host.resync_applied", $"transport={transport} hostClient={hostClientId} hostPlayer={hostPlayerId}");
+    }
+
+    internal static void NoteHostSettingsSnapshotRejected()
+    {
+        // Snapshot rejected (e.g. stale host id during migration): flag a re-request so settings
+        // converge once the host id resolves. The 5s throttle in RequestHostSettingsSnapshot bounds it.
+        var current = Current;
+        if (current == null || current.IsLocalHost())
+            return;
+
+        current._hostSettingsResyncPending = true;
     }
 
     private void RespondToHostSettingsRequestFromSender(VoiceHostSenderIdentity sender)
@@ -876,47 +888,9 @@ public class VoiceChatRoom
 
     private void ProcessBackendCustomMessage(VoiceBackendCustomMessage backendMessage)
     {
-        var payload = backendMessage.Payload;
-        if (payload.Length == 7
-            && payload[0] == (byte)'P'
-            && payload[1] == (byte)'C'
-            && payload[2] == (byte)'J'
-            && payload[3] == (byte)'V')
-        {
-            VoiceRoleMuteState.ApplyRemoteJailVoice(payload[4], payload[5], payload[6] != 0);
-            return;
-        }
-
-        if (!VoiceRoomControlCodec.TryDecode(payload, out var controlMessage))
-            return;
-
-        if (controlMessage.Kind == VoiceRoomControlMessageKind.HostSettingsRequest)
-        {
-            RespondToHostSettingsRequestFromSender(VoiceHostAuthority.FromBackendMessage(backendMessage, _activeBackend.ToString()));
-            return;
-        }
-
-        if (controlMessage.Kind == VoiceRoomControlMessageKind.HostSettingsSnapshot && !IsLocalHost())
-        {
-            var sender = VoiceHostAuthority.FromBackendMessage(backendMessage, _activeBackend.ToString());
-            if (!VoiceHostAuthority.IsTrustedHostSender(
-                    backendMessage,
-                    CurrentSnapshot,
-                    _activeBackend.ToString(),
-                    out var reason,
-                    out var hostClientId,
-                    out var hostPlayerId))
-            {
-                VoiceDiagnostics.Log("settings.snapshot.rejected",
-                    $"{sender.ToDiagnosticFields()} reason={reason} hostClient={hostClientId} hostPlayer={hostPlayerId}");
-                return;
-            }
-
-            VoiceRoomSettingsState.ApplyRemote(controlMessage.Settings);
-            NoteHostSettingsSnapshotApplied(_activeBackend.ToString(), hostClientId, hostPlayerId);
-            VoiceDiagnostics.Log("settings.snapshot.applied",
-                $"{sender.ToDiagnosticFields()} hostClient={hostClientId} hostPlayer={hostPlayerId}");
-        }
+        // SECURITY: side-channel sender id is self-asserted, so it is NOT trusted for authority;
+        // host settings and jail-voice flow only over authenticated RPC. Legacy payloads are ignored.
+        _ = backendMessage;
     }
 
     private static bool CheckCommsSabotage(out string source)
@@ -964,6 +938,7 @@ public class VoiceChatRoom
 
     private void Rejoin(string reason)
     {
+        ClearVoiceUiForLifecycleReset(reason);
         _voiceBackend?.Dispose();
         _voiceBackend = null;
         _interstellarVoice = null;
@@ -996,6 +971,7 @@ public class VoiceChatRoom
 
     public void Close()
     {
+        ClearVoiceUiForLifecycleReset("room close");
         _voiceBackend?.Dispose();
         _voiceBackend = null;
         _interstellarVoice = null;

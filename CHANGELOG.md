@@ -1,5 +1,18 @@
 # Changelog
 
+## Mega Chujowe Perfect Comms v1.0.2
+
+Fork release for [Town Of Us Mega Chujowe Extension](https://github.com/HekerB/TownOfUsMegaChujoweExtension).
+
+- Upgraded base plugin to upstream v2.0.9.
+- Added Voice Falloff Softness option for gentler near-vision volume fade.
+- Added manual speaking-bar layouts with auto-fit and jail unmute button.
+- Hardened WebRTC peer recovery, lobby join robustness, and jitter recovery.
+- Hardened security and host settings authority checks.
+- Kept and validated all TouMCE-specific custom voice rules and features.
+
+See `docs/release-notes-v1.0.2.md` for the full fork release notes.
+
 ## Mega Chujowe Perfect Comms v1.0.1
 
 Fork release for [Town Of Us Mega Chujowe Extension](https://github.com/HekerB/TownOfUsMegaChujoweExtension).
