@@ -22,8 +22,9 @@ internal static class AudioHelpers
     public const float TransmitPeakCeiling = 0.30f;
     public const float TransmitLimiterReleasePerFrame = 0.025f;
     public const float CaptureEncodePeakCeiling = 0.95f;
-    public const float PlaybackMixPeakCeiling = 0.95f;
-    public const float PlaybackMixLimiterReleasePerFrame = 0.05f;
+    public const float PlaybackMixPeakCeiling = 0.90f;
+    public const float PlaybackMixLimiterReleasePerFrame = 0.025f;
+    public const float ActivePlaybackInputThreshold = 0.003f;
 
     public static float GetTransmitLimiterGain(float peak)
     {
@@ -49,6 +50,12 @@ internal static class AudioHelpers
     {
         if (peak <= 0f || peak <= PlaybackMixPeakCeiling) return 1f;
         return PlaybackMixPeakCeiling / peak;
+    }
+
+    public static float GetPlaybackCrowdHeadroomGain(int activeInputCount)
+    {
+        if (activeInputCount <= 1) return 1f;
+        return Math.Clamp(1.10f / MathF.Sqrt(activeInputCount), 0.35f, 1f);
     }
 
     public static float MeasurePeak(float[] samples, int count)

@@ -484,16 +484,44 @@ internal class AudioMixer : ISampleProvider
         Array.Clear(buffer, offset, count);
         if (_tmp == null || _tmp.Length < count) _tmp = new float[count];
         if (inputs.Length == 0) return count;
+        var activeInputs = 0;
         foreach (var inp in inputs)
         {
             int r = inp.Provider.Read(_tmp, 0, count);
-            for (int i = 0; i < r; i++) buffer[offset + i] += _tmp[i];
+            float inputPeak = 0f;
+            for (int i = 0; i < r; i++)
+            {
+                var sample = _tmp[i];
+                if (!float.IsFinite(sample))
+                {
+                    sample = 0f;
+                    _tmp[i] = 0f;
+                }
+
+                var abs = sample < 0f ? -sample : sample;
+                if (abs > inputPeak)
+                    inputPeak = abs;
+
+                buffer[offset + i] += sample;
+            }
+
+            if (inputPeak > AudioHelpers.ActivePlaybackInputThreshold)
+                activeInputs++;
         }
 
-        LimitOutputPeakIfNeeded(buffer, offset, count, inputs.Length);
+        ApplyCrowdHeadroom(buffer, offset, count, activeInputs);
+        LimitOutputPeakIfNeeded(buffer, offset, count, activeInputs);
         return count;
     }
 
+    private static void ApplyCrowdHeadroom(float[] buffer, int offset, int count, int activeInputCount)
+    {
+        var gain = AudioHelpers.GetPlaybackCrowdHeadroomGain(activeInputCount);
+        if (gain >= 0.999f) return;
+
+        for (int i = 0; i < count; i++)
+            buffer[offset + i] *= gain;
+    }
     private void LimitOutputPeakIfNeeded(float[] buffer, int offset, int count, int inputCount)
     {
         float preLimitPeak = 0f;

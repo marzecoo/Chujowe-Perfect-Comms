@@ -15,29 +15,18 @@
 		<LangVersion>preview</LangVersion>
 		<Nullable>enable</Nullable>
 		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-		<DebugType>embedded</DebugType>
+		<DebugType Condition="'$(Configuration)' == 'Debug'">embedded</DebugType>
+        <DebugType Condition="'$(Configuration)' != 'Debug'">none</DebugType>
+        <DebugSymbols Condition="'$(Configuration)' != 'Debug'">false</DebugSymbols>
 		<!-- Among Us/BepInEx IL2CPP currently targets net6.0; selected transitive libraries are runtime-compatible here despite newer TFM support warnings. -->
 		<SuppressTfmSupportBuildWarnings>true</SuppressTfmSupportBuildWarnings>
 		<GenerateAssemblyInfo>True</GenerateAssemblyInfo>
-		<Configurations>Debug;Release;Android;Windows</Configurations>
+		<Configurations>Debug;Release;Windows</Configurations>
 	</PropertyGroup>
-
-	<!--
-    Platform configurations:
-      Windows  – default PC build; uses the Interstellar voice backend for mic/speaker.
-      Android  – Android/mobile build; uses Unity Microphone API + AudioSource for mic/speaker.
-    To build for Android, set the Configuration to "Android" in your IDE or run:
-      dotnet build -c Android
-  -->
 
 	<!-- Windows build (default): Interstellar voice backend -->
-	<PropertyGroup Condition="'$(Configuration)' != 'Android'">
+	<PropertyGroup>
 		<DefineConstants>$(DefineConstants);WINDOWS</DefineConstants>
-	</PropertyGroup>
-
-	<!-- Android build: Unity Microphone API + AudioSource speaker -->
-	<PropertyGroup Condition="'$(Configuration)' == 'Android'">
-		<DefineConstants>$(DefineConstants);ANDROID</DefineConstants>
 	</PropertyGroup>
 
 	<ItemGroup>
@@ -87,9 +76,6 @@
 		</EmbeddedResource>
 		<EmbeddedResource Include="Libs\rnnoise.x64.dll">
 			<LogicalName>Lib.rnnoise.x64.dll</LogicalName>
-		</EmbeddedResource>
-		<EmbeddedResource Include="Libs\rnnoise.x86.dll">
-			<LogicalName>Lib.rnnoise.x86.dll</LogicalName>
 		</EmbeddedResource>
 		<EmbeddedResource Include="$(NuGetPackageRoot)sipsorcery\10.0.6\lib\net6.0\SIPSorcery.dll">
 			<LogicalName>Lib.SIPSorcery.dll</LogicalName>

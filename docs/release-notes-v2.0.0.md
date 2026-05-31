@@ -63,9 +63,7 @@ Voice no longer rides on Among Us RPCs. Perfect Comms now uses real voice backen
 - Added Interstellar saved per-player volume support.
 - Added Interstellar proximity, ghost, radio, meeting, vent, camera, and virtual speaker routing.
 - Added Interstellar Windows microphone capture through `WaveInEvent` into `ManualMicrophone`.
-- Added Interstellar Android microphone support through the existing Android microphone path.
 - Added Interstellar Windows speaker playback through `ManualSpeaker` and WinMM output.
-- Added Interstellar Android speaker playback through `ManualSpeaker`.
 - Added Interstellar synthetic microphone tone support for calibration/debugging.
 - Added Interstellar backend rejoin/reset cleanup paths.
 
@@ -105,7 +103,6 @@ Voice no longer rides on Among Us RPCs. Perfect Comms now uses real voice backen
 - Added BCL radio highpass and distortion path.
 - Added BCL master volume routing.
 - Added BCL playback diagnostics for graph format, source format, output device, latency, and split-mono mode.
-- Added Android BCL sample-provider speaker support.
 
 ### Packets, Jitter, and Timing
 

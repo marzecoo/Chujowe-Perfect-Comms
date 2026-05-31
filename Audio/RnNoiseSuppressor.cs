@@ -9,8 +9,8 @@ namespace VoiceChatPlugin.Audio;
 internal sealed unsafe class RnNoiseSuppressor : IDisposable
 {
     private const string NativeFileName = "rnnoise.dll";
-    private static string ResourceName => Environment.Is64BitProcess ? "Lib.rnnoise.x64.dll" : "Lib.rnnoise.x86.dll";
-    private static string ArchitectureLabel => Environment.Is64BitProcess ? "x64" : "x86";
+    private const string ResourceName = "Lib.rnnoise.x64.dll";
+    private const string ArchitectureLabel = "x64";
     private static int ExpectedSampleRate => AudioHelpers.ClockRate;
 
     private static readonly object LoadLock = new();
@@ -144,6 +144,14 @@ internal sealed unsafe class RnNoiseSuppressor : IDisposable
 
             if (!string.IsNullOrEmpty(_loadError))
             {
+                native = default!;
+                error = _loadError;
+                return false;
+            }
+
+            if (!Environment.Is64BitProcess)
+            {
+                _loadError = "rnnoise-x64-only";
                 native = default!;
                 error = _loadError;
                 return false;

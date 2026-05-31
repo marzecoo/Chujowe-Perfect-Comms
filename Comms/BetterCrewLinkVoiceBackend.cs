@@ -113,10 +113,6 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
     private string _captureDesiredReason = "init";
     private int _captureTransitionVersion;
 #endif
-#if ANDROID
-    private AndroidMicrophone? _androidMicrophone;
-    private AndroidSampleProviderSpeaker? _androidSpeaker;
-#endif
     private OpusEncoder _encoder = CreateEncoder();
     private Timer? _syntheticMicTimer;
     private string _lastMicDeviceName = string.Empty;
@@ -205,9 +201,6 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         Mute = mute;
 #if WINDOWS
         QueueMicrophoneTransition(!mute, mute ? "muted" : "unmuted");
-#elif ANDROID
-        if (mute) StopAndroidMicrophone("muted");
-        else StartAndroidMicrophone("unmuted");
 #endif
         VoiceDiagnostics.Log("bcl.mute", $"mute={Mute} micReady={_microphoneReady} callbacks={Volatile.Read(ref _micCallbacks)} bytes={Volatile.Read(ref _micBytes)}");
     }
@@ -221,9 +214,6 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
     public void SetMicVolume(float volume)
     {
         _micVolume = Mathf.Clamp(volume, 0f, 2f);
-#if ANDROID
-        _androidMicrophone?.SetVolume(_micVolume);
-#endif
     }
 
     public void SetNoiseGate(float noiseGateThreshold, float vadThreshold)
@@ -242,9 +232,6 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
 #if WINDOWS
         if (restartCapture && !Mute && _microphoneReady)
             QueueMicrophoneTransition(true, "capture-options");
-#elif ANDROID
-        if (restartCapture && !Mute && _microphoneReady)
-            StartAndroidMicrophone("capture-options");
 #endif
         VoiceDiagnostics.Log("bcl.capture-options",
             $"capture={DescribeCaptureMode()} syntheticTone={options.SyntheticMicToneEnabled} noiseSuppression={options.NoiseSuppressionEnabled} calibration={options.MicCalibrationDiagnostics} sensitivity={options.MicSensitivity:0.00}");
@@ -263,15 +250,6 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         }
 
         QueueMicrophoneTransition(true, "settings");
-#elif ANDROID
-        if (Mute)
-        {
-            StopAndroidMicrophone("set-muted");
-            VoiceDiagnostics.Log("bcl.mic", $"ready=false muted=true device=\"{_lastMicDeviceName}\" callbacks={Volatile.Read(ref _micCallbacks)} bytes={Volatile.Read(ref _micBytes)}");
-            return;
-        }
-
-        StartAndroidMicrophone("settings");
 #else
         _microphoneReady = false;
 #endif
@@ -550,74 +528,6 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
     }
 #endif
 
-#if ANDROID
-    private void StartAndroidMicrophone(string reason)
-    {
-        try
-        {
-            StopAndroidMicrophone($"restart:{reason}");
-            if (_captureOptions.SyntheticMicToneEnabled)
-            {
-                StartSyntheticMicTone(reason);
-            }
-            else
-            {
-                _androidMicrophone = new AndroidMicrophone();
-                _androidMicrophone.DataAvailable += OnAndroidMicrophoneData;
-                _androidMicrophone.SetVolume(_micVolume);
-                _androidMicrophone.Start(_lastMicDeviceName);
-            }
-
-            _microphoneReady = true;
-            VoiceDiagnostics.Log("bcl.mic", $"ready=true reason={reason} capture={DescribeCaptureMode()} device=\"{_lastMicDeviceName}\" syntheticTone={_captureOptions.SyntheticMicToneEnabled} volume={_micVolume:0.00}");
-        }
-        catch (Exception ex)
-        {
-            StopAndroidMicrophone($"failed:{reason}");
-            VoiceDiagnostics.Log("bcl.mic", $"ready=false reason={reason} device=\"{_lastMicDeviceName}\" error=\"{ex.Message}\"");
-        }
-    }
-
-    private void StopAndroidMicrophone(string reason)
-    {
-        StopSyntheticMicTone();
-        var microphone = _androidMicrophone;
-        var hadMic = microphone != null || _microphoneReady;
-        _androidMicrophone = null;
-        if (microphone != null)
-        {
-            try { microphone.DataAvailable -= OnAndroidMicrophoneData; } catch { }
-            try { microphone.Dispose(); } catch { }
-        }
-
-        _microphoneReady = false;
-        lock (_captureFrameSync)
-        {
-            _captureFrameSamples = 0;
-        }
-        _micPreprocessor.Reset();
-        _localLevel = 0f;
-        _localSpeaking = false;
-        if (hadMic)
-            VoiceDiagnostics.Log("bcl.mic", $"ready=false reason={reason} device=\"{_lastMicDeviceName}\" callbacks={Volatile.Read(ref _micCallbacks)} bytes={Volatile.Read(ref _micBytes)} samples={Volatile.Read(ref _micSamples)}");
-    }
-
-    private void OnAndroidMicrophoneData(float[] buffer, int length)
-    {
-        if (_disposed || buffer.Length == 0) return;
-        Interlocked.Increment(ref _micCallbacks);
-        int samples = Math.Min(Math.Max(length, 0), buffer.Length);
-        Interlocked.Add(ref _micBytes, samples * sizeof(float));
-        if (Mute)
-        {
-            Interlocked.Increment(ref _micMutedDrops);
-            return;
-        }
-        if (samples <= 0) return;
-        Interlocked.Add(ref _micSamples, samples);
-        ProcessMicrophoneCaptureSamples(buffer, samples);
-    }
-#endif
 
     private static string DescribeWaveFormat(WaveFormat? format)
     {
@@ -654,24 +564,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             VoiceDiagnostics.Log("bcl.speaker", $"ready=false device=\"{deviceName}\" error=\"{ex.Message}\"");
         }
 #else
-#if ANDROID
-        try
-        {
-            _androidSpeaker?.Dispose();
-            _androidSpeaker = new AndroidSampleProviderSpeaker(_playbackProvider);
-            _speakerReady = _androidSpeaker.IsPlaying;
-            VoiceDiagnostics.Log("bcl.speaker", $"ready={_speakerReady} device=\"{deviceName}\" sourceFormat=\"left={_leftPlayback.Endpoint.WaveFormat};right={_rightPlayback.Endpoint.WaveFormat}\" graphFormat=\"{_playbackProvider.WaveFormat}\" androidAudioSource=true");
-        }
-        catch (Exception ex)
-        {
-            try { _androidSpeaker?.Dispose(); } catch { }
-            _androidSpeaker = null;
-            _speakerReady = false;
-            VoiceDiagnostics.Log("bcl.speaker", $"ready=false device=\"{deviceName}\" error=\"{ex.Message}\"");
-        }
-#else
         _speakerReady = false;
-#endif
 #endif
     }
 
@@ -785,9 +678,6 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             try { action(); } catch (Exception ex) { VoiceDiagnostics.Log("bcl.error", $"stage=mainThread error=\"{ex.Message}\""); }
         }
 
-#if ANDROID
-        _androidMicrophone?.Tick();
-#endif
 
         if (snapshot == null)
         {
@@ -845,10 +735,6 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         try { _waveOut?.Stop(); } catch { }
         try { _waveOut?.Dispose(); } catch { }
         _waveOut = null;
-#elif ANDROID
-        StopAndroidMicrophone("dispose");
-        try { _androidSpeaker?.Dispose(); } catch { }
-        _androidSpeaker = null;
 #endif
         _micPreprocessor.Dispose();
         var socket = _socket;
@@ -2197,11 +2083,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
     private string DescribeCaptureMode()
     {
         if (_captureOptions.SyntheticMicToneEnabled) return "synthetic";
-#if ANDROID
-        return "android-unity-microphone";
-#else
         return "wavein-only";
-#endif
     }
 
     private static OpusEncoder CreateEncoder()
@@ -2546,7 +2428,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             return DecodeAndAddSamples(data, false, AudioHelpers.FrameSize, out error, out decodedFrames);
         }
 
-        // 120 ms @ 48 kHz mono — the maximum Opus frame size. Decoding real packets into this much output
+        // 120 ms @ 48 kHz mono Ä‚ËĂ˘â€šÂ¬Ă˘â‚¬ĹĄ the maximum Opus frame size. Decoding real packets into this much output
         // space (and passing it as frame_size) means a non-conformant peer that sends a 40/60 ms frame or
         // under-stamps its duration can never trip OPUS_BUFFER_TOO_SMALL / IndexOutOfRange inside Concentus.
         private const int MaxDecodeCapacitySamples = 5760;

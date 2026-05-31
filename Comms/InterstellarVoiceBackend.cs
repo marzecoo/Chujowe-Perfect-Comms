@@ -48,10 +48,6 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
     private int _customTx;
     private int _customRx;
     private int _customSkipped;
-#if ANDROID
-    private AndroidMicrophone? _androidMicrophone;
-    private AndroidSpeaker? _androidSpeaker;
-#endif
 #if WINDOWS
     private IWaveIn? _windowsMicrophoneCapture;
     private ManualMicrophone? _windowsMicrophone;
@@ -299,10 +295,6 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
 #endif
             if (_captureOptions.SyntheticMicToneEnabled)
             {
-#if ANDROID
-                _androidMicrophone?.Dispose();
-                _androidMicrophone = null;
-#endif
                 var manualMicrophone = new ManualMicrophone();
                 _syntheticMicrophone = manualMicrophone;
                 _room.Microphone = manualMicrophone;
@@ -310,15 +302,10 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
             }
             else
             {
-#if ANDROID
-                _androidMicrophone?.Dispose();
-                var manualMicrophone = new ManualMicrophone();
-                _androidMicrophone = new AndroidMicrophone();
-                _androidMicrophone.DataAvailable += (buffer, _) => manualMicrophone.PushAudioData(buffer);
-                _androidMicrophone.Start(_lastMicDeviceName);
-                _room.Microphone = manualMicrophone;
-#else
+#if WINDOWS
                 StartWindowsMicrophone(_lastMicDeviceName);
+#else
+                _room.Microphone = null;
 #endif
             }
             SetMicVolume(_lastMicVolume);
@@ -337,10 +324,6 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
     {
         var hadMic = _microphoneReady || _room.Microphone != null;
         StopSyntheticMicTone();
-#if ANDROID
-        _androidMicrophone?.Dispose();
-        _androidMicrophone = null;
-#endif
 #if WINDOWS
         StopWindowsMicrophoneCapture();
 #endif
@@ -666,14 +649,7 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
     {
         try
         {
-#if ANDROID
-            _androidSpeaker?.Dispose();
-            var manualSpeaker = new ManualSpeaker(() => _androidSpeaker?.Dispose());
-            _room.Speaker = manualSpeaker;
-            _androidSpeaker = new AndroidSpeaker(manualSpeaker);
-            _speakerReady = _room.Speaker != null;
-            VoiceDiagnostics.Log("interstellar.speaker", $"ready={_speakerReady} device=\"{deviceName}\"");
-#elif WINDOWS
+#if WINDOWS
             StopWindowsSpeaker();
             var manualSpeaker = new ManualSpeaker(StopWindowsSpeaker);
             _room.Speaker = manualSpeaker;
@@ -701,10 +677,7 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
         catch (Exception ex)
         {
             VoiceDiagnostics.DebugError($"[VC] Interstellar speaker init failed: {ex.Message}");
-#if ANDROID
-            _androidSpeaker?.Dispose();
-            _androidSpeaker = null;
-#elif WINDOWS
+#if WINDOWS
             StopWindowsSpeaker();
 #endif
             try { _room.Speaker = null; } catch { }
@@ -792,9 +765,6 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
         bool localInVent,
         bool commsSabActive)
     {
-#if ANDROID
-        _androidMicrophone?.Tick();
-#endif
         if (snapshot == null)
         {
             foreach (var peer in _peers.Values)
@@ -863,12 +833,7 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
     {
         try { _room.Disconnect(); } catch { }
         _peers.Clear();
-#if ANDROID
-        _androidMicrophone?.Dispose();
-        _androidMicrophone = null;
-        _androidSpeaker?.Dispose();
-        _androidSpeaker = null;
-#elif WINDOWS
+#if WINDOWS
         StopWindowsSpeaker();
 #endif
         try { _room.Microphone = null; } catch { }
@@ -1005,10 +970,7 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
             $"connection=({_room.ConnectionDiagnostics}) " +
             $"micHudMuted={VoiceChatHudState.IsMuted} speakerHudMuted={VoiceChatHudState.IsSpeakerMuted} " +
             $"customTx={Volatile.Read(ref _customTx)} customRx={Volatile.Read(ref _customRx)} customSkipped={Volatile.Read(ref _customSkipped)} " +
-#if ANDROID
-            $"micReady={_microphoneReady} speakerReady={_speakerReady} androidSpeakerPlaying={_androidSpeaker?.IsPlaying == true} " +
-            $"androidSpeakerReads={_androidSpeaker?.ReadCallbacks ?? 0} localMeterReady={_localMicMeter != null}");
-#elif WINDOWS
+#if WINDOWS
             $"micReady={_microphoneReady} speakerReady={_speakerReady} windowsSpeakerReads={_windowsSpeakerProvider?.ReadCallbacks ?? 0} windowsSpeakerReadFailures={_windowsSpeakerProvider?.ReadFailures ?? 0} " +
             $"micCapture=({DescribeWindowsMicCaptureDiagnostics()}) speakerPull=({_windowsSpeakerProvider?.Diagnostics ?? "none"}) " +
             $"localMeterReady={_localMicMeter != null} syntheticTone={_captureOptions.SyntheticMicToneEnabled} syntheticFrames={Volatile.Read(ref _syntheticFrames)}");

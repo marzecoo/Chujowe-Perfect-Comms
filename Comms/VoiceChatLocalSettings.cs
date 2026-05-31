@@ -84,7 +84,7 @@ public class VoiceChatLocalSettings : LocalSettingsTab
     public static string[] SpkDeviceNames => _spkDeviceNames;
 #endif
 
-    // ── Settings ──────────────────────────────────────────────────────────────
+    // Ă˘â€ťâ‚¬Ă˘â€ťâ‚¬ Settings Ă˘â€ťâ‚¬Ă˘â€ťâ‚¬Ă˘â€ťâ‚¬Ă˘â€ťâ‚¬Ă˘â€ťâ‚¬Ă˘â€ťâ‚¬Ă˘â€ťâ‚¬Ă˘â€ťâ‚¬Ă˘â€ťâ‚¬Ă˘â€ťâ‚¬Ă˘â€ťâ‚¬Ă˘â€ťâ‚¬Ă˘â€ťâ‚¬Ă˘â€ťâ‚¬Ă˘â€ťâ‚¬Ă˘â€ťâ‚¬Ă˘â€ťâ‚¬Ă˘â€ťâ‚¬Ă˘â€ťâ‚¬Ă˘â€ťâ‚¬Ă˘â€ťâ‚¬Ă˘â€ťâ‚¬Ă˘â€ťâ‚¬Ă˘â€ťâ‚¬Ă˘â€ťâ‚¬Ă˘â€ťâ‚¬Ă˘â€ťâ‚¬Ă˘â€ťâ‚¬Ă˘â€ťâ‚¬Ă˘â€ťâ‚¬Ă˘â€ťâ‚¬Ă˘â€ťâ‚¬Ă˘â€ťâ‚¬Ă˘â€ťâ‚¬Ă˘â€ťâ‚¬Ă˘â€ťâ‚¬Ă˘â€ťâ‚¬Ă˘â€ťâ‚¬Ă˘â€ťâ‚¬Ă˘â€ťâ‚¬Ă˘â€ťâ‚¬Ă˘â€ťâ‚¬Ă˘â€ťâ‚¬Ă˘â€ťâ‚¬Ă˘â€ťâ‚¬Ă˘â€ťâ‚¬Ă˘â€ťâ‚¬Ă˘â€ťâ‚¬Ă˘â€ťâ‚¬Ă˘â€ťâ‚¬Ă˘â€ťâ‚¬Ă˘â€ťâ‚¬Ă˘â€ťâ‚¬Ă˘â€ťâ‚¬Ă˘â€ťâ‚¬Ă˘â€ťâ‚¬Ă˘â€ťâ‚¬Ă˘â€ťâ‚¬Ă˘â€ťâ‚¬Ă˘â€ťâ‚¬Ă˘â€ťâ‚¬Ă˘â€ťâ‚¬
     [LocalSliderSetting("Mic Volume", min: 0.1f, max: 2f,
         displayValue: true, formatString: "0.00")]
     public ConfigEntry<float> MicVolume { get; }
@@ -368,7 +368,7 @@ public class VoiceChatLocalSettings : LocalSettingsTab
             VoiceChatPlugin.VoiceChat.JailUnmuteButtonPlacement.MeetingCard,
             new ConfigDescription("Jailor unmute button: Voice HUD or the jailee's meeting card."));
 
-        // Meeting overlay — on by default.
+        // Meeting overlay Ă˘â‚¬â€ť on by default.
         MeetingSpeakingOverlay = config.Bind("UI", "MeetingSpeakingOverlay", true,
             new ConfigDescription(
                 "Show smooth coloured card glows around talking players during meetings"));
@@ -458,13 +458,6 @@ public class VoiceChatLocalSettings : LocalSettingsTab
                 var cap  = WaveInEvent.GetCapabilities(i);
                 string n = cap.ProductName?.Trim() ?? "";
                 if (!string.IsNullOrEmpty(n) && n != "Microsoft Sound Mapper")
-                    mics.Add(n);
-            }
-#elif ANDROID
-            foreach (var dev in AndroidMicrophone.GetDeviceNames())
-            {
-                string n = dev?.Trim() ?? "";
-                if (!string.IsNullOrEmpty(n))
                     mics.Add(n);
             }
 #endif

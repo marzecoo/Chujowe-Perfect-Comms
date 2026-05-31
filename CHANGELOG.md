@@ -161,22 +161,21 @@ See `docs/release-notes-v2.0.0.md` for the full technical changelog.
 
 ## Perfect Comms v1.0.0
 
-**PUBLIC BETA — expect bugs.**  
+**PUBLIC BETA Ă˘â‚¬â€ť expect bugs.**
 This is the first public Perfect Comms release. It is ready for real lobbies, but still needs wider testing.
 
 ### What makes this release special
 
-- **Fully integrated proximity chat** — voice runs inside Among Us, no separate voice app needed.
-- **Supported mod behaviours** — TOU-Mira blackmailed players stay muted, and Jailor can unmute jailed players.
-- **No more hackers messing with the voice** — voice stays tied to compatible Perfect Comms clients.
-- **Built-in Voice Lobbies** — find compatible voice lobbies from the main menu and join with one click.
-- **In-game update prompt** — players can be sent straight to the newest release when an update drops.
+- **Fully integrated proximity chat** Ă˘â‚¬â€ť voice runs inside Among Us, no separate voice app needed.
+- **Supported mod behaviours** Ă˘â‚¬â€ť TOU-Mira blackmailed players stay muted, and Jailor can unmute jailed players.
+- **No more hackers messing with the voice** Ă˘â‚¬â€ť voice stays tied to compatible Perfect Comms clients.
+- **Built-in Voice Lobbies** Ă˘â‚¬â€ť find compatible voice lobbies from the main menu and join with one click.
+- **In-game update prompt** Ă˘â‚¬â€ť players can be sent straight to the newest release when an update drops.
 
 ### Added
 
 - Native Perfect Comms BepInEx plugin.
 - Windows release build: `PerfectComms.dll`.
-- Android release build: `PerfectCommsAndroid.dll`.
 - Dependency bundle: `PerfectComms+dependencies.zip` with BepInEx, MiraAPI, Reactor, and Perfect Comms.
 - Proximity voice during gameplay.
 - Meeting voice behavior for modded role states.
