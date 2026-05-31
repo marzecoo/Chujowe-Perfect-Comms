@@ -44,6 +44,7 @@ public class VoiceChatRoom
     // ── Virtual components ─────────────────────────────────────────────────────
     private readonly List<IVoiceComponent> _virtualMics     = new();
     private readonly List<IVoiceComponent> _virtualSpeakers = new();
+    private readonly List<SpeakerCache> _speakerCacheBuffer = new();
     public void AddVirtualMicrophone(IVoiceComponent c)    => _virtualMics.Add(c);
     public void AddVirtualSpeaker(IVoiceComponent c)       => _virtualSpeakers.Add(c);
     public void RemoveVirtualMicrophone(IVoiceComponent c) => _virtualMics.Remove(c);
@@ -294,19 +295,19 @@ public class VoiceChatRoom
 
         IReadOnlyList<SpeakerCache> speakerCache = Array.Empty<SpeakerCache>();
         updateStep = "speaker-cache";
+        _speakerCacheBuffer.Clear();
         if (listenerPos.HasValue && _virtualSpeakers.Count > 0)
         {
             var settings = VoiceRoomSettingsState.Current;
             float maxRange = settings.MaxChatDistance;
-            var list = new List<SpeakerCache>(_virtualSpeakers.Count);
             foreach (var speaker in _virtualSpeakers)
             {
                 float d = Vector2.Distance(speaker.Position, listenerPos.Value);
                 float volume = VoiceAudioOcclusion.ApplyFalloff(d, maxRange, (VoiceFalloffMode)settings.FalloffMode);
                 if (volume > 0f)
-                    list.Add(new(speaker, volume, GetPan(listenerPos.Value.x, speaker.Position.x)));
+                    _speakerCacheBuffer.Add(new(speaker, volume, GetPan(listenerPos.Value.x, speaker.Position.x)));
             }
-            speakerCache = list;
+            speakerCache = _speakerCacheBuffer;
         }
         updateStep = "routes";
 

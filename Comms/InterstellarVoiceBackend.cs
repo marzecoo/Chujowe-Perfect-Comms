@@ -775,7 +775,7 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
 
         var localPlayer = snapshot.TryGetLocalPlayer(out var local) ? local : (VoicePlayerSnapshot?)null;
         var listenerPos = localPlayer?.Position;
-        foreach (var peer in _peers.Values.ToArray())
+        foreach (var peer in _peers.Values)
         {
             var target = FindTarget(snapshot, peer);
             if (!target.HasValue && TryApplySingleRemoteFallback(snapshot, peer, out var fallback))

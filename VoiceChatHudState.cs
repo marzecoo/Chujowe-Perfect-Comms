@@ -20,6 +20,12 @@ public static class VoiceChatHudState
     private static GameObject?     _spkButtonObj;
     private static PassiveButton?  _jailButton;
     private static GameObject?     _jailButtonObj;
+    private static SpriteRenderer? _micIconRenderer;
+    private static SpriteRenderer? _spkIconRenderer;
+
+    private enum HudIconVisual { Unknown, MicOn, MicOffRed, MicOffOrange, MicRadio, SpkOn, SpkOff }
+    private static HudIconVisual _lastMicVisual = HudIconVisual.Unknown;
+    private static HudIconVisual _lastSpkVisual = HudIconVisual.Unknown;
     private const float ButtonScale = 0.42f;
     private const int   ButtonSortOrder = 32760;
     private const int   TooltipSortOrder = 32767;
@@ -92,7 +98,7 @@ public static class VoiceChatHudState
         _jailPlacement = settings.JailUnmuteButtonPlacement.Value;
         // Switching away from card mode: drop the card-placement guard now so PositionButtons
         // restores the Voice-HUD spot this frame instead of waiting for the next HUD tick.
-        // Reparent the button back to the HUD root FIRST — otherwise PositionButtons would
+        // Reparent the button back to the HUD root FIRST; otherwise PositionButtons would
         // write HUD-root-relative local coordinates onto a button still childed to the
         // jailee's card, flashing it to the wrong spot for one frame.
         if (_jailPlacement != JailUnmuteButtonPlacement.MeetingCard)
@@ -221,7 +227,8 @@ public static class VoiceChatHudState
             _micButtonObj.name = "VC_MicButton";
             _micButtonObj.transform.localScale = Vector3.one * (_overlayScale * ButtonScale);
             ClearButtonBG(_micButtonObj);
-            CreateIconChild(_micButtonObj, "VoiceChatPlugin.Resources.MicOn.png");
+            _micIconRenderer = CreateIconChild(_micButtonObj, "VoiceChatPlugin.Resources.MicOn.png");
+            _lastMicVisual = HudIconVisual.Unknown;
             KeepButtonOnTop(_micButtonObj);
 
             _micButton = _micButtonObj.GetComponent<PassiveButton>();
@@ -239,7 +246,8 @@ public static class VoiceChatHudState
             _spkButtonObj.name = "VC_SpkButton";
             _spkButtonObj.transform.localScale = Vector3.one * (_overlayScale * ButtonScale);
             ClearButtonBG(_spkButtonObj);
-            CreateIconChild(_spkButtonObj, "VoiceChatPlugin.Resources.SpeakerOn.png");
+            _spkIconRenderer = CreateIconChild(_spkButtonObj, "VoiceChatPlugin.Resources.SpeakerOn.png");
+            _lastSpkVisual = HudIconVisual.Unknown;
             KeepButtonOnTop(_spkButtonObj);
 
             _spkButton = _spkButtonObj.GetComponent<PassiveButton>();
@@ -343,7 +351,7 @@ public static class VoiceChatHudState
     }
 
     // Finds the jailed player's meeting card so the unmute button can be attached to it.
-    // Returns false outside meetings or when the card/background isn't ready (→ HUD fallback).
+    // Returns false outside meetings or when the card/background isn't ready (HUD fallback).
     private static bool TryResolveJaileeCard(byte jailedId, out PlayerVoteArea card)
     {
         card = null!;
@@ -394,44 +402,51 @@ public static class VoiceChatHudState
 
     private static void RefreshButtonVisuals()
     {
-        // ── Mic button ────────────────────────────────────────────────────────
-        if (_micButtonObj != null)
-        {
-            var sr = _micButtonObj.transform.Find("VCIcon")?.GetComponent<SpriteRenderer>();
+        var micVisual = TryGetLocalTransmitBlockReason(out _)
+            ? HudIconVisual.MicOffOrange
+            : _speakerMuted || IsManualMuteActive()
+                ? HudIconVisual.MicOffRed
+                : IsInTeamRadioMode()
+                    ? HudIconVisual.MicRadio
+                    : HudIconVisual.MicOn;
+        ApplyHudIconVisual(_micIconRenderer, ref _lastMicVisual, micVisual);
 
-            if (TryGetLocalTransmitBlockReason(out _))
-            {
-                if (sr != null) { sr.sprite = Sprites.MicOff; sr.color = new Color(1f, 0.65f, 0.15f); }
-            }
-            else if (_speakerMuted)
-            {
-                if (sr != null) { sr.sprite = Sprites.MicOff; sr.color = new Color(1f, 0.4f, 0.4f); }
-            }
-            else if (IsManualMuteActive())
-            {
-                if (sr != null) { sr.sprite = Sprites.MicOff; sr.color = new Color(1f, 0.4f, 0.4f); }
-            }
-            else if (IsInTeamRadioMode())
-            {
-                if (sr != null) { sr.sprite = Sprites.MicOn; sr.color = new Color(1f, 0.55f, 0.1f); }
-            }
-            else
-            {
-                if (sr != null) { sr.sprite = Sprites.MicOn; sr.color = Color.white; }
-            }
-        }
-        if (_spkButtonObj != null)
-        {
-            var sr = _spkButtonObj.transform.Find("VCIcon")?.GetComponent<SpriteRenderer>();
+        var spkVisual = _speakerMuted ? HudIconVisual.SpkOff : HudIconVisual.SpkOn;
+        ApplyHudIconVisual(_spkIconRenderer, ref _lastSpkVisual, spkVisual);
+    }
 
-            if (_speakerMuted)
-            {
-                if (sr != null) { sr.sprite = Sprites.SpkOff; sr.color = new Color(1f, 0.4f, 0.4f); }
-            }
-            else
-            {
-                if (sr != null) { sr.sprite = Sprites.SpkOn; sr.color = Color.white; }
-            }
+    private static void ApplyHudIconVisual(SpriteRenderer? renderer, ref HudIconVisual lastVisual, HudIconVisual visual)
+    {
+        if (renderer == null || lastVisual == visual)
+            return;
+
+        lastVisual = visual;
+        switch (visual)
+        {
+            case HudIconVisual.MicOffOrange:
+                renderer.sprite = Sprites.MicOff;
+                renderer.color = new Color(1f, 0.65f, 0.15f);
+                break;
+            case HudIconVisual.MicOffRed:
+                renderer.sprite = Sprites.MicOff;
+                renderer.color = new Color(1f, 0.4f, 0.4f);
+                break;
+            case HudIconVisual.MicRadio:
+                renderer.sprite = Sprites.MicOn;
+                renderer.color = new Color(1f, 0.55f, 0.1f);
+                break;
+            case HudIconVisual.SpkOff:
+                renderer.sprite = Sprites.SpkOff;
+                renderer.color = new Color(1f, 0.4f, 0.4f);
+                break;
+            case HudIconVisual.SpkOn:
+                renderer.sprite = Sprites.SpkOn;
+                renderer.color = Color.white;
+                break;
+            default:
+                renderer.sprite = Sprites.MicOn;
+                renderer.color = Color.white;
+                break;
         }
     }
     internal static void ApplyMicState()
@@ -588,6 +603,8 @@ public static class VoiceChatHudState
         if (_spkButtonObj  != null) { Object.Destroy(_spkButtonObj);  _spkButtonObj  = null; }
         if (_jailButtonObj != null) { Object.Destroy(_jailButtonObj); _jailButtonObj = null; }
         _micButton   = null; _spkButton   = null; _jailButton  = null;
+        _micIconRenderer = null; _spkIconRenderer = null;
+        _lastMicVisual = HudIconVisual.Unknown; _lastSpkVisual = HudIconVisual.Unknown;
     }
 
     private static void DestroyTooltips()
@@ -803,7 +820,7 @@ public static class VoiceChatHudState
             sr.color = Color.clear;
     }
 
-    private static void CreateIconChild(GameObject parent, string resource)
+    private static SpriteRenderer CreateIconChild(GameObject parent, string resource)
     {
         var go = new GameObject("VCIcon");
         go.transform.SetParent(parent.transform, false);
@@ -813,6 +830,7 @@ public static class VoiceChatHudState
         sr.sprite = LoadSprite(resource);
         sr.sortingLayerName = VCSorting.Layer;
         sr.sortingOrder = ButtonSortOrder;
+        return sr;
     }
 
     private static void KeepButtonOnTop(GameObject? button)

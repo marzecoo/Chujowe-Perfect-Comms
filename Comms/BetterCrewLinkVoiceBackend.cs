@@ -45,6 +45,9 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
     private readonly object _captureFrameSync = new();
     private readonly object _peerSync = new();
     private readonly Dictionary<string, PeerConnection> _peersBySocket = new();
+    private readonly List<PeerConnection> _peerSnapshotBuffer = new();
+    private readonly List<PeerConnection> _offerRetryBuffer = new();
+    private readonly List<PeerConnection> _offerRerequestBuffer = new();
     private readonly Dictionary<int, string> _clientToSocket = new();
     private readonly Dictionary<string, int> _socketToClient = new();
     private readonly Dictionary<string, Queue<string>> _pendingSignalsBySocket = new();
@@ -168,10 +171,33 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
     public bool Mute { get; private set; }
     public float LocalLevel => _localLevel;
     public bool LocalSpeaking => _localSpeaking;
-    public int PeerCount => SnapshotPeers().Length;
-    public IEnumerable<VoiceRemoteOverlayState> RemoteOverlayStates => SnapshotPeers()
-        .Where(peer => peer.PlayerId != byte.MaxValue)
-        .Select(peer => peer.ToOverlayState());
+    public int PeerCount
+    {
+        get
+        {
+            lock (_peerSync)
+                return _peersBySocket.Count;
+        }
+    }
+
+    public IEnumerable<VoiceRemoteOverlayState> RemoteOverlayStates
+    {
+        get
+        {
+            var states = new List<VoiceRemoteOverlayState>();
+            lock (_peerSync)
+            {
+                states.Capacity = Math.Max(states.Capacity, _peersBySocket.Count);
+                foreach (var peer in _peersBySocket.Values)
+                {
+                    if (peer.PlayerId != byte.MaxValue)
+                        states.Add(peer.ToOverlayState());
+                }
+            }
+
+            return states;
+        }
+    }
 
     // Per-frame on the recovery hot path: kept allocation-free (no snapshot array, no LINQ closure).
     public int CountMappedRemotePeers(VoiceGameStateSnapshot snapshot)
@@ -679,9 +705,11 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         }
 
 
+        FillPeerSnapshot(_peerSnapshotBuffer);
+
         if (snapshot == null)
         {
-            foreach (var peer in SnapshotPeers()) peer.MuteAll();
+            foreach (var peer in _peerSnapshotBuffer) peer.MuteAll();
             MaybeLogStats(snapshot, "no-snapshot");
             return;
         }
@@ -691,7 +719,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
 
         var localPlayer = snapshot.TryGetLocalPlayer(out var local) ? local : (VoicePlayerSnapshot?)null;
         var listenerPos = localPlayer?.Position;
-        foreach (var peer in SnapshotPeers())
+        foreach (var peer in _peerSnapshotBuffer)
         {
             var target = FindTarget(snapshot, peer);
             if (target.HasValue && VoiceProximityCalculator.IsUnavailableTarget(target.Value))
@@ -1057,30 +1085,34 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
     {
         var now = DateTime.UtcNow;
         if (now - _lastOfferRetryUtc < OfferRetryInterval) return;
-        var peers = SnapshotPeers();
-        var retryPeers = peers
-            .Where(peer => ShouldInitiateOffer(peer.SocketId)
-                && (IsRetryableDataChannelState(peer.DataChannel?.readyState) || IsStuckConnecting(peer, now)))
-            .ToArray();
-        // Answerer side can't offer (would glare) and OnPeerConnectionDied only fires its one-shot
-        // request-offer on the failed/closed *transition*. If our link to the elected initiator is
-        // hard-dead but no fresh offer came back, re-ask on the same cadence so a dropped request-offer
-        // or a slow/asymmetric initiator self-heals without waiting for a meeting/scene reset. Restricted
-        // to failed/closed (NOT 'connecting' setup, NOT transient 'disconnected') so this never produces
-        // a duplicate offer during normal establishment; the initiator still only re-offers if ITS own
-        // link needs a rebuild.
-        var rerequestPeers = peers
-            .Where(peer =>
+        FillPeerSnapshot(_peerSnapshotBuffer);
+        _offerRetryBuffer.Clear();
+        _offerRerequestBuffer.Clear();
+
+        foreach (var peer in _peerSnapshotBuffer)
+        {
+            if (ShouldInitiateOffer(peer.SocketId) &&
+                (IsRetryableDataChannelState(peer.DataChannel?.readyState) || IsStuckConnecting(peer, now)))
             {
-                if (ShouldInitiateOffer(peer.SocketId) || IsLocalSocket(peer.SocketId)) return false;
-                var conn = peer.Connection;
-                return conn != null
-                    && conn.connectionState is RTCPeerConnectionState.failed or RTCPeerConnectionState.closed;
-            })
-            .ToArray();
-        if (retryPeers.Length == 0 && rerequestPeers.Length == 0) return;
+                _offerRetryBuffer.Add(peer);
+                continue;
+            }
+
+            // Answerer side cannot offer (would glare) and OnPeerConnectionDied only fires its one-shot
+            // request-offer on the failed/closed transition. If our link to the elected initiator is
+            // hard-dead but no fresh offer came back, re-ask on the same cadence so a dropped request-offer
+            // or a slow/asymmetric initiator self-heals without waiting for a meeting/scene reset.
+            if (ShouldInitiateOffer(peer.SocketId) || IsLocalSocket(peer.SocketId))
+                continue;
+
+            var conn = peer.Connection;
+            if (conn != null && conn.connectionState is RTCPeerConnectionState.failed or RTCPeerConnectionState.closed)
+                _offerRerequestBuffer.Add(peer);
+        }
+
+        if (_offerRetryBuffer.Count == 0 && _offerRerequestBuffer.Count == 0) return;
         _lastOfferRetryUtc = now;
-        foreach (var peer in retryPeers)
+        foreach (var peer in _offerRetryBuffer)
         {
             var stuck = IsStuckConnecting(peer, now);
             VoiceDiagnostics.Log("bcl.offer", $"reason={(stuck ? "stuck-connecting" : "retry")} socket={peer.SocketId} client={peer.ClientId} state={peer.DataChannel?.readyState.ToString() ?? "none"}");
@@ -1089,7 +1121,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             if (stuck) RecreatePeerConnection(peer.SocketId);
             _ = StartOfferAsync(peer.SocketId);
         }
-        foreach (var peer in rerequestPeers)
+        foreach (var peer in _offerRerequestBuffer)
         {
             VoiceDiagnostics.Log("bcl.offer", $"reason=re-request socket={peer.SocketId} client={peer.ClientId} state=connection-{peer.Connection?.connectionState.ToString().ToLowerInvariant() ?? "none"}");
             RequestOfferFromPeer(peer.SocketId);
@@ -1471,7 +1503,8 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
     {
         if (HasDataControlPrefix(data))
         {
-            var payload = data.Skip(DataControlPrefixLength).ToArray();
+            var payload = new byte[data.Length - DataControlPrefixLength];
+            Buffer.BlockCopy(data, DataControlPrefixLength, payload, 0, payload.Length);
             if (TryHandleRadioState(payload, peer.PlayerId)) return;
             Interlocked.Increment(ref _customRx);
             // Side-channel is untrusted for authority (self-asserted id); also avoids a torn
@@ -1926,6 +1959,16 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
     {
         lock (_peerSync)
             return _peersBySocket.Values.ToArray();
+    }
+
+    private void FillPeerSnapshot(List<PeerConnection> buffer)
+    {
+        buffer.Clear();
+        lock (_peerSync)
+        {
+            foreach (var peer in _peersBySocket.Values)
+                buffer.Add(peer);
+        }
     }
 
     private string[] SnapshotMappedSocketIds()
@@ -2428,7 +2471,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             return DecodeAndAddSamples(data, false, AudioHelpers.FrameSize, out error, out decodedFrames);
         }
 
-        // 120 ms @ 48 kHz mono Ä‚ËĂ˘â€šÂ¬Ă˘â‚¬ĹĄ the maximum Opus frame size. Decoding real packets into this much output
+        // 120 ms @ 48 kHz mono is the maximum Opus frame size. Decoding real packets into this much output
         // space (and passing it as frame_size) means a non-conformant peer that sends a 40/60 ms frame or
         // under-stamps its duration can never trip OPUS_BUFFER_TOO_SMALL / IndexOutOfRange inside Concentus.
         private const int MaxDecodeCapacitySamples = 5760;

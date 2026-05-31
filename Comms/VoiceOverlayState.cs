@@ -30,8 +30,8 @@ internal sealed class VoiceOverlayState
     private static int _cachedFrame = -1;
     private static VoiceChatRoom? _cachedRoom;
     private static VoiceOverlayState _cachedState = Empty;
-    // Scratch reused per frame (Build runs only on cache miss); ToArray copies out so the
-    // cached state never aliases next frame's refill.
+    // Scratch reused per frame. Current() returns a frame-scoped cached state, so callers
+    // consume this before the next refill instead of allocating an array every HUD tick.
     private static readonly List<VoiceRemoteOverlayState> _remoteBuffer = new(16);
 
     private VoiceOverlayState(VoiceLocalOverlayState local, IReadOnlyList<VoiceRemoteOverlayState> remotePlayers)
@@ -83,7 +83,7 @@ internal sealed class VoiceOverlayState
             room.UsingMicrophone,
             room.UsingSpeaker);
 
-        return new VoiceOverlayState(local, _remoteBuffer.ToArray());
+        return new VoiceOverlayState(local, _remoteBuffer);
     }
 
     private static bool IsLiveRemoteSpeaker(byte playerId, VoiceGameStateSnapshot? snapshot)
