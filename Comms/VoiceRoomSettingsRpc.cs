@@ -84,6 +84,8 @@ internal static class VoiceRoomSettingsRpc
         writer.Write(settings.MuffleBlindedOrFlashedHearing);
         writer.Write(settings.MuffleHypnotizedDuringHysteria);
         writer.Write(settings.TeamRadioInMeetings);
+        writer.Write(settings.PuppeteerHearFromVictim);
+        writer.Write(settings.ParasiteHearFromVictim);
         writer.Write(settings.TouMcePelicanBellyVoice);
         writer.Write(settings.TouMceRecruitVoice);
         writer.Write(settings.TouMceSpiritMasterGhostVoice);
@@ -143,6 +145,8 @@ internal static class VoiceRoomSettingsRpc
         bool muffleBlindedOrFlashedHearing = reader.BytesRemaining > 0 ? reader.ReadBoolean() : true;
         bool muffleHypnotizedDuringHysteria = reader.BytesRemaining > 0 ? reader.ReadBoolean() : true;
         bool teamRadioInMeetings = reader.BytesRemaining > 0 ? reader.ReadBoolean() : false;
+        bool puppeteerHearFromVictim = reader.BytesRemaining > 0 ? reader.ReadBoolean() : false;
+        bool parasiteHearFromVictim = reader.BytesRemaining > 0 ? reader.ReadBoolean() : false;
         bool touMcePelicanBellyVoice = reader.BytesRemaining > 0 ? reader.ReadBoolean() : true;
         bool touMceRecruitVoice = reader.BytesRemaining > 0 ? reader.ReadBoolean() : true;
         int touMceSpiritMasterGhostVoice = reader.BytesRemaining >= 4
@@ -186,6 +190,8 @@ internal static class VoiceRoomSettingsRpc
             muffleBlindedOrFlashedHearing,
             muffleHypnotizedDuringHysteria,
             teamRadioInMeetings,
+            puppeteerHearFromVictim,
+            parasiteHearFromVictim,
             touMcePelicanBellyVoice,
             touMceRecruitVoice,
             touMceSpiritMasterGhostVoice,
