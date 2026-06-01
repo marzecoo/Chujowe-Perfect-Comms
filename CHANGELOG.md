@@ -1,5 +1,16 @@
 # Changelog
 
+## Mega Chujowe Perfect Comms v1.0.3
+
+Fork release for [Town Of Us Mega Chujowe Extension](https://github.com/HekerB/TownOfUsMegaChujoweExtension).
+
+- Upgraded fork changes to include upstream Perfect Comms v2.1.0 voice improvements.
+- Added configurable speaking-bar name position.
+- Added host options for Parasite and Puppeteer to hear from controlled victims.
+- Preserved all Mega Chujowe Extension voice rules while porting the upstream changes.
+
+See `docs/release-notes-v1.0.3.md` for the full fork release notes.
+
 ## Mega Chujowe Perfect Comms v1.0.2
 
 Fork release for [Town Of Us Mega Chujowe Extension](https://github.com/HekerB/TownOfUsMegaChujoweExtension).
