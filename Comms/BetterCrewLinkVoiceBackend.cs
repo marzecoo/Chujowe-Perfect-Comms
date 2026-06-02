@@ -949,11 +949,20 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         }
 
         bool changed;
+        string? supersededSocket = null;
         lock (_peerSync)
         {
             changed = !_socketToClient.TryGetValue(socketId, out var oldClientId) || oldClientId != client.clientId;
+            if (_clientToSocket.TryGetValue(client.clientId, out var priorSocket)
+                && !string.Equals(priorSocket, socketId, StringComparison.Ordinal))
+                supersededSocket = priorSocket;
             _clientToSocket[client.clientId] = socketId;
             _socketToClient[socketId] = client.clientId;
+        }
+        if (supersededSocket != null)
+        {
+            VoiceDiagnostics.Log("bcl.peer.superseded", $"oldSocket={supersededSocket} newSocket={socketId} client={client.clientId}");
+            RemovePeer(supersededSocket);
         }
         if (changed)
         {
@@ -1974,7 +1983,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
     private string[] SnapshotMappedSocketIds()
     {
         lock (_peerSync)
-            return _clientToSocket.Values.ToArray();
+            return _socketToClient.Keys.ToArray();
     }
 
     private RTCDataChannel[] SnapshotOpenChannels()
@@ -1992,10 +2001,11 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         PeerConnection? peer;
         lock (_peerSync)
         {
-            if (!_peersBySocket.Remove(socketId, out peer)) return;
-            if (_socketToClient.TryGetValue(socketId, out var clientId))
+            _peersBySocket.Remove(socketId, out peer);
+            if (_socketToClient.Remove(socketId, out var clientId)
+                && _clientToSocket.TryGetValue(clientId, out var mappedSocket)
+                && string.Equals(mappedSocket, socketId, StringComparison.Ordinal))
                 _clientToSocket.Remove(clientId);
-            _socketToClient.Remove(socketId);
             _pendingSignalsBySocket.Remove(socketId);
         }
         if (peer == null) return;
