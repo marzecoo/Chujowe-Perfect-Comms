@@ -51,6 +51,16 @@ public static class VoiceChatHudState
     private static GameObject?  _spkTooltip;
     private static TextMeshPro? _micTooltipTmp;
     private static TextMeshPro? _spkTooltipTmp;
+    // Fix 4-HUD-b: KeepTooltipOnTop ran GetComponentsInChildren<Renderer>(true) AND
+    // GetComponentsInChildren<TextMeshPro>(true) for BOTH tooltips EVERY frame (the largest avoidable
+    // per-frame managed-array alloc on the HUD path). The tooltip hierarchy is static, so cache each
+    // child set once (mirrors the _micButtonSrs pattern) and only re-stamp sorting per frame. Both the
+    // Renderer set and the TextMeshPro set must be cached/stamped — the TMP's sortingLayerID is stamped
+    // on a separate path from the Renderer's sortingLayerName, so dropping either regresses sorting.
+    private static Renderer[]?    _micTooltipRenderers;
+    private static Renderer[]?    _spkTooltipRenderers;
+    private static TextMeshPro[]? _micTooltipTmps;
+    private static TextMeshPro[]? _spkTooltipTmps;
     private static bool _micMuted;
     private static bool _teamRadioHeld;
     private static VoiceTeamRadioChannel _teamRadioChannel = VoiceTeamRadioChannel.None;
@@ -205,6 +215,47 @@ public static class VoiceChatHudState
             return maxAllowed - max;
         return 0f;
     }
+    // P1.2: pre-warm the one-time HUD init off the game-entry frame. The first UpdateHud() otherwise lands the
+    // ~24 MB / ~177 ms first-init (embedded-PNG sprite decode + HUD button Instantiate + tooltip GameObject
+    // creation) on the worst transition frame, next to the engine scene-load freeze and the peer-join wave. This
+    // is called from room construction (the same lifecycle slot as WarmOpusCodec) so the work is already done by
+    // the time the HUD first renders. It is fully idempotent: it only does work EnsureHudButtons/EnsureTooltips/
+    // LoadSprite would have done on first use, so those per-frame paths remain the fallback (they find the work
+    // already done) and HUD appearance/behaviour is unchanged. MUST be called on the Unity main thread (Unity
+    // object creation), which the room-construction slot already is.
+    public static void Prewarm()
+    {
+        try
+        {
+            // 1) Decode every embedded-PNG sprite now (the dominant first-init cost). HudManager-independent and
+            //    cached in _spriteCache, so the later CreateIconChild/LoadSprite calls are free.
+            _ = Sprites.MicOn;
+            _ = Sprites.MicOff;
+            _ = Sprites.SpkOn;
+            _ = Sprites.SpkOff;
+            _ = Sprites.JailUnmute;
+
+            // 2) If the HUD already exists, pre-instantiate the buttons (one-per-call by design, so loop to build
+            //    all three) and the tooltip GameObjects (INACTIVE) under the real HUD root. If the HUD is not up
+            //    yet (common at room construction), skip — the per-frame EnsureHudButtons/EnsureTooltips fallback
+            //    builds them, still spread one-button-per-frame, just without the pre-warm head start.
+            var hud = HudManager.Instance;
+            if (hud != null && hud.MapButton != null)
+            {
+                // EnsureHudButtons builds at most one button per call; three calls cover mic/spk/jail.
+                EnsureHudButtons(hud);
+                EnsureHudButtons(hud);
+                EnsureHudButtons(hud);
+                EnsureTooltips(hud); // CreateTooltipObject sets each tooltip inactive
+            }
+        }
+        catch (Exception ex)
+        {
+            // Best-effort: any failure just falls back to the per-frame first-use path; never break room setup.
+            VoiceDiagnostics.DebugError("[VC] HUD pre-warm failed: " + ex.Message);
+        }
+    }
+
     internal static void UpdateHud()
     {
         var hud = HudManager.Instance;
@@ -294,8 +345,8 @@ public static class VoiceChatHudState
             _micTooltip = CreateTooltipObject(root, out _micTooltipTmp);
         if (_spkTooltip == null)
             _spkTooltip = CreateTooltipObject(root, out _spkTooltipTmp);
-        KeepTooltipOnTop(_micTooltip);
-        KeepTooltipOnTop(_spkTooltip);
+        KeepTooltipOnTop(_micTooltip, ref _micTooltipRenderers, ref _micTooltipTmps);
+        KeepTooltipOnTop(_spkTooltip, ref _spkTooltipRenderers, ref _spkTooltipTmps);
     }
 
     private static void EnsureHudParent(HudManager hud)
@@ -614,6 +665,9 @@ public static class VoiceChatHudState
         if (_micTooltip != null) { Object.Destroy(_micTooltip); _micTooltip = null; }
         if (_spkTooltip != null) { Object.Destroy(_spkTooltip); _spkTooltip = null; }
         _micTooltipTmp = null; _spkTooltipTmp = null;
+        // Drop the cached child-component arrays so a re-created tooltip re-caches fresh references.
+        _micTooltipRenderers = null; _spkTooltipRenderers = null;
+        _micTooltipTmps = null; _spkTooltipTmps = null;
     }
     private static GameObject CreateTooltipObject(Transform root, out TextMeshPro tmp)
     {
@@ -631,7 +685,8 @@ public static class VoiceChatHudState
         tmp.sortingLayerID = SortingLayer.NameToID(VCSorting.Layer);
         tmp.sortingOrder = TooltipSortOrder;
         tmp.rectTransform.sizeDelta = new Vector2(2.4f, 1.8f);
-        KeepTooltipOnTop(go);
+        // Sorting is stamped by the EnsureTooltips KeepTooltipOnTop calls immediately after creation,
+        // which also populate the per-tooltip component caches; no need to stamp the unparented local here.
         go.SetActive(false);
         return go;
     }
@@ -664,7 +719,7 @@ public static class VoiceChatHudState
                 : $"Mute: {muteKey}  |  Team Radio: {radioKey} (hold)  |  Cycle: {cycleKey}");
 
         PositionNear(_micTooltip, _micButtonObj);
-        KeepTooltipOnTop(_micTooltip);
+        KeepTooltipOnTop(_micTooltip, ref _micTooltipRenderers, ref _micTooltipTmps);
         _micTooltip.SetActive(true);
     }
 
@@ -683,7 +738,7 @@ public static class VoiceChatHudState
             $"Hotkey: {hotkey}";
 
         PositionNear(_spkTooltip, _spkButtonObj);
-        KeepTooltipOnTop(_spkTooltip);
+        KeepTooltipOnTop(_spkTooltip, ref _spkTooltipRenderers, ref _spkTooltipTmps);
         _spkTooltip.SetActive(true);
     }
 
@@ -730,18 +785,28 @@ public static class VoiceChatHudState
     private static float ClampTooltipAxis(float value, float min, float max)
         => min <= max ? Mathf.Clamp(value, min, max) : (min + max) * 0.5f;
 
-    private static void KeepTooltipOnTop(GameObject? tooltip)
+    private static void KeepTooltipOnTop(
+        GameObject? tooltip,
+        ref Renderer[]? cachedRenderers,
+        ref TextMeshPro[]? cachedTmps)
     {
         if (tooltip == null) return;
         tooltip.transform.SetAsLastSibling();
         VCOverlayCamera.EnsureOnTop(tooltip);
-        foreach (var tmp in tooltip.GetComponentsInChildren<TextMeshPro>(true))
+        // The tooltip hierarchy is static, so cache the child component arrays once instead of
+        // re-allocating them every frame. (Nulled in DestroyTooltips so a re-created tooltip re-caches.)
+        cachedTmps      ??= tooltip.GetComponentsInChildren<TextMeshPro>(true);
+        cachedRenderers ??= tooltip.GetComponentsInChildren<Renderer>(true);
+        int layerId = SortingLayer.NameToID(VCSorting.Layer);
+        foreach (var tmp in cachedTmps)
         {
-            tmp.sortingLayerID = SortingLayer.NameToID(VCSorting.Layer);
+            if (tmp == null) continue;
+            tmp.sortingLayerID = layerId;
             tmp.sortingOrder = TooltipSortOrder;
         }
-        foreach (var renderer in tooltip.GetComponentsInChildren<Renderer>(true))
+        foreach (var renderer in cachedRenderers)
         {
+            if (renderer == null) continue;
             renderer.sortingLayerName = VCSorting.Layer;
             renderer.sortingOrder = TooltipSortOrder;
         }

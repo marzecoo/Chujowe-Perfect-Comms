@@ -167,6 +167,11 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
         return count;
     }
 
+    // Interstellar has no per-peer offer/re-request path the room can drive — peers are created by the
+    // library's onConnectClient. There is no targeted recovery to attempt, so signal the caller to fall
+    // back to its existing full-rebuild path (gated, in the room, to genuine total failure).
+    public int TryRecoverMissingClients(VoiceGameStateSnapshot snapshot) => -1;
+
     public InterstellarVoiceBackend(string roomCode, string region, string serverUrl)
     {
         ServerUrl = VoiceEndpointSettings.NormalizeInterstellarServerUrl(serverUrl);

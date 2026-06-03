@@ -50,6 +50,15 @@ internal interface IVoiceBackend : IDisposable
     bool TrySetRemoteVolume(byte playerId, string playerName, float volume);
     int ResetPeerMappingsNoMute();
     int CountMappedRemotePeers(VoiceGameStateSnapshot snapshot);
+
+    // Targeted, non-destructive recovery of ONLY the specific remote clients that are expected but not
+    // currently backed by a live/open peer — re-mapping / re-requesting an offer for each missing client
+    // while leaving every already-open peer's data channel INTACT. This is the per-peer alternative to the
+    // global Rejoin()/ClearPeers() teardown, so a single permanently-unmappable remote cannot drive a
+    // mesh-wide rebuild storm. Returns the number of missing clients the backend was able to act on
+    // (request/recreate) this call; returns -1 when the backend has no targeted path and the caller should
+    // fall back to its existing global rebuild.
+    int TryRecoverMissingClients(VoiceGameStateSnapshot snapshot);
 }
 
 internal readonly record struct VoiceCaptureRuntimeOptions(

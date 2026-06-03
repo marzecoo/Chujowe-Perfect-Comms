@@ -190,15 +190,26 @@ public class AudioManager : IHasAudioPropertyNode
         var nodes = new AudioRoutingInstanceNode[_nodeCount];
         Array.Copy(_globals, nodes, _nodeCount);
 
+        // Scale the trims with the deep adaptive cushion so per-peer growth is never trimmed away, bounded by the
+        // ring. Leave 2 FULL FRAMES of ring headroom: BufferCutSize is reachable + 2*FrameSize, so capping
+        // reachable at _bufMax - 2*FrameSize keeps BufferCutSize strictly under the ring REGARDLESS of the
+        // ceiling/ring constants. Invariant: target <= reachable < BufferCutToSize < BufferCutSize < _bufMax.
+        // The ceiling STARTS at the 160 ms per-peer baseline; a genuinely jittery peer ratchets its OWN ceiling
+        // toward the 200 ms hard cap (P0.2), and BufferedSampleProvider recomputes these cut sizes in lockstep
+        // (RecomputePerPeerCutSizesLocked) so the deeper cushion actually fills instead of being trimmed away.
+        // _bufMax here is FrameSize*15 = 300 ms, so the 200 ms cap + 2-frame trim headroom (240 ms) fits under it.
+        int maxAdaptive = AudioHelpers.PlaybackMaxRecoveryPrebufferSamples;
+        int reachable   = Math.Min(_bufMax - AudioHelpers.FrameSize * 2, maxAdaptive);
         var source = new BufferedSampleProvider(
             WaveFormat.CreateIeeeFloatWaveFormat(AudioHelpers.ClockRate, 1),
             _bufMax)
         {
             DiscardOnBufferOverflow = true,
-            BufferCutSize  = _bufMax > _bufLen ? Math.Min(_bufMax - 1, _bufLen + AudioHelpers.FrameSize) : int.MaxValue,
-            BufferCutToSize = _bufLen,
+            BufferCutToSize = _bufMax > _bufLen ? reachable + AudioHelpers.FrameSize : int.MaxValue,
+            BufferCutSize   = _bufMax > _bufLen ? Math.Min(_bufMax - 1, reachable + AudioHelpers.FrameSize * 2) : int.MaxValue,
             EnableRecoveryPrebuffer = _enableRecoveryPrebuffer,
-            PrebufferSamples = Math.Min(_bufLen, _instancePrebufferSamples),
+            PrebufferSamples = Math.Min(_bufLen, _instancePrebufferSamples), // STARTUP onset UNCHANGED (2880 / 60 ms)
+            MaxAdaptivePrebufferSamples = reachable,                         // the deep escalation ceiling
             DebugGroupId = groupId,
         };
 

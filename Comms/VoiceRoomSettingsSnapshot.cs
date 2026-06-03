@@ -150,7 +150,42 @@ internal static class VoiceRoomSettingsState
 {
     private static VoiceRoomSettingsSnapshot? _remoteSnapshot;
 
-    public static VoiceRoomSettingsSnapshot Current => _remoteSnapshot ?? VoiceRoomSettingsSnapshot.FromGameOptions();
+    // Fix 4a (frame-cache fallback): FromGameOptions() does ~30 IL2CPP ModdedOption marshals + a
+    // 34-field record-struct alloc + a `this with` clamp copy. The voice/HUD update path reads
+    // Current once per peer (proximity calculator) and once per speaker, so at 12-13 peers that is
+    // 12-13 full rebuilds every game-thread frame. Cache the host-options rebuild for one Unity frame
+    // so the loop pays the marshal/alloc cost ONCE per frame instead of O(peers). The host-synced
+    // option values change at human timescale, so a 1-frame staleness is imperceptible. The host path
+    // (_remoteSnapshot.HasValue) is unaffected — it already returns the clamped remote snapshot with no
+    // rebuild, which is also what the test harness exercises (it always ApplyRemote()s before reading).
+    private static VoiceRoomSettingsSnapshot _frameCache;
+    private static int _frameCacheFrame = int.MinValue;
+
+    public static VoiceRoomSettingsSnapshot Current
+    {
+        get
+        {
+            if (_remoteSnapshot.HasValue)
+                return _remoteSnapshot.Value;
+
+            int frame = SafeFrameCount();
+            if (frame != _frameCacheFrame)
+            {
+                _frameCache = VoiceRoomSettingsSnapshot.FromGameOptions();
+                _frameCacheFrame = frame;
+            }
+            return _frameCache;
+        }
+    }
+
+    // Mirrors VoiceFrameProfiler.SafeFrameCount: Time.frameCount can throw when read off the Unity
+    // main thread or outside a live game (e.g. the test harness), so guard it. An int.MinValue
+    // sentinel forces a rebuild on the very first read.
+    private static int SafeFrameCount()
+    {
+        try { return UnityEngine.Time.frameCount; }
+        catch { return int.MinValue + 1; }
+    }
 
     public static VoiceRoomSettingsSnapshot? RemoteSnapshot => _remoteSnapshot;
 
@@ -162,5 +197,7 @@ internal static class VoiceRoomSettingsState
     public static void ClearRemote()
     {
         _remoteSnapshot = null;
+        // Drop any cached host-options rebuild so the next Current read after a host change is fresh.
+        _frameCacheFrame = int.MinValue;
     }
 }

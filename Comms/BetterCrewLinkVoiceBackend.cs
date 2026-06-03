@@ -21,8 +21,8 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
     private const int DataControlPrefixLength = 4;
     private static readonly int BclOpusBitrate = 48_000;
     private static readonly bool BclOpusUseConstrainedVbr = true;
-    private static readonly bool BclOpusUseInbandFec = false;
-    private static readonly int BclOpusPacketLossPercent = 0;
+    private static readonly bool BclOpusUseInbandFec = true;   // arm LossResistant flag (sender) + the jitter-buffer Fec drain arm
+    private static readonly int BclOpusPacketLossPercent = 15; // non-zero PLP so Opus embeds FEC redundancy in the wire frame
     private const int BclPlaybackLatencyMs = 60;
     private const int BclJitterTargetDelayFrames = 2;
     private const int BclJitterMaxBufferedFrames = 8;
@@ -76,6 +76,12 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
     private static readonly TimeSpan StuckConnectingTimeout = TimeSpan.FromSeconds(8);
     // Min spacing between per-peer recovery attempts so a failing peer can't storm re-offers.
     private static readonly TimeSpan PeerRecoveryDebounce = TimeSpan.FromSeconds(3);
+    // Receive-side watchdog: how long a peer's data channel may stay non-open while its connection is alive
+    // (it contributes to openChannels < peers) before we proactively re-request/re-offer for THAT peer
+    // regardless of role. Targets the one-directional "hears nobody / hears most" signature directly and
+    // self-heals both the answerer-gate gap and any storm residue. Above StuckConnectingTimeout so a normal
+    // first handshake is never pre-empted.
+    private static readonly TimeSpan ChannelDeficitWatchdogTimeout = TimeSpan.FromSeconds(12);
     private DateTime _lastStatsLogUtc = DateTime.MinValue;
     private DateTime _lastJoinAttemptUtc = DateTime.MinValue;
     private DateTime _lastOfferRetryUtc = DateTime.MinValue;
@@ -267,6 +273,73 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             }
         }
         return count;
+    }
+
+    // Targeted, non-destructive recovery (P0.2). For each expected remote player that has a mapped peer
+    // whose link is unhealthy (data channel not open while the connection is alive/dead), re-drive ONLY that
+    // peer through the existing per-peer recovery (role-aware: initiator recreates+re-offers, answerer
+    // re-requests an offer) on the same per-peer backoff, leaving every already-open peer's channel intact.
+    // This replaces the global Rejoin()/ClearPeers() teardown for the common "most peers mapped, a few are
+    // wedged" shortfall. A player with NO mapped peer at all (the genuinely-unmappable seed) cannot be
+    // re-offered here — there is no socket to target — so it is reported but not acted on. Returns the number
+    // of peers this call drove a recovery on; 0 means nothing was actionable (e.g. only unmapped seeds remain).
+    public int TryRecoverMissingClients(VoiceGameStateSnapshot snapshot)
+    {
+        if (_disposed || snapshot == null) return 0;
+        // Snapshot the unhealthy mapped peers under the lock, then act outside it (StartOfferAsync /
+        // RequestOfferFromPeer / RecreatePeerConnection each take _peerSync themselves).
+        var targets = new List<(string SocketId, bool Initiator, bool Stuck)>();
+        var now = DateTime.UtcNow;
+        lock (_peerSync)
+        {
+            foreach (var peer in _peersBySocket.Values)
+            {
+                if (peer.PlayerId == byte.MaxValue) continue; // not yet mapped to a live player
+                // Healthy = data channel open. Leave it strictly alone.
+                if (peer.DataChannel?.readyState == RTCDataChannelState.open) continue;
+                if (!ExpectsPlayer(snapshot, peer.PlayerId)) continue;
+                if (now < peer.NextRetryUtc) continue; // honor per-peer backoff so this can't storm
+                bool initiator = ShouldInitiateOffer(peer.SocketId);
+                bool stuck = IsStuckConnecting(peer, now);
+                targets.Add((peer.SocketId, initiator, stuck));
+            }
+        }
+        if (targets.Count == 0) return 0;
+        foreach (var (socketId, initiator, stuck) in targets)
+        {
+            VoiceDiagnostics.Log("bcl.peer.targeted-recovery", $"socket={socketId} initiator={initiator} stuck={stuck}");
+            if (initiator)
+            {
+                // A wedged 'connecting' channel can't be re-offered on the same connection; rebuild first.
+                if (stuck) RecreatePeerConnection(socketId);
+                _ = StartOfferAsync(socketId);
+            }
+            else
+            {
+                RequestOfferFromPeer(socketId);
+            }
+            lock (_peerSync)
+            {
+                if (_peersBySocket.TryGetValue(socketId, out var peer))
+                {
+                    peer.RecoveryAttempts++;
+                    peer.NextRetryUtc = now + RecoveryBackoff(peer.RecoveryAttempts);
+                }
+            }
+        }
+        return targets.Count;
+    }
+
+    private static bool ExpectsPlayer(VoiceGameStateSnapshot snapshot, byte playerId)
+    {
+        var players = snapshot.Players;
+        for (int i = 0; i < players.Count; i++)
+        {
+            var player = players[i];
+            if (!player.IsLocal && !player.Disconnected && !player.IsDummy && player.PlayerId == playerId)
+                return true;
+        }
+        return false;
     }
 
     public void SetMute(bool mute)
@@ -1265,34 +1338,136 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
     private static bool IsRetryableDataChannelState(RTCDataChannelState? state)
         => state == null || state == RTCDataChannelState.closed;
 
+    // Receive-side watchdog gate (pure, unit-tested). The watchdog must ONLY fire on the TRUE wedged signature:
+    // the data channel is non-open while the connection has FINISHED negotiating (connected) or is dead
+    // (disconnected/failed/closed), AND the per-peer deficit clock has expired. A connection still in
+    // 'connecting'/'new' is a legitimate first handshake — possibly seconds from opening over a cold relay/TURN
+    // candidate — and must NOT be pre-empted, even past the fixed deficit timeout. (StuckConnecting covers the
+    // initiator-only OfferStartedUtc anchor separately; this is the role-independent backstop.)
+    private static bool WatchdogShouldRedrive(RTCPeerConnectionState connState, RTCDataChannelState? chanState, bool deficitExpired)
+    {
+        if (!deficitExpired) return false;
+        if (chanState == RTCDataChannelState.open) return false;
+        // Only consider a connection that has left negotiation: connected (handshake done, channel wedged) or a
+        // terminal/unhealthy state. Skip a live first handshake still in 'connecting'/'new'.
+        if (connState is RTCPeerConnectionState.connecting or RTCPeerConnectionState.@new) return false;
+        return true;
+    }
+
+    // Whether an answerer should re-request a fresh offer for a peer whose link is unhealthy. The connection
+    // has stopped actively establishing (it is NOT a fresh 'connecting' first handshake), yet the data
+    // channel is non-open. Covers: (a) connection-state failed/closed (the original, kept), (b) the channel
+    // is closed/null while the connection reads 'connected' (SCTP/channel died, ICE alive — the wedged
+    // one-directional case the old gate missed), and (c) a sustained 'disconnected' (debounced by the
+    // per-peer NextRetryUtc backoff). A live 'connecting' handshake is deliberately excluded so this never
+    // produces a duplicate offer during normal establishment.
+    private static bool AnswererShouldRerequest(RTCPeerConnectionState connectionState, RTCDataChannelState? channelState)
+    {
+        if (channelState == RTCDataChannelState.open) return false;
+        if (connectionState is RTCPeerConnectionState.failed or RTCPeerConnectionState.closed) return true;
+        if (connectionState == RTCPeerConnectionState.connected && IsRetryableDataChannelState(channelState)) return true;
+        if (connectionState == RTCPeerConnectionState.disconnected) return true; // sustained; NextRetryUtc debounces
+        return false;
+    }
+
+    // P2.1: cheap, pure structural validation of an Opus packet from its TOC byte, used to pre-empt the
+    // per-packet Concentus decode THROW on a clearly-invalid (foreign/incompatible) packet. The TOC byte encodes
+    // a 2-bit frame-count CODE in its low bits (RFC 6716 §3.1):
+    //   c=0 -> 1 frame                (min length 1: the TOC alone is a valid DTX/silence packet)
+    //   c=1 -> 2 frames, equal size   (needs >= 2 bytes: the second frame's data cannot be zero-length here)
+    //   c=2 -> 2 frames, VBR          (needs >= 2 bytes: 1 length byte after the TOC, min)
+    //   c=3 -> arbitrary frame count  (needs >= 2 bytes: a frame-count byte must follow the TOC)
+    // Returns true ONLY for the unambiguous cases (empty, or a multi-frame code with too few bytes to even hold
+    // its required header). It is deliberately CONSERVATIVE: it never rejects a packet that could be a valid small
+    // frame (a 1-byte code-0 packet passes), so valid-audio behaviour is unchanged. Concentus still validates the
+    // full frame-length arithmetic; this only removes the steady-state throw cost on streams that can never decode.
+    internal static bool IsOpusPacketStructurallyInvalid(byte[] data)
+    {
+        if (data == null || data.Length == 0) return true; // R1: an Opus packet must be at least one byte (the TOC)
+        int code = data[0] & 0x3;          // low 2 bits of the TOC = frame-count code
+        if (code == 0) return false;       // single-frame packet: 1 byte (TOC only) is already valid — never reject
+        // Code 1 (two CBR frames of EQUAL size) is also valid as a bare 1-byte packet per RFC 6716: it encodes two
+        // zero-length frames (silence), so the TOC alone is structurally fine — let Concentus decode it to silence.
+        if (code == 1) return false;
+        // Codes 2/3 REQUIRE at least one more byte after the TOC (a length byte / a frame-count byte). A packet
+        // that is exactly the TOC for either of these is structurally impossible.
+        return data.Length < 2;
+    }
+
     private void RetryClosedDataChannels()
     {
         var now = DateTime.UtcNow;
         if (now - _lastOfferRetryUtc < OfferRetryInterval) return;
         var peers = SnapshotPeers();
+        // The answerer's dc.onopen reset never fires under SIPSorcery (no inbound channel-open callback), so
+        // its RecoveryAttempts/NextRetryUtc would otherwise stay stale after a channel actually opens. Observe
+        // 'open' here and reset the backoff so a recovered peer that later glitches retries fast. Also clears
+        // the watchdog deficit clock for any open channel and arms it ONLY for a non-open channel whose
+        // connection has LEFT negotiation — never during a live 'connecting'/'new' first handshake (which may
+        // be seconds from opening over a cold relay), so the 12s deficit window measures the true wedged span.
+        foreach (var peer in peers)
+        {
+            if (peer.DataChannel?.readyState == RTCDataChannelState.open)
+            {
+                if (peer.RecoveryAttempts != 0 || peer.NextRetryUtc != DateTime.MinValue)
+                {
+                    peer.RecoveryAttempts = 0;
+                    peer.NextRetryUtc = DateTime.MinValue;
+                }
+                peer.ChannelDeficitSinceUtc = DateTime.MinValue;
+            }
+            else if (peer.Connection != null && !IsLocalSocket(peer.SocketId)
+                     && peer.Connection.connectionState is not (RTCPeerConnectionState.connecting or RTCPeerConnectionState.@new))
+            {
+                if (peer.ChannelDeficitSinceUtc == DateTime.MinValue)
+                    peer.ChannelDeficitSinceUtc = now;
+            }
+            else
+            {
+                peer.ChannelDeficitSinceUtc = DateTime.MinValue;
+            }
+        }
         var retryPeers = peers
             .Where(peer => ShouldInitiateOffer(peer.SocketId)
                 && now >= peer.NextRetryUtc
                 && (IsRetryableDataChannelState(peer.DataChannel?.readyState) || IsStuckConnecting(peer, now)))
             .ToArray();
         // Answerer side can't offer (would glare) and OnPeerConnectionDied only fires its one-shot
-        // request-offer on the failed/closed *transition*. If our link to the elected initiator is
-        // hard-dead but no fresh offer came back, re-ask on the same cadence so a dropped request-offer
-        // or a slow/asymmetric initiator self-heals without waiting for a meeting/scene reset. Restricted
-        // to failed/closed (NOT 'connecting' setup, NOT transient 'disconnected') so this never produces
-        // a duplicate offer during normal establishment; the initiator still only re-offers if ITS own
-        // link needs a rebuild.
+        // request-offer on the failed/closed *transition*. If our link to the elected initiator is unhealthy
+        // but no fresh offer came back, re-ask on the same cadence so a dropped request-offer or a
+        // slow/asymmetric initiator self-heals without waiting for a meeting/scene reset. The gate
+        // (AnswererShouldRerequest) now also covers a closed/null channel on a 'connected' connection (the
+        // wedged one-directional case) and a sustained 'disconnected', not just failed/closed; NextRetryUtc
+        // debounces it. The initiator still only re-offers if ITS own link needs a rebuild.
         var rerequestPeers = peers
             .Where(peer =>
             {
                 if (ShouldInitiateOffer(peer.SocketId) || IsLocalSocket(peer.SocketId)) return false;
                 if (now < peer.NextRetryUtc) return false;
                 var conn = peer.Connection;
-                return conn != null
-                    && conn.connectionState is RTCPeerConnectionState.failed or RTCPeerConnectionState.closed;
+                return conn != null && AnswererShouldRerequest(conn.connectionState, peer.DataChannel?.readyState);
             })
             .ToArray();
-        if (retryPeers.Length == 0 && rerequestPeers.Length == 0) return;
+        // Receive-side watchdog: a peer whose data channel has stayed non-open while its connection is alive
+        // past ChannelDeficitWatchdogTimeout — the measurable openChannels < peers / one-directional signature
+        // — gets a proactive re-drive regardless of role. The initiator recreates+re-offers; the answerer
+        // re-requests. This is the role-independent backstop for both the answerer gate and any storm residue.
+        var watchdogPeers = peers
+            .Where(peer =>
+            {
+                if (IsLocalSocket(peer.SocketId)) return false;
+                var conn = peer.Connection;
+                if (conn == null) return false;
+                if (now < peer.NextRetryUtc) return false;
+                bool deficitExpired = peer.ChannelDeficitSinceUtc != DateTime.MinValue
+                    && now - peer.ChannelDeficitSinceUtc >= ChannelDeficitWatchdogTimeout;
+                // Only the TRUE wedged signature fires: channel non-open while the connection has LEFT
+                // negotiation (connected/disconnected/failed/closed). A 'connecting'/'new' first handshake —
+                // which may be seconds from opening over a cold relay — is never pre-empted.
+                return WatchdogShouldRedrive(conn.connectionState, peer.DataChannel?.readyState, deficitExpired);
+            })
+            .ToArray();
+        if (retryPeers.Length == 0 && rerequestPeers.Length == 0 && watchdogPeers.Length == 0) return;
         _lastOfferRetryUtc = now;
         foreach (var peer in retryPeers)
         {
@@ -1307,8 +1482,26 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         }
         foreach (var peer in rerequestPeers)
         {
-            VoiceDiagnostics.Log("bcl.offer", $"reason=re-request socket={peer.SocketId} client={peer.ClientId} state=connection-{peer.Connection?.connectionState.ToString().ToLowerInvariant() ?? "none"}");
+            VoiceDiagnostics.Log("bcl.offer", $"reason=re-request socket={peer.SocketId} client={peer.ClientId} state=connection-{peer.Connection?.connectionState.ToString().ToLowerInvariant() ?? "none"} channel={peer.DataChannel?.readyState.ToString() ?? "none"}");
             RequestOfferFromPeer(peer.SocketId);
+            peer.RecoveryAttempts++;
+            peer.NextRetryUtc = now + RecoveryBackoff(peer.RecoveryAttempts);
+        }
+        foreach (var peer in watchdogPeers)
+        {
+            // Don't double-drive a peer already handled by the initiator/answerer passes above.
+            if (Array.IndexOf(retryPeers, peer) >= 0 || Array.IndexOf(rerequestPeers, peer) >= 0) continue;
+            var initiator = ShouldInitiateOffer(peer.SocketId);
+            VoiceDiagnostics.Log("bcl.offer", $"reason=watchdog socket={peer.SocketId} client={peer.ClientId} initiator={initiator} deficitMs={(now - peer.ChannelDeficitSinceUtc).TotalMilliseconds:0} state={peer.DataChannel?.readyState.ToString() ?? "none"}");
+            if (initiator)
+            {
+                RecreatePeerConnection(peer.SocketId);
+                _ = StartOfferAsync(peer.SocketId);
+            }
+            else
+            {
+                RequestOfferFromPeer(peer.SocketId);
+            }
             peer.RecoveryAttempts++;
             peer.NextRetryUtc = now + RecoveryBackoff(peer.RecoveryAttempts);
         }
@@ -1539,8 +1732,13 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
                     peer.DataChannel = dc;
                 dc.onopen += () =>
                 {
-                    peer.RecoveryAttempts = 0;
-                    peer.NextRetryUtc = DateTime.MinValue;
+                    // SIPSorcery background thread: take _peerSync so the RecoveryAttempts/NextRetryUtc reset
+                    // doesn't race the main-thread recovery poll (NextRetryUtc is the storm bound).
+                    lock (_peerSync)
+                    {
+                        peer.RecoveryAttempts = 0;
+                        peer.NextRetryUtc = DateTime.MinValue;
+                    }
                     VoiceDiagnostics.Log("bcl.channel", $"socket={socketId} client={peer.ClientId} state=open inbound=true");
                 };
                 dc.onmessage += (_, _, data) => OnDataChannelMessage(peer, data);
@@ -1595,6 +1793,19 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         if (peer.DataChannel?.readyState != RTCDataChannelState.open) return true;
         var connection = peer.Connection;
         return connection == null || IsDeadConnectionState(connection.connectionState);
+    }
+
+    // Decides whether an incoming OFFER must be answered on a freshly-rebuilt connection. A second offer for a
+    // peer only happens when the initiator RE-created its connection and re-offered, so any offer that arrives
+    // while our connection has left 'new' AND we have no open data channel is such a re-offer — answer it on a
+    // clean connection, never on the stale one (which would split-brain). A true first-contact offer (still
+    // 'new') is answered on the fresh connection in place; a healthy already-open channel is left alone. Pure +
+    // unit-tested; preserves the prior dead-state rebuild exactly.
+    private static bool OfferRequiresRebuild(RTCPeerConnectionState connState, RTCDataChannelState? channelState)
+    {
+        if (IsDeadConnectionState(connState)) return true;               // failed/closed/disconnected: rebuild (unchanged)
+        if (channelState == RTCDataChannelState.open) return false;      // healthy open channel: renegotiate in place
+        return connState != RTCPeerConnectionState.@new;                 // established/establishing without a channel -> rebuild; 'new' first-contact -> answer in place
     }
 
     // Replaces only the connection + data channel, keeping playback/decoder/jitter/mapping intact,
@@ -1701,8 +1912,13 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             }
             channel.onopen += () =>
             {
-                peer.RecoveryAttempts = 0;
-                peer.NextRetryUtc = DateTime.MinValue;
+                // SIPSorcery background thread: take _peerSync so the RecoveryAttempts/NextRetryUtc reset
+                // doesn't race the main-thread recovery poll (NextRetryUtc is the storm bound).
+                lock (_peerSync)
+                {
+                    peer.RecoveryAttempts = 0;
+                    peer.NextRetryUtc = DateTime.MinValue;
+                }
                 VoiceDiagnostics.Log("bcl.channel", $"socket={socketId} client={peer.ClientId} state=open inbound=false");
             };
             channel.onmessage += (_, _, data) => OnDataChannelMessage(peer, data);
@@ -1759,9 +1975,16 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         }
         if (signal.Kind == "offer")
         {
-            // If our side already died, rebuild so a renegotiation offer lands on a clean connection.
-            // A first-contact offer arrives on a 'new' connection and is left untouched.
-            if (IsDeadConnectionState(peer.Connection.connectionState))
+            // Rebuild so this offer lands on a CLEAN connection whenever our current one cannot carry its
+            // channel. A second OFFER only arrives for a peer when the initiator RE-created its connection
+            // (after a stuck/dead link) and re-offered. Applying such a re-offer to our stale connection —
+            // which negotiated its ICE/DTLS/SCTP against the initiator's now-CLOSED connection — can never
+            // open the data channel and leaves the two ends SPLIT-BRAINED (answerer reads 'connected' with no
+            // channel, initiator reads 'connecting' on its fresh connection), a state only a full rejoin
+            // previously cleared. OfferRequiresRebuild covers that 'connected/connecting-but-no-channel' case
+            // in addition to the dead states, while leaving a true first-contact offer (connection 'new') and
+            // a healthy already-open channel untouched.
+            if (OfferRequiresRebuild(peer.Connection.connectionState, peer.DataChannel?.readyState))
             {
                 RecreatePeerConnection(fromSocketId);
                 PeerConnection? rebuilt = null;
@@ -2513,6 +2736,12 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         var peerJitter = diagnostics.Length == 0 ? "none" : string.Join("|", diagnostics.Select(item => item.Jitter.ToCompactString()));
         var peerBuffers = diagnostics.Length == 0 ? "none" : string.Join("|", diagnostics.Select(item => $"{item.ClientId}:{item.BufferStats}"));
         var openChannels = peers.Count(peer => peer.DataChannel?.readyState == RTCDataChannelState.open);
+        // P2 observability: per-peer transport state so an in-game capture can tell a CHANNEL DEFICIT
+        // (transport: dc!=open) apart from a ROUTE MUTE (audible=false). Compact: client:dc/conn/ice.
+        var peerTransport = peers.Length == 0
+            ? "none"
+            : string.Join("|", peers.Select(peer =>
+                $"{peer.ClientId}:{(peer.DataChannel?.readyState.ToString() ?? "none")}/{(peer.Connection?.connectionState.ToString() ?? "none")}/{(peer.Connection?.iceConnectionState.ToString() ?? "none")}"));
         float micPeak;
         double micRms;
         int micWindowSamples;
@@ -2571,7 +2800,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             $"rnnoiseFrameSize={rnnoise.FrameSize} rnnoiseNativePath=\"{DiagnosticSafe(rnnoise.NativePath)}\" rnnoiseLastError=\"{DiagnosticSafe(rnnoise.LastError)}\"";
         VoiceDiagnostics.Log("bcl.stats",
             $"reason={reason} room={RoomCode} region={Region} endpoint={ServerUrl} phase={snapshot?.Phase.ToString() ?? "none"} socketConnected={_socket?.Connected == true} socketId={_socket?.Id ?? "none"} " +
-            $"peers={peers.Length} openChannels={openChannels} localSocket={GetEffectiveLocalSocketId()} joinedClient={_joinedClientId} joinInFlight={Volatile.Read(ref _joinInFlight)} joinRetryAgeMs={(DateTime.UtcNow - _lastJoinAttemptUtc).TotalMilliseconds:0} audible={peers.Count(peer => peer.CurrentRoute.Audible)} speaking={peers.Count(peer => peer.IsSpeaking)} " +
+            $"peers={peers.Length} openChannels={openChannels} peerTransport={peerTransport} localSocket={GetEffectiveLocalSocketId()} joinedClient={_joinedClientId} joinInFlight={Volatile.Read(ref _joinInFlight)} joinRetryAgeMs={(DateTime.UtcNow - _lastJoinAttemptUtc).TotalMilliseconds:0} audible={peers.Count(peer => peer.CurrentRoute.Audible)} speaking={peers.Count(peer => peer.IsSpeaking)} " +
             $"localLevel={LocalLevel:0.000} localSpeaking={LocalSpeaking} mute={Mute} remoteLevelMax={remoteMax:0.000} " +
             $"audibleTicks={audibleTicks} audibleSilentTicks={audibleSilentTicks} silentPct={silentPct:0.0} peerWindows={peerWindows} peerJitter={peerJitter} peerBuffers={peerBuffers} " +
             $"encodedTx={Volatile.Read(ref _encodedTx)} encodedRx={Volatile.Read(ref _encodedRx)} customTx={Volatile.Read(ref _customTx)} customRx={Volatile.Read(ref _customRx)} " +
@@ -2660,7 +2889,42 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         private bool _decodeSuppressed;
         private DateTime _decodeReprobeUtc;
         private const int DecodeFailureSuppressThreshold = 10;
+        // Debounce: only a SUSTAINED run of throws (not a transient bad frame) accrues toward suppression,
+        // so a healthy peer with the occasional undecodable packet never gets the 5s cut-out.
+        private int _consecutiveThrows;
+        private DateTime _firstThrowUtc;
+        private const int ConsecutiveThrowSuppressRun = 8;
+        private static readonly TimeSpan ThrowSuppressWindow = TimeSpan.FromSeconds(2);
         private float[] _decodeFloat = System.Array.Empty<float>();
+        // Latest Opus-PLC concealment frame, synthesized on the DECODE thread (under _sync) after each real
+        // decode and published atomically. The ring's trailing-stall bridge (Fix 2b-3) reads it on the NAudio
+        // pull thread via Volatile.Read — never calling the decoder off-thread (which would corrupt decoder
+        // state) and never taking _sync from the read path (which would invert the _stateLock<->_sync order
+        // and deadlock). Published from a per-peer 3-slot ring (P0.1, see _bridgeSlots): the newly faded frame
+        // goes into the next slot, so a reader still copying a previously-published slot is never overwritten
+        // mid-read even across two back-to-back publishes with two independent readers.
+        private float[]? _latestPlcFrame;
+        // Per-peer 3-SLOT RING for the published bridge frame (P0.1): three reusable float[960] + an advancing
+        // index, replacing the per-frame `new float[960]`. The faded frame is written into the NEXT slot
+        // (index advances modulo 3), then the reference is published via Volatile.Write. THREE slots (readers+1,
+        // not 2) are required because a single jitter-buffer batch drain emits SEVERAL PublishBridgeFrameLocked
+        // calls back-to-back: with two readers (the left + right route, both wired to GetFreshBridgeFrame) a
+        // 2-slot toggle could land the second of two back-to-back publishes onto the very slot a reader
+        // snapshotted, tearing its in-flight copy. readers+1 slots make the slot a reader snapshotted provably
+        // never the next-written slot even across two consecutive publishes — a HARD guarantee.
+        // Allocated lazily on the first publish (decode thread, under _sync) and reused thereafter; pure allocation
+        // hygiene (flattens decode-path garbage as talker count grows) — NOT a freeze fix (GC was not the cause).
+        private const int BridgeSlotCount = 3; // readers (left+right) + 1
+        private float[][]? _bridgeSlots;
+        private int _bridgeSlot;
+        // Monotonic publish timestamp (Stopwatch ticks) for _latestPlcFrame. The provider lambda self-expires
+        // the bridge frame: a frame older than the ring's idle-reset window (200 ms) is never returned, so a
+        // bridge can never replay a faded copy of a PREVIOUS utterance's tail after an idle gap or a
+        // data-channel reopen. Written under _sync alongside the frame; read cross-thread via Volatile.Read
+        // (long reads are atomic on x64).
+        private long _latestPlcFrameTicks;
+        // 200 ms, matching AudioProviders' IdleRecoveryResetWindow. Expressed in Stopwatch ticks once.
+        private static readonly long PlcFrameMaxAgeTicks = System.Diagnostics.Stopwatch.Frequency / 5;
         private bool _disposed;
 
         // Retained: constructed by the test harness via reflection. Forwards clientId as the group id.
@@ -2676,6 +2940,13 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             PlaybackGroupId = playbackGroupId;
             _leftRoute = leftRoute;
             _rightRoute = rightRoute;
+            // Per-peer adaptive jitter wiring (Fix 2a-3 / 2b-3). The clean arrival-jitter signal is read off
+            // _jitterBuffer; the PLC bridge frame is the atomically-published _latestPlcFrame. Both callbacks
+            // are invoked under the ring's own _stateLock and touch only thread-safe state.
+            _leftRoute.SetJitterSamplesProvider(() => _jitterBuffer.CurrentJitterSamples);
+            _rightRoute.SetJitterSamplesProvider(() => _jitterBuffer.CurrentJitterSamples);
+            _leftRoute.SetPlcFrameProvider(GetFreshBridgeFrame);
+            _rightRoute.SetPlcFrameProvider(GetFreshBridgeFrame);
             _tailFlushTimer = new Timer(static state => ((PeerConnection)state!).FlushBufferedVoiceFromTimer(), this, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
             MuteAll();
         }
@@ -2694,6 +2965,11 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         // Reset to zero the instant its data channel opens, so a recovered peer that later glitches retries fast.
         public int RecoveryAttempts { get; set; }
         public DateTime NextRetryUtc { get; set; } = DateTime.MinValue;
+        // Receive-side watchdog (one-directional deafness signature): when the data channel is non-open
+        // while the connection is alive, this records when the deficit began so the poll can proactively
+        // re-request/re-offer for THIS peer after it has persisted past a threshold, regardless of role.
+        // Reset to MinValue the instant the channel is observed open. Touched only on the main-thread poll.
+        public DateTime ChannelDeficitSinceUtc { get; set; } = DateTime.MinValue;
 #pragma warning disable CS0618
         public OpusDecoder Decoder { get; } = new(AudioHelpers.ClockRate, AudioHelpers.Channels);
 #pragma warning restore CS0618
@@ -2801,8 +3077,11 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
                 _leftRoute.ClearBufferedSamples();
                 _rightRoute.ClearBufferedSamples();
                 _routeClearsSinceStats++;
-                VoiceDiagnostics.Log("bcl.route.clear",
-                    $"client={ClientId} reason={result.Reason} wasAudible={wasAudible} audible={result.Audible} bufferedSamples={bufferedSamples} normal={result.NormalVolume:0.000} ghost={result.GhostVolume:0.000} radio={result.RadioVolume:0.000} pan={result.Pan:0.000} appliedPan={_appliedPan:0.000}");
+                // Gate the interpolated diagnostic string: it fires in bursts on audible<->inaudible
+                // transitions, so building it eagerly (even with diagnostics off) is needless alloc churn.
+                if (VoiceDiagnostics.IsEnabled)
+                    VoiceDiagnostics.Log("bcl.route.clear",
+                        $"client={ClientId} reason={result.Reason} wasAudible={wasAudible} audible={result.Audible} bufferedSamples={bufferedSamples} normal={result.NormalVolume:0.000} ghost={result.GhostVolume:0.000} radio={result.RadioVolume:0.000} pan={result.Pan:0.000} appliedPan={_appliedPan:0.000}");
             }
             BclStereoPlaybackProvider.GetPanGains(_appliedPan, out var leftGain, out var rightGain);
             _leftRoute.Apply(result, leftGain);
@@ -2884,7 +3163,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
                     // A single bad frame must NOT abandon the rest of the drained batch (up to
                     // MaxDrainFramesPerPacket frames). DecodeAndAddSamples conceals the failed slot with
                     // silence, so surface the first error for telemetry and keep draining the successors.
-                    if (DecodeAndAddSamples(payload, decodeFec, frameSize, out var frameError, out var decoded))
+                    if (DecodeAndAddSamples(payload, false, decodeFec, frameSize, out var frameError, out var decoded))
                         decodedFrames += decoded > 0 ? 1 : 0;
                     else if (string.IsNullOrEmpty(error))
                         error = frameError;
@@ -2913,7 +3192,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
                         ? AudioHelpers.FrameSize
                         : NormalizeOpusFrameSize(Math.Max(AudioHelpers.FrameSize, (int)frame.Duration));
                     // Conceal a failed slot and keep draining instead of abandoning the rest of the tail batch.
-                    if (DecodeAndAddSamples(payload, decodeFec, frameSize, out var frameError, out var decoded))
+                    if (DecodeAndAddSamples(payload, false, decodeFec, frameSize, out var frameError, out var decoded))
                         decodedFrames += decoded > 0 ? 1 : 0;
                     else if (string.IsNullOrEmpty(error))
                         error = frameError;
@@ -2954,10 +3233,22 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
                 VoiceDiagnostics.Log("bcl.audio.drop", $"client={ClientId} bytes=0 error=\"{error}\" source=tail-timer");
         }
 
+        // < this many bytes cannot be a useful legacy Opus frame. Empty / sub-minimal datagrams (foreign,
+        // non-Opus traffic sharing a peer's data channel) make Concentus THROW per packet, so conceal the
+        // slot before it ever reaches the decoder instead of paying a stack-trace per bad packet.
+        private const int MinLegacyOpusBytes = 3;
+
         private bool DecodeLegacyPacket(byte[] data, out string? error, out int decodedFrames)
         {
             _jitterBuffer.CountLegacyPacket();
-            return DecodeAndAddSamples(data, false, AudioHelpers.FrameSize, out error, out decodedFrames);
+            if (data.Length < MinLegacyOpusBytes)
+            {
+                error = data.Length == 0 ? "legacy-empty" : "legacy-too-small";
+                RouteSilence(AudioHelpers.FrameSize); // keep the playout timeline aligned; deliberately NOT a decode failure
+                decodedFrames = 0;
+                return false;
+            }
+            return DecodeAndAddSamples(data, isLegacy: true, decodeFec: false, AudioHelpers.FrameSize, out error, out decodedFrames);
         }
 
         // 120 ms @ 48 kHz mono — the maximum Opus frame size. Decoding real packets into this much output
@@ -2990,15 +3281,36 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
                 VoiceDiagnostics.Log("bcl.decode.suppressed", $"client={ClientId} failures={_decodeFailures} reprobeSec={sec:0}");
         }
 
+        // Funnel real-packet decode throws through a debounce: a transient bad frame resets the run, only a
+        // sustained burst (>= ConsecutiveThrowSuppressRun within ThrowSuppressWindow) advances the 10-failure
+        // breaker. With the MinLegacyOpusBytes pre-guard this means an incompatible stream is still parked
+        // promptly while a healthy peer's sporadic bad frame never accumulates toward the cut-out.
+        private void NoteDecodeThrottledFailure()
+        {
+            var now = DateTime.UtcNow;
+            if (_consecutiveThrows == 0 || now - _firstThrowUtc > ThrowSuppressWindow)
+            {
+                _consecutiveThrows = 0;
+                _firstThrowUtc = now;
+            }
+            _consecutiveThrows++;
+            if (_consecutiveThrows >= ConsecutiveThrowSuppressRun)
+            {
+                NoteDecodeFailure();   // existing 10-failure breaker + 5s..60s reprobe, unchanged
+                _consecutiveThrows = 0; // re-arm; a permanently-broken stream re-trips quickly
+            }
+        }
+
         private void NoteDecodeSuccess()
         {
+            _consecutiveThrows = 0; // any decodable frame breaks a throw run
             if (_decodeSuppressed)
                 VoiceDiagnostics.Log("bcl.decode.resumed", $"client={ClientId} afterFailures={_decodeFailures}");
             _decodeFailures = 0;
             _decodeSuppressed = false;
         }
 
-        private bool DecodeAndAddSamples(byte[] data, bool decodeFec, int frameSize, out string? error, out int decodedFrames)
+        private bool DecodeAndAddSamples(byte[] data, bool isLegacy, bool decodeFec, int frameSize, out string? error, out int decodedFrames)
         {
             error = null;
             decodedFrames = 0;
@@ -3010,6 +3322,22 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             // PLC (empty payload) and FEC require frame_size to equal the EXACT missing duration; a real
             // packet is decoded at full capacity so its true (possibly larger) frame size always fits.
             var conceal = data.Length == 0 || decodeFec;
+
+            // P2.1: pre-guard the per-packet Concentus decode THROW. On an incompatible/foreign stream sharing the
+            // room, Concentus throws+catches per packet on the receive thread, stealing time from healthy streams.
+            // Cheaply validate the Opus TOC byte (frame-count code vs available bytes) so a packet that is
+            // UNAMBIGUOUSLY too short for its claimed frame count is RouteSilenced (and debounced toward the
+            // existing suppression breaker) instead of thrown. Conservative by construction: a 1-byte code-0 frame
+            // (valid DTX/silence) is never rejected; only the structurally-impossible cases short-circuit. The
+            // _decodeSuppressed breaker and the MinLegacyOpusBytes legacy guard remain as backstops.
+            if (!conceal && IsOpusPacketStructurallyInvalid(data))
+            {
+                error = "opus-toc-invalid";
+                RouteSilence(frameSize);
+                NoteDecodeThrottledFailure(); // same debounced path the throw would have taken — without the throw
+                return false;
+            }
+
             int capacity = MaxDecodeCapacitySamples * AudioHelpers.Channels;
             if (_decodePcm.Length < capacity) _decodePcm = new short[capacity];
             var pcm = _decodePcm;
@@ -3026,7 +3354,9 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
                 // caller can keep draining the rest of the batch; the next real packet re-primes the decoder.
                 error = ex.Message;
                 RouteSilence(frameSize);
-                if (!conceal) NoteDecodeFailure(); // only real-packet failures drive suppression, not PLC/FEC
+                // Count a throw toward suppression only for a real PV2 packet or a foreign legacy datagram,
+                // and only after a SUSTAINED run (debounced) — never for genuine PV2 PLC/FEC concealment.
+                if (!conceal || isLegacy) NoteDecodeThrottledFailure();
                 return false;
             }
 
@@ -3053,8 +3383,58 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             ObserveVoiceLevel(peak);
             _leftRoute.AddSamples(samples, 0, decoded);
             _rightRoute.AddSamples(samples, 0, decoded);
+            // Publish a bridge concealment frame for the ring's trailing-stall PLC (Fix 2b-3). Only after a
+            // real decode, never on a conceal path. NOTE (deviation from plan, [confirm in code]): the plan
+            // asked for live Opus PLC synthesis from the ring's read thread, but the peer Decoder is shared
+            // with the decode thread (under _sync) and is NOT thread-safe, and calling it off-thread would
+            // also invert the _stateLock<->_sync lock order (deadlock) and corrupt decoder state on every
+            // frame. So the bridge is a fast-faded copy of the just-decoded real audio — energy-matched,
+            // bounded to MaxTrailingPlcFrames (~60 ms), trim-bounded, and published atomically.
+            if (!conceal) PublishBridgeFrameLocked(samples, decoded);
             decodedFrames = 1;
             return true;
+        }
+
+        // Build one ~20 ms concealment frame from the tail of the last real decode (gentle fade-out so a held
+        // bridge doesn't buzz) and publish it atomically for the ring's trailing-stall bridge. Runs on the
+        // decode thread under _sync; the ring reads the published reference via Volatile.Read on the NAudio
+        // thread without touching the decoder or _sync (no off-thread decode, no lock-order inversion).
+        private void PublishBridgeFrameLocked(float[] samples, int decoded)
+        {
+            int n = AudioHelpers.FrameSize * AudioHelpers.Channels;
+            if (decoded < n) return; // need a full frame to bridge from
+            // Publish into a 3-slot ring (P0.1): advance to the next slot, then publish it. Runs on the decode
+            // thread under _sync, but the cadence is per-DRAINED-FRAME, not per-20ms — a single jitter-buffer
+            // batch drain emits several PublishBridgeFrameLocked calls back-to-back. With readers+1 = 3 slots the
+            // next-written slot is never one a reader could currently hold even across two back-to-back publishes,
+            // so a reader's in-flight copy is never torn; readers only read the volatile-published reference.
+            if (_bridgeSlots == null)
+                _bridgeSlots = new[] { new float[n], new float[n], new float[n] };
+            _bridgeSlot = (_bridgeSlot + 1) % BridgeSlotCount; // advance to the next slot in the ring
+            var frame = _bridgeSlots[_bridgeSlot];
+            int start = decoded - n; // take the most recent frame's worth of samples
+            for (int i = 0; i < n; i++)
+            {
+                // Linear fade across the frame so a multi-frame held bridge tapers toward silence.
+                float fade = 1f - (i / (float)n) * 0.5f;
+                frame[i] = samples[start + i] * fade;
+            }
+            // Publish the frame, then its monotonic age stamp. Order doesn't matter for correctness because the
+            // reader only USES a frame whose stamp is fresh; a torn read at worst expires a still-valid frame.
+            System.Threading.Volatile.Write(ref _latestPlcFrame, frame);
+            System.Threading.Volatile.Write(ref _latestPlcFrameTicks, System.Diagnostics.Stopwatch.GetTimestamp());
+        }
+
+        // Provider for the ring's trailing-stall bridge (Fix 2b-3), invoked on the NAudio pull thread under the
+        // ring's own _stateLock. Returns the published bridge frame ONLY while it is fresher than the 200 ms
+        // idle-reset window; an older frame (an idle gap or data-channel reopen happened) returns null so the
+        // bridge can never replay a faded copy of a previous utterance's tail. No decoder call, no _sync.
+        private float[]? GetFreshBridgeFrame()
+        {
+            long stamp = System.Threading.Volatile.Read(ref _latestPlcFrameTicks);
+            if (stamp == 0) return null; // nothing published yet
+            if (System.Diagnostics.Stopwatch.GetTimestamp() - stamp > PlcFrameMaxAgeTicks) return null; // stale
+            return System.Threading.Volatile.Read(ref _latestPlcFrame);
         }
 
         // Routes one frame of silence to keep the playout timeline aligned when a packet cannot be decoded,
