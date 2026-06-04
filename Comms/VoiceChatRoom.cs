@@ -77,6 +77,13 @@ public class VoiceChatRoom
     private string? _activeRoomCode;
     private string? _activeRegion;
     internal IEnumerable<VoiceRemoteOverlayState> InterstellarRemoteOverlayStates => _voiceBackend?.RemoteOverlayStates ?? Enumerable.Empty<VoiceRemoteOverlayState>();
+
+    // Allocation-free per-frame path used by VoiceOverlayState.Build.
+    internal void AppendRemoteOverlayStates(List<VoiceRemoteOverlayState> buffer)
+        => _voiceBackend?.AppendRemoteOverlayStates(buffer);
+
+    // For VoiceFrameProfiler context only.
+    internal int BackendPeerCount => _voiceBackend?.PeerCount ?? -1;
     internal bool TrySetRemoteVolume(byte playerId, string playerName, float volume)
         => _voiceBackend?.TrySetRemoteVolume(playerId, playerName, volume) == true;
     internal int ResetRemotePeerMappingsNoMute()
@@ -106,7 +113,19 @@ public class VoiceChatRoom
     private float  _bootstrapRefreshTimer;
     private float _missingPeerRecoveryReadyTime = -999f;
     private float _lastMissingPeerRecoveryTime = -999f;
-    private float _lastMissingPeerRecoveryCheckTime = -999f;
+    // Storm guard (P0): a permanently-unmappable remote keeps mappedPeers < remotePlayers forever. Track how
+    // many consecutive recovery attempts did NOT improve mappedPeers; after a hard cap we LATCH (stop firing
+    // recovery on that shortfall) until the expected-remote set changes or mappedPeers actually increases, so
+    // an unmappable peer can't drive the old unbounded 5 s teardown cadence. _lastHealthyMappedPeers records
+    // the best mapped count seen, so escalation to a global rebuild is reserved for a real collapse.
+    private int _missingPeerRecoveryAttempts;          // consecutive non-improving attempts on the current shortfall (targeted path)
+    private int _globalRebuildAttempts;                 // consecutive global/collapse rebuilds (bounds the collapse-path backoff)
+    private int _lastRecoveryMappedPeers = -1;          // mappedPeers observed at the previous attempt
+    private int _lastHealthyMappedPeers;                // best mappedPeers ever seen this session (diagnostics only)
+    private int _lastRecoveryRemoteSignature;           // cheap hash of the expected-remote set at the previous attempt
+    private bool _missingPeerRecoveryLatched;           // true once capped; cleared when the set/count changes
+    private const int MissingPeerRecoveryMaxAttempts = 3;        // non-improving attempts before latching
+    private const int MissingPeerRecoveryBackoffShiftCap = 4;    // max backoff doublings (5s base -> ~80s cap on the global path)
     private bool _haveTracePhase;
     private VoiceGamePhase _lastTracePhase = VoiceGamePhase.Unknown;
     private DateTime _transitionTraceUntilUtc = DateTime.MinValue;
@@ -273,11 +292,16 @@ public class VoiceChatRoom
         if (refreshSnapshot)
         {
             _snapshotRefreshTimer = StateRefreshInterval;
+            long __snapTicks = VoiceFrameProfiler.Begin();
             CurrentSnapshot = VoiceSnapshotBuilder.Build(_commsSabActive);
+            VoiceFrameProfiler.End("room.snapshot", __snapTicks);
         }
 
         var snapshot = CurrentSnapshot;
         Vector2? listenerPos = snapshot?.LocalPosition;
+        // One-time-per-map occlusion warm-up so the first in-range speaker doesn't pay the physics-broadphase
+        // build + door-cache scan (~70-100ms) mid-round. No-op after the first call for a given map.
+        if (listenerPos.HasValue) VoiceAudioOcclusion.WarmUp(listenerPos.Value);
         TrackTransitionPhase(snapshot);        bool localInVent = snapshot != null &&
                             snapshot.TryGetLocalPlayer(out var localSnapshot) &&
                             localSnapshot.InVent;
@@ -302,10 +326,14 @@ public class VoiceChatRoom
 
         if (_voiceBackend != null)
         {
+            long __backendTicks = VoiceFrameProfiler.Begin();
             _voiceBackend.Update(snapshot, speakerCache, _virtualMics, localInVent, _commsSabActive);
+            VoiceFrameProfiler.End("room.backend", __backendTicks);
             if (snapshot != null)
                 SendRadioState(snapshot.LocalPlayerId, VoiceChatHudState.ActiveTeamRadioChannel());
-            MaybeRecoverMissingBackendPeers(snapshot);
+            long __recoveryTicks = VoiceFrameProfiler.Begin();
+            TryRecoverMissingBackendPeers(snapshot);
+            VoiceFrameProfiler.End("room.recovery", __recoveryTicks);
         }
 
         updateStep = "diagnostics";
@@ -581,6 +609,11 @@ public class VoiceChatRoom
             : new BetterCrewLinkVoiceBackend(roomCode, region, endpoint.ServerUrl);
         _interstellarVoice = _voiceBackend as InterstellarVoiceBackend;
         _betterCrewLinkVoice = _voiceBackend as BetterCrewLinkVoiceBackend;
+        // P1.2: pre-warm the one-time HUD init (sprite PNG decode + button/tooltip GameObjects) here, off the
+        // game-entry frame — the same room-construction lifecycle slot as the backend's WarmOpusCodec. Runs on
+        // the Unity main thread (this method already touches VoiceChatHudState below) and is idempotent, so the
+        // per-frame EnsureHudButtons path remains the fallback.
+        VoiceChatHudState.Prewarm();
         _voiceBackend.CustomMessageReceived += HandleBackendCustomMessage;
         _voiceBackend.SetMute(Mute);
         SetMasterVolume(settings?.MasterVolume.Value ?? 1f);
@@ -603,20 +636,13 @@ _voiceBackend.SetMicrophone(settings?.MicrophoneDevice ?? string.Empty, settings
         _activeRegion = region;
         _missingPeerRecoveryReadyTime = Time.time + (endpoint.IsInterstellar ? InterstellarSwitchPeerRecoveryGraceSeconds : MissingPeerRecoveryGraceSeconds);
         _lastMissingPeerRecoveryTime = -999f;
+        ResetMissingPeerRecoveryStormGuard();
         StartBootstrapWindow($"backend switched to {endpoint.Backend}");
         ForceUpdateLocalProfile();
         SendHostSettingsSnapshot(force: true);
         VoiceDiagnostics.Log("transport.selected", $"backend={endpoint.Backend} room={roomCode} region={region} endpoint={endpointLabel} mic={UsingMicrophone} speaker={UsingSpeaker} localLevel={LocalMicLevel:0.000}");
     }
 
-    private void MaybeRecoverMissingBackendPeers(VoiceGameStateSnapshot? snapshot)
-    {
-        if (Time.time - _lastMissingPeerRecoveryCheckTime < MissingPeerRecoveryCheckIntervalSeconds)
-            return;
-
-        _lastMissingPeerRecoveryCheckTime = Time.time;
-        TryRecoverMissingBackendPeers(snapshot);
-    }
     private void TryRecoverMissingBackendPeers(VoiceGameStateSnapshot? snapshot)
     {
         if (_voiceBackend == null || snapshot == null)
@@ -624,43 +650,193 @@ _voiceBackend.SetMicrophone(settings?.MicrophoneDevice ?? string.Empty, settings
 
         int remotePlayers = CountExpectedRemotePlayers(snapshot);
         int mappedPeers = _voiceBackend.CountMappedRemotePeers(snapshot);
+        if (mappedPeers > _lastHealthyMappedPeers)
+            _lastHealthyMappedPeers = mappedPeers; // diagnostics-only peak; NOT used to judge collapse (see IsMeshCollapse)
         if (remotePlayers == 0 || mappedPeers >= remotePlayers)
         {
+            // Fully healthy (or no remotes). Reset the grace timer AND the storm guard so the next genuine
+            // shortfall starts a fresh capped/back-off cycle.
             _missingPeerRecoveryReadyTime = Time.time + MissingPeerRecoveryGraceSeconds;
+            if (_missingPeerRecoveryAttempts != 0 || _missingPeerRecoveryLatched || _globalRebuildAttempts != 0)
+            {
+                _missingPeerRecoveryAttempts = 0;
+                _globalRebuildAttempts = 0;
+                _missingPeerRecoveryLatched = false;
+                _lastRecoveryMappedPeers = -1;
+                _lastRecoveryRemoteSignature = 0;
+            }
             return;
         }
 
         if (Time.time < _missingPeerRecoveryReadyTime)
             return;
 
-        if (Time.time - _lastMissingPeerRecoveryTime < MissingPeerRecoveryIntervalSeconds)
+        // The set of expected remotes. If it changes, the shortfall is "new" — unlatch and restart the
+        // cap/backoff so a genuinely-changed lobby always gets fresh recovery attempts. Use a cheap
+        // allocation-free fold over the expected clientIds (this runs per-frame during any shortfall, before
+        // the latch/backoff gates) — the human-readable LINQ signature is computed only below, once recovery
+        // actually fires.
+        int remoteSignature = HashExpectedRemotePlayers(snapshot);
+        bool setChanged = remoteSignature != _lastRecoveryRemoteSignature;
+        bool improved = _lastRecoveryMappedPeers >= 0 && mappedPeers > _lastRecoveryMappedPeers;
+        if (setChanged || improved)
+        {
+            _missingPeerRecoveryLatched = false;
+            _missingPeerRecoveryAttempts = 0;
+        }
+
+        // Latched on a permanently-unmappable shortfall: do NOT fire recovery (no 5 s teardown cadence). Stay
+        // latched until the expected-remote set changes or mappedPeers actually increases (handled above).
+        if (_missingPeerRecoveryLatched)
+            return;
+
+        // Escalate to a global rebuild ONLY on a real collapse — no peers mapped at all, or mapped count fell
+        // below half of the CURRENTLY-expected remote count. A small shortfall (most peers mapped) takes the
+        // targeted, non-destructive path so already-open peers keep their channels. The threshold is relative
+        // to the live roster (NOT a stale healthy peak) so a roster shrink can't be misread as a collapse and
+        // re-fire the destructive global Rejoin on a healthy-but-smaller lobby.
+        bool collapsed = IsMeshCollapse(mappedPeers, remotePlayers);
+
+        // Exponential backoff between attempts. The targeted path and the global/collapse path use SEPARATE
+        // counters so a genuine total collapse (mappedPeers == 0, signaling down) is still bounded instead of
+        // re-firing a global Rejoin every interval forever.
+        int backoffAttempts = collapsed ? _globalRebuildAttempts : _missingPeerRecoveryAttempts;
+        float backoff = RecoveryBackoffSeconds(backoffAttempts);
+        if (Time.time - _lastMissingPeerRecoveryTime < backoff)
             return;
 
         _lastMissingPeerRecoveryTime = Time.time;
+        string remoteSignatureText = DescribeExpectedRemotePlayers(snapshot);
         VoiceDiagnostics.Log("transport.peer-recovery",
             $"backend={_activeBackend} reason=missing-peer remotePlayers={remotePlayers} peers={mappedPeers} rawPeers={_voiceBackend.PeerCount} " +
+            $"mode={(collapsed ? "global" : "targeted")} attempt={(collapsed ? _globalRebuildAttempts + 1 : _missingPeerRecoveryAttempts + 1)}/{MissingPeerRecoveryMaxAttempts} healthyPeak={_lastHealthyMappedPeers} backoffSec={backoff:0.0} " +
             $"room={_activeRoomCode ?? "unknown"} region={_activeRegion ?? "unknown"} " +
-            $"liveClients=[{DescribeExpectedRemotePlayers(snapshot)}]");
-        ClearVoiceUiForLifecycleReset("missing peer recovery");
-        if (_activeBackend == VoiceTransportBackend.Interstellar)
+            $"liveClients=[{remoteSignatureText}]");
+
+        bool didGlobal = false;
+        if (collapsed)
         {
-            // Interstellar's VCRoom.Rejoin only sends RequestReload and never clears the library's
-            // audioInstances, so onConnectClient never re-fires and the cleared peers are never
-            // repopulated (every remote peer stays silent permanently). Force a full backend rebuild
-            // instead, which re-establishes the connection and recreates each peer via onConnectClient.
-            _forceBackendRebuild = true;
+            ClearVoiceUiForLifecycleReset("missing peer recovery");
+            if (_activeBackend == VoiceTransportBackend.Interstellar)
+            {
+                // Interstellar's VCRoom.Rejoin only sends RequestReload and never clears the library's
+                // audioInstances, so onConnectClient never re-fires and the cleared peers are never
+                // repopulated (every remote peer stays silent permanently). Force a full backend rebuild
+                // instead, which re-establishes the connection and recreates each peer via onConnectClient.
+                _forceBackendRebuild = true;
+            }
+            else
+            {
+                _voiceBackend.Rejoin();
+            }
+            ResetSettingsSyncState();
+            StartBootstrapWindow("missing voice backend peer");
+            ForceUpdateLocalProfile();
+            didGlobal = true;
         }
         else
         {
-            _voiceBackend.Rejoin();
+            // Targeted, non-destructive recovery of only the unmapped/wedged client(s). -1 means the backend
+            // has no targeted path (e.g. Interstellar) — fall back to its global rebuild this attempt.
+            int recovered = _voiceBackend.TryRecoverMissingClients(snapshot);
+            if (recovered < 0)
+            {
+                ClearVoiceUiForLifecycleReset("missing peer recovery");
+                if (_activeBackend == VoiceTransportBackend.Interstellar)
+                    _forceBackendRebuild = true;
+                else
+                    _voiceBackend.Rejoin();
+                ResetSettingsSyncState();
+                StartBootstrapWindow("missing voice backend peer");
+                ForceUpdateLocalProfile();
+                didGlobal = true;
+            }
+            else
+            {
+                VoiceDiagnostics.Log("transport.peer-recovery-targeted",
+                    $"backend={_activeBackend} recovered={recovered} peers={mappedPeers} remotePlayers={remotePlayers}");
+            }
         }
-        ResetSettingsSyncState();
-        StartBootstrapWindow("missing voice backend peer");
-        ForceUpdateLocalProfile();
+
+        // Count this attempt. The targeted path uses the cap+latch: after MissingPeerRecoveryMaxAttempts
+        // non-improving tries it LATCHES so we stop firing on a permanent shortfall. The global/collapse path
+        // does NOT latch (a total collapse must keep retrying), but it grows its OWN backoff counter so it
+        // can't re-fire a destructive global Rejoin every interval forever — the interval grows to the cap.
+        if (didGlobal)
+        {
+            if (_globalRebuildAttempts < int.MaxValue)
+                _globalRebuildAttempts++;
+        }
+        else
+        {
+            _missingPeerRecoveryAttempts++;
+            if (_missingPeerRecoveryAttempts >= MissingPeerRecoveryMaxAttempts)
+            {
+                _missingPeerRecoveryLatched = true;
+                VoiceDiagnostics.Log("transport.peer-recovery-latched",
+                    $"backend={_activeBackend} attempts={_missingPeerRecoveryAttempts} peers={mappedPeers} remotePlayers={remotePlayers} " +
+                    $"reason=permanent-shortfall liveClients=[{remoteSignatureText}]");
+            }
+        }
+        _lastRecoveryMappedPeers = mappedPeers;
+        _lastRecoveryRemoteSignature = remoteSignature;
     }
 
+    // P0 collapse gate (pure, unit-tested). A mesh is "collapsed" only when no peers are mapped at all, or
+    // fewer than HALF of the CURRENTLY-expected remotes are mapped. Relative to the live roster — never a
+    // stale peak — so a roster shrink (e.g. 12->4) can't be misclassified as a collapse and re-fire the
+    // destructive global Rejoin on a healthy-but-smaller lobby. A small shortfall (e.g. 3 of 4) is NOT a
+    // collapse and takes the targeted, non-destructive path.
+    internal static bool IsMeshCollapse(int mappedPeers, int remotePlayers)
+        => mappedPeers == 0 || (remotePlayers > 0 && mappedPeers * 2 < remotePlayers);
+
+    // Exponential backoff (seconds) for a recovery attempt counter: the base interval doubled per prior
+    // non-improving attempt, clamped so a stubborn shortfall slows down instead of re-firing every interval.
+    // Pure + unit-tested. Shared by the targeted and global/collapse paths (each with its own counter).
+    internal static float RecoveryBackoffSeconds(int attempts)
+        => MissingPeerRecoveryIntervalSeconds * (1 << Math.Min(Math.Max(attempts, 0), MissingPeerRecoveryBackoffShiftCap));
+
     private static int CountExpectedRemotePlayers(VoiceGameStateSnapshot snapshot)
-        => snapshot.Players.Count(player => !player.IsLocal && !player.Disconnected && !player.IsDummy && player.ClientId >= 0);
+    {
+        // Indexed loop over IReadOnlyList instead of LINQ .Count(predicate): the latter boxes a heap
+        // enumerator on every call, and this runs per-frame via TryRecoverMissingBackendPeers (before its
+        // time gates). The predicate is unchanged.
+        var players = snapshot.Players;
+        int count = 0;
+        for (int i = 0; i < players.Count; i++)
+        {
+            var player = players[i];
+            if (!player.IsLocal && !player.Disconnected && !player.IsDummy && player.ClientId >= 0)
+                count++;
+        }
+        return count;
+    }
+
+    // Allocation-free order-independent fold over the expected-remote clientIds (an FNV-1a fold mixed with an
+    // order-independent XOR accumulate). Used per-frame for the recovery latch's set-change detection so we
+    // don't build/compare the human-readable LINQ signature on every shortfall frame. Matches the de-LINQ'd
+    // indexed-loop style of CountExpectedRemotePlayers. The human-readable signature (DescribeExpected...) is
+    // only built once recovery actually fires.
+    private static int HashExpectedRemotePlayers(VoiceGameStateSnapshot snapshot)
+    {
+        var players = snapshot.Players;
+        int acc = 0;
+        for (int i = 0; i < players.Count; i++)
+        {
+            var player = players[i];
+            if (player.IsLocal || player.Disconnected || player.IsDummy || player.ClientId < 0)
+                continue;
+            // FNV-1a over the clientId bytes, XOR-accumulated so roster order doesn't change the result.
+            uint h = 2166136261u;
+            int id = player.ClientId;
+            for (int b = 0; b < 4; b++)
+            {
+                h = (h ^ (uint)((id >> (b * 8)) & 0xFF)) * 16777619u;
+            }
+            acc ^= unchecked((int)h);
+        }
+        return acc;
+    }
 
     private static string DescribeExpectedRemotePlayers(VoiceGameStateSnapshot snapshot)
         => string.Join(",", snapshot.Players
@@ -930,6 +1106,11 @@ _voiceBackend.SetMicrophone(settings?.MicrophoneDevice ?? string.Empty, settings
     public void Rejoin()
         => Rejoin("manual rejoin");
 
+    // Forward a Nat Fix / TURN setting change to the active backend so it can rebuild its warm peer-connection
+    // pool off the main thread (no rejoin needed; existing peers keep their connections).
+    public void RebuildIceConnectionPool()
+        => _voiceBackend?.RebuildIceConnectionPool();
+
     private void Rejoin(string reason)
     {
         ClearVoiceUiForLifecycleReset(reason);
@@ -941,8 +1122,20 @@ _voiceBackend.SetMicrophone(settings?.MicrophoneDevice ?? string.Empty, settings
         _snapshotRefreshTimer = 0f;
         _missingPeerRecoveryReadyTime = -999f;
         _lastMissingPeerRecoveryTime = -999f;
+        ResetMissingPeerRecoveryStormGuard();
         ResetSettingsSyncState();
         StartBootstrapWindow(reason);
+    }
+
+    // Clears the storm-guard latch/backoff so a fresh backend or lifecycle reset starts recovery clean.
+    private void ResetMissingPeerRecoveryStormGuard()
+    {
+        _missingPeerRecoveryAttempts = 0;
+        _globalRebuildAttempts = 0;
+        _lastRecoveryMappedPeers = -1;
+        _lastHealthyMappedPeers = 0;
+        _lastRecoveryRemoteSignature = 0;
+        _missingPeerRecoveryLatched = false;
     }
 
     private void ResetSettingsSyncState()
@@ -1039,10 +1232,14 @@ _voiceBackend.SetMicrophone(settings?.MicrophoneDevice ?? string.Empty, settings
         VoiceDiagnostics.Log("transport.refresh", reason);
     }
 
-    private bool IsTransitionTraceActive => DateTime.UtcNow <= _transitionTraceUntilUtc;
+    // Also requires diagnostics to be enabled: this single gate short-circuits MaybeLogTransitionTraceState
+    // (the ~0.25s state dump), TraceUpdateCost and TraceOperationCost, so their string/LINQ snapshot
+    // construction never runs during the 45s post-transition window when logging is off (the default).
+    private bool IsTransitionTraceActive => VoiceDiagnostics.IsEnabled && DateTime.UtcNow <= _transitionTraceUntilUtc;
 
     private void StartTransitionTrace(string reason, VoiceGameStateSnapshot? snapshot)
     {
+        if (!VoiceDiagnostics.IsEnabled) return;
         _transitionTraceUntilUtc = DateTime.UtcNow.AddSeconds(TransitionTraceSeconds);
         _transitionTraceStateTimer = 0f;
         _tracePerfEventsRemaining = TransitionTracePerfEvents;
@@ -1063,6 +1260,10 @@ _voiceBackend.SetMicrophone(settings?.MicrophoneDevice ?? string.Empty, settings
 
     private void TrackTransitionPhase(VoiceGameStateSnapshot? snapshot)
     {
+        // Purely diagnostic phase tracking; skip entirely (incl. the initial-phase snapshot string build)
+        // when diagnostics are disabled so no per-phase-change LINQ/string.Join runs in normal play.
+        if (!VoiceDiagnostics.IsEnabled) return;
+
         var phase = snapshot?.Phase ?? VoiceGamePhase.Unknown;
         if (!_haveTracePhase)
         {

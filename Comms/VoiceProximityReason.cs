@@ -4,6 +4,7 @@ internal enum VoiceProximityReason
 {
     Lobby,
     Unmapped,
+    TargetUnavailable,
     NoListener,
     OnlyMeetingOrLobby,
     OnlyGhostsCanTalk,
@@ -27,7 +28,6 @@ internal enum VoiceProximityReason
     MediumPrivateFromLiving,
     NonSelectedGhostMuted,
     TargetDeadMuted,
-    TargetUnavailable,
     VentMuted,
     VentPrivateMuted,
     SightBlocked,

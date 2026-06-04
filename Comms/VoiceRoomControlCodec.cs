@@ -150,6 +150,7 @@ public static class VoiceRoomControlCodec
     {
         settings = default;
         var fixedSettingsBytes = FixedSettingsBytesForVersion(version);
+        if (fixedSettingsBytes < 0) return false; // fail closed: unknown/unmapped version
         if (buffer.Length < fixedSettingsBytes + 2) return false;
         var serverUrlLength = BinaryPrimitives.ReadUInt16LittleEndian(buffer[fixedSettingsBytes..]);
         if (serverUrlLength > MaxServerUrlBytes || buffer.Length != fixedSettingsBytes + 2 + serverUrlLength) return false;

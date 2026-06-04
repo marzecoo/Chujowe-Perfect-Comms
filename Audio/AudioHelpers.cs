@@ -12,7 +12,22 @@ internal static class AudioHelpers
     public const int Channels   = 1;     // mono capture
     public const int PlaybackPrebufferSamples = FrameSize * 5; // 100 ms jitter cushion for HTTP/modded RPC jitter
     public const int ImmediatePlaybackPrebufferSamples = 0; // no startup hold; avoid starvation/prebuffer loops
-    public const int PlaybackRecoveryPrebufferSamples = FrameSize * 3; // 60 ms after stream already started
+    public const int PlaybackRecoveryPrebufferSamples = FrameSize * 3; // 60 ms after stream already started (baseline, UNCHANGED)
+    public const int PlaybackMaxRecoveryPrebufferSamples = FrameSize * 8; // 160 ms per-peer STARTING ceiling; < 300 ms ring
+    // Per-peer link-aware HARD cap (Fix 2a / P0.2). Only a peer whose UNCLAMPED jitter target stays pinned at its
+    // current ceiling for a sustained streak ratchets its OWN ceiling one frame-step at a time from the 160 ms
+    // start toward this 200 ms hard max; healthy peers never move off 160 ms (or lower) and pay no extra latency.
+    // The 200 ms cap + 2-frame trim headroom (240 ms) fits under the 300 ms (FrameSize*15) ring.
+    public const int PlaybackMaxRecoveryPrebufferSamplesHard = FrameSize * 10; // 200 ms hard per-peer escalation cap
+    // Sustained-clamp streak (CLAMPED RecomputeSetpointLocked calls — i.e. clamped underruns accrued within a
+    // talkspurt, since a recompute runs on every underrun — whose UNCLAMPED jitter target is at/above the current
+    // per-peer ceiling) required before the per-peer ceiling ratchets up one frame-step. A single unclamped
+    // recompute (or an idle-reset) clears the streak, so a transient jitter spike never deepens a healthy peer;
+    // only a genuinely jittery link sustains the clamp long enough to earn the extra latency.
+    public const int PerPeerCeilingClampStreakToGrow = 5;
+    public const int JitterDepthMarginSamples = FrameSize * 2; // 40 ms safety margin above measured jitter
+    public const float JitterGain = 2.5f;                       // target ~= baseline + gain*jitterStdev + margin
+    public const int RecoveryGrowFloorSamples = FrameSize * 2;  // min +40 ms jump per underrun for a not-yet-measured peer
     public const int PlaybackMaxPrebufferWaitMilliseconds = 180; // do not strand short utterances forever
     public const int OpusBitrate = 96_000;
     public const int OpusComplexity = 10;
@@ -25,6 +40,35 @@ internal static class AudioHelpers
     public const float PlaybackMixPeakCeiling = 0.90f;
     public const float PlaybackMixLimiterReleasePerFrame = 0.025f;
     public const float ActivePlaybackInputThreshold = 0.003f;
+
+    // ── Per-peer link-aware ceiling escalation/decay (P0.2) ────────────────────────────────────────────────
+    // Pure, unit-testable decision functions (mirroring IsMeshCollapse / AnswererShouldRerequest). The owning
+    // BufferedSampleProvider holds the mutable per-peer ceiling + clamp streak and the live cut-sizes; these two
+    // helpers only compute "what should the next ceiling be" so the policy can be exercised without the ring.
+
+    // True when the UNCLAMPED jitter target (baseline + gain*jitter + margin, BEFORE clamping to the ceiling)
+    // is at/above the current per-peer ceiling — i.e. the link genuinely wants more depth than the ceiling allows.
+    public static bool PeerCeilingIsClamped(int unclampedTargetSamples, int currentCeilingSamples)
+        => unclampedTargetSamples >= currentCeilingSamples;
+
+    // The next per-peer ceiling. Grows exactly ONE frame-step (toward the 200 ms hard cap) only once the
+    // sustained-clamp streak has reached PerPeerCeilingClampStreakToGrow; otherwise unchanged. Never exceeds the
+    // hard cap and never drops below the 160 ms start. Caller resets the streak after a grow.
+    public static int NextPeerCeilingOnGrow(int currentCeilingSamples, int clampStreak)
+    {
+        if (clampStreak < PerPeerCeilingClampStreakToGrow)
+            return Math.Clamp(currentCeilingSamples, PlaybackMaxRecoveryPrebufferSamples, PlaybackMaxRecoveryPrebufferSamplesHard);
+        int grown = currentCeilingSamples + FrameSize;
+        return Math.Clamp(grown, PlaybackMaxRecoveryPrebufferSamples, PlaybackMaxRecoveryPrebufferSamplesHard);
+    }
+
+    // The next per-peer ceiling on decay: lower ONE frame-step toward the 160 ms start (never below it), so a
+    // one-time bad spell that ratcheted a peer up to 200 ms does not strand it there forever once jitter falls.
+    public static int NextPeerCeilingOnDecay(int currentCeilingSamples)
+    {
+        int lowered = currentCeilingSamples - FrameSize;
+        return Math.Clamp(lowered, PlaybackMaxRecoveryPrebufferSamples, PlaybackMaxRecoveryPrebufferSamplesHard);
+    }
 
     public static float GetTransmitLimiterGain(float peak)
     {

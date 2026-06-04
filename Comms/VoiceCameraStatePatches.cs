@@ -15,6 +15,7 @@ internal static class SurveillanceCameraStatePatches
     private const float CullingFailureLogThrottleSeconds = 5f;
     private static float _lastDeepScanTime = float.NegativeInfinity;
     private static float _lastCullingFailureLogTime = float.NegativeInfinity;
+    private static int _lastCameraCount = -1;
     private static readonly Dictionary<int, CameraMaskSnapshot> _changedCameraMasks = new();
 
     [HarmonyPostfix, HarmonyPatch(nameof(SurveillanceMinigame.Begin))]
@@ -47,20 +48,34 @@ internal static class SurveillanceCameraStatePatches
 
     internal static void ExcludeVoiceOverlayFromSurveillanceCameras(object? minigame, bool forceDeepScan = false)
     {
-        // Cheap path every frame, isolated so the reflection walk below can't suppress it.
-        try
+        // The reflection deep-scan below is throttled to ~1/s (forced on Begin); decide it up front so the
+        // cheap Camera.allCameras walk can piggy-back on the same cadence.
+        float now = Time.unscaledTime;
+        bool doDeepScan = forceDeepScan || now - _lastDeepScanTime >= DeepScanIntervalSeconds;
+
+        // Re-apply the overlay-exclusion mask when the set of cameras may have changed. Camera.allCameras
+        // allocates a fresh Camera[] on every access, so we avoid walking it every frame. A count change is
+        // the cheap common trigger, but a same-frame swap (one camera appears as another disappears) or a
+        // targetTexture null->non-null toggle leaves the count unchanged — so also re-walk on the throttled
+        // deep-scan cadence (~1/s) and on the forced scan from Begin, which bounds the worst-case miss to
+        // ~1s instead of "until the next count change". Camera.allCamerasCount is a cheap no-alloc property.
+        int cameraCount = Camera.allCamerasCount;
+        if (doDeepScan || cameraCount != _lastCameraCount)
         {
-            foreach (var camera in Camera.allCameras)
+            _lastCameraCount = cameraCount;
+            try
             {
-                if (camera == null || camera.targetTexture == null) continue;
-                ExcludeVoiceOverlay(camera);
+                foreach (var camera in Camera.allCameras)
+                {
+                    if (camera == null || camera.targetTexture == null) continue;
+                    ExcludeVoiceOverlay(camera);
+                }
             }
+            catch (Exception ex) { ReportCullingFailure(ex); }
         }
-        catch (Exception ex) { ReportCullingFailure(ex); }
 
         // Reflection walk for cameras not yet in Camera.allCameras; throttled to ~1/s (forced on Begin).
-        float now = Time.unscaledTime;
-        if (!forceDeepScan && now - _lastDeepScanTime < DeepScanIntervalSeconds) return;
+        if (!doDeepScan) return;
         _lastDeepScanTime = now;
 
         try { ApplyToObject(minigame, 0); } catch (Exception ex) { ReportCullingFailure(ex); }
@@ -154,6 +169,8 @@ internal static class SurveillanceCameraStatePatches
 
     internal static void RestoreVoiceOverlayCameraMasks()
     {
+        // Reset so the next Begin re-walks from scratch even if the camera count happens to be unchanged.
+        _lastCameraCount = -1;
         if (_changedCameraMasks.Count == 0) return;
 
         var keys = new List<int>(_changedCameraMasks.Keys);

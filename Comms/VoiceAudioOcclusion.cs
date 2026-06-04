@@ -12,6 +12,17 @@ internal static class VoiceAudioOcclusion
     private static readonly int ShadowMask = LayerMask.GetMask("Shadow");
     private static readonly Dictionary<OcclusionCacheKey, OcclusionCacheEntry> Cache = new();
 
+    // Closed-door world positions, rebuilt at most ONCE per frame. Previously IsClosedDoorBetween read
+    // door.transform.position (an IL2CPP managed/native boundary crossing) for EVERY door on EVERY
+    // listener/target pair that missed the occlusion cache — an O(peers x doors) burst of interop on the
+    // Unity main thread during crowded movement. Collapsing all of a frame's per-pair calls into a single
+    // per-frame rebuild keeps the per-pair check pure float math over a small Vector2 list (an empty list
+    // short-circuits the whole check) while reflecting the CURRENT frame's door state — so a door opening or
+    // closing changes occlusion as fast as it did before the cache existed, with no extra staleness stacked
+    // on top of the occlusion result cache. All access is on the Unity main thread, so no sync is needed.
+    private static readonly List<Vector2> _closedDoorPositions = new();
+    private static int _lastDoorScanFrame = -1;
+
     public static VoiceOcclusionDiagnostics Inspect(Vector2 listenerPos, Vector2 targetPos)
     {
         var occlusion = ResolveOcclusion(listenerPos, targetPos);
@@ -276,17 +287,67 @@ internal static class VoiceAudioOcclusion
         return MathF.Pow(t, 1f + s * 3f);
     }
 
-    private static bool IsClosedDoorBetween(Vector2 listenerPos, Vector2 targetPos)
-    {
-        var doors = ShipStatus.Instance?.AllDoors;
-        if (doors == null) return false;
+    private static int _warmedShipId = -1;
 
+    // Warm the occlusion path once per map. The first Physics2D query against a freshly-loaded map builds
+    // Unity's 2D physics broadphase (and JITs this whole path), which measured ~70-100ms on the FIRST
+    // task-phase frame that ran occlusion. Calling this when the map first appears pays that cost on the
+    // (already-hitchy) round-start frame instead of surprising the first in-range speaker mid-round. Cheap
+    // after the first call for a given ShipStatus (an instance-id compare). Main thread only.
+    public static void WarmUp(Vector2 around)
+    {
+        var ship = ShipStatus.Instance;
+        if (ship == null) return;
+        int id = ship.GetInstanceID();
+        if (id == _warmedShipId) return;
+        _warmedShipId = id;
+
+        long t = System.Diagnostics.Stopwatch.GetTimestamp();
+        try
+        {
+            _lastDoorScanFrame = -1; // force the door cache to build now
+            RefreshClosedDoorCacheIfNeeded();
+            Physics2D.Linecast(around, around + new Vector2(0.1f, 0f), ShadowMask); // build the physics broadphase
+        }
+        catch
+        {
+            // Physics/ship not ready yet; will warm on a later frame.
+            _warmedShipId = -1;
+            return;
+        }
+        if (VoiceDiagnostics.IsEnabled)
+            VoiceDiagnostics.Log("bcl.occlusion.warm",
+                $"ms={(System.Diagnostics.Stopwatch.GetTimestamp() - t) * 1000.0 / System.Diagnostics.Stopwatch.Frequency:0.0} doors={_closedDoorPositions.Count} shipId={id}");
+    }
+
+    private static void RefreshClosedDoorCacheIfNeeded()
+    {
+        // Rebuild at most once per frame: every per-pair caller in the same frame shares one scan, but the
+        // cached door state is never more than the current frame old.
+        int frame = Time.frameCount;
+        if (frame == _lastDoorScanFrame) return;
+        _lastDoorScanFrame = frame;
+
+        _closedDoorPositions.Clear();
+        var doors = ShipStatus.Instance?.AllDoors;
+        if (doors == null) return;
         foreach (var door in doors)
         {
             if (door == null || door.IsOpen) continue;
+            _closedDoorPositions.Add(door.transform.position); // single interop read per closed door per refresh
+        }
+    }
 
-            Vector2 doorPos = door.transform.position;
-            if (DistancePointToSegment(doorPos, listenerPos, targetPos) <= 0.65f)
+    private static bool IsClosedDoorBetween(Vector2 listenerPos, Vector2 targetPos)
+    {
+        RefreshClosedDoorCacheIfNeeded();
+        var positions = _closedDoorPositions;
+        int count = positions.Count;
+        if (count == 0) return false; // no closed doors -> skip the whole per-pair loop
+
+        for (int i = 0; i < count; i++)
+        {
+            if (DistancePointToSegment(positions[i], listenerPos, targetPos) <= 0.65f)
                 return true;
         }
 

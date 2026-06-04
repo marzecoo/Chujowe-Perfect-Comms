@@ -16,6 +16,7 @@ public class VoiceRoleIntegrationOptions : AbstractOptionGroup
     public ModdedToggleOption ParasiteHearFromVictim { get; } = new("<color=#FF0000><b>Parasite</b></color>: Also Hear Controlled Victim", true);
     public ModdedToggleOption MutePuppeteerControlled { get; } = new("<color=#FF0000><b>Puppeteer</b></color>: Mute Controlled Victim", true);
     public ModdedToggleOption PuppeteerHearFromVictim { get; } = new("<color=#FF0000><b>Puppeteer</b></color>: Hear From Controlled Victim", true);
+
     public ModdedToggleOption MuffleBlindedOrFlashedHearing { get; } = new("<color=#FF0000><b>Eclipsal/Grenadier</b></color>: Muffle Blinded/Flashed Hearing", true);
     public ModdedToggleOption MuffleHypnotizedDuringHysteria { get; } = new("<color=#FF0000><b>Hypnotist</b></color>: Muffle Hypnotized During Hysteria", true);
     public ModdedToggleOption CrewpostorUsesImpostorVoice { get; } = new("<color=#FF0000><b>Crewpostor</b></color>: Use Impostor Voice", true);

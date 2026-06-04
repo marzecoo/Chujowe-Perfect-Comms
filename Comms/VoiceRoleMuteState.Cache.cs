@@ -171,7 +171,8 @@ internal static partial class VoiceRoleMuteState
         bool shouldProbe = phase is VoiceGamePhase.Lobby
             or VoiceGamePhase.Intro
             or VoiceGamePhase.Tasks
-            or VoiceGamePhase.Meeting;
+            or VoiceGamePhase.Meeting
+            or VoiceGamePhase.Exile;
         if (!shouldProbe) return;
 
         bool phaseChanged = phase != _resolvedPhase;

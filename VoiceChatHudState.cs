@@ -20,12 +20,15 @@ public static class VoiceChatHudState
     private static GameObject?     _spkButtonObj;
     private static PassiveButton?  _jailButton;
     private static GameObject?     _jailButtonObj;
-    private static SpriteRenderer? _micIconRenderer;
-    private static SpriteRenderer? _spkIconRenderer;
 
-    private enum HudIconVisual { Unknown, MicOn, MicOffRed, MicOffOrange, MicRadio, SpkOn, SpkOff }
-    private static HudIconVisual _lastMicVisual = HudIconVisual.Unknown;
-    private static HudIconVisual _lastSpkVisual = HudIconVisual.Unknown;
+    // Cached child SpriteRenderers so the per-frame refresh/sort paths avoid Transform.Find + GetComponent
+    // and GetComponentsInChildren (managed array alloc + IL2CPP interop) every frame. Captured when the
+    // (one-time) buttons are created; re-acquired automatically if a cache entry is null.
+    private static SpriteRenderer? _micIconSr;
+    private static SpriteRenderer? _spkIconSr;
+    private static SpriteRenderer[]? _micButtonSrs;
+    private static SpriteRenderer[]? _spkButtonSrs;
+    private static SpriteRenderer[]? _jailButtonSrs;
     private const float ButtonScale = 0.42f;
     private const int   ButtonSortOrder = 32760;
     private const int   TooltipSortOrder = 32767;
@@ -48,6 +51,16 @@ public static class VoiceChatHudState
     private static GameObject?  _spkTooltip;
     private static TextMeshPro? _micTooltipTmp;
     private static TextMeshPro? _spkTooltipTmp;
+    // Fix 4-HUD-b: KeepTooltipOnTop ran GetComponentsInChildren<Renderer>(true) AND
+    // GetComponentsInChildren<TextMeshPro>(true) for BOTH tooltips EVERY frame (the largest avoidable
+    // per-frame managed-array alloc on the HUD path). The tooltip hierarchy is static, so cache each
+    // child set once (mirrors the _micButtonSrs pattern) and only re-stamp sorting per frame. Both the
+    // Renderer set and the TextMeshPro set must be cached/stamped — the TMP's sortingLayerID is stamped
+    // on a separate path from the Renderer's sortingLayerName, so dropping either regresses sorting.
+    private static Renderer[]?    _micTooltipRenderers;
+    private static Renderer[]?    _spkTooltipRenderers;
+    private static TextMeshPro[]? _micTooltipTmps;
+    private static TextMeshPro[]? _spkTooltipTmps;
     private static bool _micMuted;
     private static bool _teamRadioHeld;
     private static VoiceTeamRadioChannel _teamRadioChannel = VoiceTeamRadioChannel.None;
@@ -98,7 +111,7 @@ public static class VoiceChatHudState
         _jailPlacement = settings.JailUnmuteButtonPlacement.Value;
         // Switching away from card mode: drop the card-placement guard now so PositionButtons
         // restores the Voice-HUD spot this frame instead of waiting for the next HUD tick.
-        // Reparent the button back to the HUD root FIRST; otherwise PositionButtons would
+        // Reparent the button back to the HUD root FIRST — otherwise PositionButtons would
         // write HUD-root-relative local coordinates onto a button still childed to the
         // jailee's card, flashing it to the wrong spot for one frame.
         if (_jailPlacement != JailUnmuteButtonPlacement.MeetingCard)
@@ -202,18 +215,65 @@ public static class VoiceChatHudState
             return maxAllowed - max;
         return 0f;
     }
+    // P1.2: pre-warm the one-time HUD init off the game-entry frame. The first UpdateHud() otherwise lands the
+    // ~24 MB / ~177 ms first-init (embedded-PNG sprite decode + HUD button Instantiate + tooltip GameObject
+    // creation) on the worst transition frame, next to the engine scene-load freeze and the peer-join wave. This
+    // is called from room construction (the same lifecycle slot as WarmOpusCodec) so the work is already done by
+    // the time the HUD first renders. It is fully idempotent: it only does work EnsureHudButtons/EnsureTooltips/
+    // LoadSprite would have done on first use, so those per-frame paths remain the fallback (they find the work
+    // already done) and HUD appearance/behaviour is unchanged. MUST be called on the Unity main thread (Unity
+    // object creation), which the room-construction slot already is.
+    public static void Prewarm()
+    {
+        try
+        {
+            // 1) Decode every embedded-PNG sprite now (the dominant first-init cost). HudManager-independent and
+            //    cached in _spriteCache, so the later CreateIconChild/LoadSprite calls are free.
+            _ = Sprites.MicOn;
+            _ = Sprites.MicOff;
+            _ = Sprites.SpkOn;
+            _ = Sprites.SpkOff;
+            _ = Sprites.JailUnmute;
+
+            // 2) If the HUD already exists, pre-instantiate the buttons (one-per-call by design, so loop to build
+            //    all three) and the tooltip GameObjects (INACTIVE) under the real HUD root. If the HUD is not up
+            //    yet (common at room construction), skip — the per-frame EnsureHudButtons/EnsureTooltips fallback
+            //    builds them, still spread one-button-per-frame, just without the pre-warm head start.
+            var hud = HudManager.Instance;
+            if (hud != null && hud.MapButton != null)
+            {
+                // EnsureHudButtons builds at most one button per call; three calls cover mic/spk/jail.
+                EnsureHudButtons(hud);
+                EnsureHudButtons(hud);
+                EnsureHudButtons(hud);
+                EnsureTooltips(hud); // CreateTooltipObject sets each tooltip inactive
+            }
+        }
+        catch (Exception ex)
+        {
+            // Best-effort: any failure just falls back to the per-frame first-use path; never break room setup.
+            VoiceDiagnostics.DebugError("[VC] HUD pre-warm failed: " + ex.Message);
+        }
+    }
+
     internal static void UpdateHud()
     {
         var hud = HudManager.Instance;
         if (hud == null) return;
 
+        long bTicks = VoiceFrameProfiler.Begin();
         EnsureHudButtons(hud);
+        VoiceFrameProfiler.End("hud.buttons", bTicks);
+        long tTicks = VoiceFrameProfiler.Begin();
         EnsureTooltips(hud);
+        VoiceFrameProfiler.End("hud.tooltips", tTicks);
         EnsureHudParent(hud);
         VoiceRoleMuteState.Update();
         ApplyMicState();
         UpdateHudButtonsVisibility();
+        long vTicks = VoiceFrameProfiler.Begin();
         RefreshButtonVisuals();
+        VoiceFrameProfiler.End("hud.visuals", vTicks);
     }
 
     private static void EnsureHudButtons(HudManager hud)
@@ -227,9 +287,9 @@ public static class VoiceChatHudState
             _micButtonObj.name = "VC_MicButton";
             _micButtonObj.transform.localScale = Vector3.one * (_overlayScale * ButtonScale);
             ClearButtonBG(_micButtonObj);
-            _micIconRenderer = CreateIconChild(_micButtonObj, "VoiceChatPlugin.Resources.MicOn.png");
-            _lastMicVisual = HudIconVisual.Unknown;
-            KeepButtonOnTop(_micButtonObj);
+            _micIconSr = CreateIconChild(_micButtonObj, "VoiceChatPlugin.Resources.MicOn.png");
+            _micButtonSrs = null;
+            KeepButtonOnTop(_micButtonObj, ref _micButtonSrs);
 
             _micButton = _micButtonObj.GetComponent<PassiveButton>();
             _micButton.OnClick = new ButtonClickedEvent();
@@ -238,6 +298,7 @@ public static class VoiceChatHudState
             _micButton.OnMouseOver.AddListener((Action)ShowMicTooltip);
             _micButton.OnMouseOut = new UnityEvent();
             _micButton.OnMouseOut.AddListener((Action)HideTooltips);
+            return; // build at most one button per frame: spreads the Instantiate + icon PNG-decode cost
         }
 
         if (_spkButtonObj == null)
@@ -246,9 +307,9 @@ public static class VoiceChatHudState
             _spkButtonObj.name = "VC_SpkButton";
             _spkButtonObj.transform.localScale = Vector3.one * (_overlayScale * ButtonScale);
             ClearButtonBG(_spkButtonObj);
-            _spkIconRenderer = CreateIconChild(_spkButtonObj, "VoiceChatPlugin.Resources.SpeakerOn.png");
-            _lastSpkVisual = HudIconVisual.Unknown;
-            KeepButtonOnTop(_spkButtonObj);
+            _spkIconSr = CreateIconChild(_spkButtonObj, "VoiceChatPlugin.Resources.SpeakerOn.png");
+            _spkButtonSrs = null;
+            KeepButtonOnTop(_spkButtonObj, ref _spkButtonSrs);
 
             _spkButton = _spkButtonObj.GetComponent<PassiveButton>();
             _spkButton.OnClick = new ButtonClickedEvent();
@@ -257,6 +318,7 @@ public static class VoiceChatHudState
             _spkButton.OnMouseOver.AddListener((Action)ShowSpeakerTooltip);
             _spkButton.OnMouseOut = new UnityEvent();
             _spkButton.OnMouseOut.AddListener((Action)HideTooltips);
+            return; // build at most one button per frame
         }
 
         if (_jailButtonObj == null)
@@ -266,7 +328,8 @@ public static class VoiceChatHudState
             _jailButtonObj.transform.localScale = Vector3.one * (_overlayScale * ButtonScale);
             ClearButtonBG(_jailButtonObj);
             CreateIconChild(_jailButtonObj, "VoiceChatPlugin.Resources.JailUnmute.png");
-            KeepButtonOnTop(_jailButtonObj);
+            _jailButtonSrs = null;
+            KeepButtonOnTop(_jailButtonObj, ref _jailButtonSrs);
 
             _jailButton = _jailButtonObj.GetComponent<PassiveButton>();
             _jailButton.OnClick = new ButtonClickedEvent();
@@ -282,8 +345,8 @@ public static class VoiceChatHudState
             _micTooltip = CreateTooltipObject(root, out _micTooltipTmp);
         if (_spkTooltip == null)
             _spkTooltip = CreateTooltipObject(root, out _spkTooltipTmp);
-        KeepTooltipOnTop(_micTooltip);
-        KeepTooltipOnTop(_spkTooltip);
+        KeepTooltipOnTop(_micTooltip, ref _micTooltipRenderers, ref _micTooltipTmps);
+        KeepTooltipOnTop(_spkTooltip, ref _spkTooltipRenderers, ref _spkTooltipTmps);
     }
 
     private static void EnsureHudParent(HudManager hud)
@@ -345,13 +408,13 @@ public static class VoiceChatHudState
 
         PositionButtons();
 
-        KeepButtonOnTop(_micButtonObj);
-        KeepButtonOnTop(_spkButtonObj);
-        KeepButtonOnTop(_jailButtonObj);
+        KeepButtonOnTop(_micButtonObj, ref _micButtonSrs);
+        KeepButtonOnTop(_spkButtonObj, ref _spkButtonSrs);
+        KeepButtonOnTop(_jailButtonObj, ref _jailButtonSrs);
     }
 
     // Finds the jailed player's meeting card so the unmute button can be attached to it.
-    // Returns false outside meetings or when the card/background isn't ready (HUD fallback).
+    // Returns false outside meetings or when the card/background isn't ready (→ HUD fallback).
     private static bool TryResolveJaileeCard(byte jailedId, out PlayerVoteArea card)
     {
         card = null!;
@@ -402,51 +465,40 @@ public static class VoiceChatHudState
 
     private static void RefreshButtonVisuals()
     {
-        var micVisual = TryGetLocalTransmitBlockReason(out _)
-            ? HudIconVisual.MicOffOrange
-            : _speakerMuted || IsManualMuteActive()
-                ? HudIconVisual.MicOffRed
-                : IsInTeamRadioMode()
-                    ? HudIconVisual.MicRadio
-                    : HudIconVisual.MicOn;
-        ApplyHudIconVisual(_micIconRenderer, ref _lastMicVisual, micVisual);
-
-        var spkVisual = _speakerMuted ? HudIconVisual.SpkOff : HudIconVisual.SpkOn;
-        ApplyHudIconVisual(_spkIconRenderer, ref _lastSpkVisual, spkVisual);
-    }
-
-    private static void ApplyHudIconVisual(SpriteRenderer? renderer, ref HudIconVisual lastVisual, HudIconVisual visual)
-    {
-        if (renderer == null || lastVisual == visual)
-            return;
-
-        lastVisual = visual;
-        switch (visual)
+        // ── Mic button ────────────────────────────────────────────────────────
+        if (_micButtonObj != null)
         {
-            case HudIconVisual.MicOffOrange:
-                renderer.sprite = Sprites.MicOff;
-                renderer.color = new Color(1f, 0.65f, 0.15f);
-                break;
-            case HudIconVisual.MicOffRed:
-                renderer.sprite = Sprites.MicOff;
-                renderer.color = new Color(1f, 0.4f, 0.4f);
-                break;
-            case HudIconVisual.MicRadio:
-                renderer.sprite = Sprites.MicOn;
-                renderer.color = new Color(1f, 0.55f, 0.1f);
-                break;
-            case HudIconVisual.SpkOff:
-                renderer.sprite = Sprites.SpkOff;
-                renderer.color = new Color(1f, 0.4f, 0.4f);
-                break;
-            case HudIconVisual.SpkOn:
-                renderer.sprite = Sprites.SpkOn;
-                renderer.color = Color.white;
-                break;
-            default:
-                renderer.sprite = Sprites.MicOn;
-                renderer.color = Color.white;
-                break;
+            var sr = ResolveIconSr(_micButtonObj, ref _micIconSr);
+
+            if (TryGetLocalTransmitBlockReason(out _))
+            {
+                if (sr != null) { sr.sprite = Sprites.MicOff; sr.color = new Color(1f, 0.65f, 0.15f); }
+            }
+            else if (_speakerMuted)
+            {
+                if (sr != null) { sr.sprite = Sprites.MicOff; sr.color = new Color(1f, 0.4f, 0.4f); }
+            }
+            else if (IsManualMuteActive())
+            {
+                if (sr != null) { sr.sprite = Sprites.MicOff; sr.color = new Color(1f, 0.4f, 0.4f); }
+            }
+            else if (IsInTeamRadioMode())
+            {
+                if (sr != null) { sr.sprite = Sprites.MicOn; sr.color = new Color(1f, 0.55f, 0.1f); }
+            }
+            else
+            {
+                if (sr != null) { sr.sprite = Sprites.MicOn; sr.color = Color.white; }
+            }
+        }
+        if (_spkButtonObj != null)
+        {
+            var sr = ResolveIconSr(_spkButtonObj, ref _spkIconSr);
+            if (sr != null)
+            {
+                sr.sprite = _speakerMuted ? Sprites.SpkOff : Sprites.SpkOn;
+                sr.color = _speakerMuted ? new Color(1f, 0.4f, 0.4f) : Color.white;
+            }
         }
     }
     internal static void ApplyMicState()
@@ -603,8 +655,8 @@ public static class VoiceChatHudState
         if (_spkButtonObj  != null) { Object.Destroy(_spkButtonObj);  _spkButtonObj  = null; }
         if (_jailButtonObj != null) { Object.Destroy(_jailButtonObj); _jailButtonObj = null; }
         _micButton   = null; _spkButton   = null; _jailButton  = null;
-        _micIconRenderer = null; _spkIconRenderer = null;
-        _lastMicVisual = HudIconVisual.Unknown; _lastSpkVisual = HudIconVisual.Unknown;
+        _micIconSr   = null; _spkIconSr   = null;
+        _micButtonSrs = null; _spkButtonSrs = null; _jailButtonSrs = null;
     }
 
     private static void DestroyTooltips()
@@ -612,6 +664,9 @@ public static class VoiceChatHudState
         if (_micTooltip != null) { Object.Destroy(_micTooltip); _micTooltip = null; }
         if (_spkTooltip != null) { Object.Destroy(_spkTooltip); _spkTooltip = null; }
         _micTooltipTmp = null; _spkTooltipTmp = null;
+        // Drop the cached child-component arrays so a re-created tooltip re-caches fresh references.
+        _micTooltipRenderers = null; _spkTooltipRenderers = null;
+        _micTooltipTmps = null; _spkTooltipTmps = null;
     }
     private static GameObject CreateTooltipObject(Transform root, out TextMeshPro tmp)
     {
@@ -629,7 +684,8 @@ public static class VoiceChatHudState
         tmp.sortingLayerID = SortingLayer.NameToID(VCSorting.Layer);
         tmp.sortingOrder = TooltipSortOrder;
         tmp.rectTransform.sizeDelta = new Vector2(2.4f, 1.8f);
-        KeepTooltipOnTop(go);
+        // Sorting is stamped by the EnsureTooltips KeepTooltipOnTop calls immediately after creation,
+        // which also populate the per-tooltip component caches; no need to stamp the unparented local here.
         go.SetActive(false);
         return go;
     }
@@ -662,7 +718,7 @@ public static class VoiceChatHudState
                 : $"Mute: {muteKey}  |  Team Radio: {radioKey} (hold)  |  Cycle: {cycleKey}");
 
         PositionNear(_micTooltip, _micButtonObj);
-        KeepTooltipOnTop(_micTooltip);
+        KeepTooltipOnTop(_micTooltip, ref _micTooltipRenderers, ref _micTooltipTmps);
         _micTooltip.SetActive(true);
     }
 
@@ -681,7 +737,7 @@ public static class VoiceChatHudState
             $"Hotkey: {hotkey}";
 
         PositionNear(_spkTooltip, _spkButtonObj);
-        KeepTooltipOnTop(_spkTooltip);
+        KeepTooltipOnTop(_spkTooltip, ref _spkTooltipRenderers, ref _spkTooltipTmps);
         _spkTooltip.SetActive(true);
     }
 
@@ -728,18 +784,28 @@ public static class VoiceChatHudState
     private static float ClampTooltipAxis(float value, float min, float max)
         => min <= max ? Mathf.Clamp(value, min, max) : (min + max) * 0.5f;
 
-    private static void KeepTooltipOnTop(GameObject? tooltip)
+    private static void KeepTooltipOnTop(
+        GameObject? tooltip,
+        ref Renderer[]? cachedRenderers,
+        ref TextMeshPro[]? cachedTmps)
     {
         if (tooltip == null) return;
         tooltip.transform.SetAsLastSibling();
         VCOverlayCamera.EnsureOnTop(tooltip);
-        foreach (var tmp in tooltip.GetComponentsInChildren<TextMeshPro>(true))
+        // The tooltip hierarchy is static, so cache the child component arrays once instead of
+        // re-allocating them every frame. (Nulled in DestroyTooltips so a re-created tooltip re-caches.)
+        cachedTmps      ??= tooltip.GetComponentsInChildren<TextMeshPro>(true);
+        cachedRenderers ??= tooltip.GetComponentsInChildren<Renderer>(true);
+        int layerId = SortingLayer.NameToID(VCSorting.Layer);
+        foreach (var tmp in cachedTmps)
         {
-            tmp.sortingLayerID = SortingLayer.NameToID(VCSorting.Layer);
+            if (tmp == null) continue;
+            tmp.sortingLayerID = layerId;
             tmp.sortingOrder = TooltipSortOrder;
         }
-        foreach (var renderer in tooltip.GetComponentsInChildren<Renderer>(true))
+        foreach (var renderer in cachedRenderers)
         {
+            if (renderer == null) continue;
             renderer.sortingLayerName = VCSorting.Layer;
             renderer.sortingOrder = TooltipSortOrder;
         }
@@ -833,14 +899,27 @@ public static class VoiceChatHudState
         return sr;
     }
 
-    private static void KeepButtonOnTop(GameObject? button)
+    // Returns the cached "VCIcon" SpriteRenderer for a button, re-acquiring (Transform.Find + GetComponent)
+    // only when the cache is empty, so RefreshButtonVisuals does no per-frame interop in the common case.
+    private static SpriteRenderer? ResolveIconSr(GameObject button, ref SpriteRenderer? cached)
+    {
+        if (cached == null)
+            cached = button.transform.Find("VCIcon")?.GetComponent<SpriteRenderer>();
+        return cached;
+    }
+
+    private static void KeepButtonOnTop(GameObject? button, ref SpriteRenderer[]? cachedSrs)
     {
         if (button == null) return;
         button.transform.SetAsLastSibling();
         var pos = button.transform.localPosition;
         button.transform.localPosition = new Vector3(pos.x, pos.y, -100f);
-        foreach (var sr in button.GetComponentsInChildren<SpriteRenderer>(true))
+        // GetComponentsInChildren allocates a fresh managed array every call; the button hierarchy is
+        // static, so cache it once. (Reset to null at button (re)creation so a new button re-caches.)
+        cachedSrs ??= button.GetComponentsInChildren<SpriteRenderer>(true);
+        foreach (var sr in cachedSrs)
         {
+            if (sr == null) continue;
             sr.sortingLayerName = VCSorting.Layer;
             sr.sortingOrder = ButtonSortOrder;
         }

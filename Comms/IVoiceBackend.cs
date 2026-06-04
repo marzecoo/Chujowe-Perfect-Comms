@@ -19,6 +19,10 @@ internal interface IVoiceBackend : IDisposable
     int PeerCount { get; }
     IEnumerable<VoiceRemoteOverlayState> RemoteOverlayStates { get; }
 
+    // Allocation-free variant for the per-frame overlay path: append remote overlay states into the
+    // caller-owned buffer instead of allocating a fresh List/array (and LINQ) on every access.
+    void AppendRemoteOverlayStates(List<VoiceRemoteOverlayState> buffer);
+
     void SetMute(bool mute);
     void ToggleMute();
     void SetLoopBack(bool loopBack);
@@ -33,6 +37,10 @@ internal interface IVoiceBackend : IDisposable
     void ApplyRemoteRadioState(byte playerId, VoiceTeamRadioChannel channel);
     void SendCustomMessage(byte[] payload);
     void Rejoin();
+    // Rebuild any pre-built ICE/peer-connection pool after a Nat Fix / TURN setting change, so the next
+    // peer-join uses the new policy without generating a DTLS certificate on the main thread. Backends with
+    // no such pool (e.g. Interstellar) implement this as a no-op.
+    void RebuildIceConnectionPool();
     void Update(
         VoiceGameStateSnapshot? snapshot,
         IReadOnlyList<VoiceChatRoom.SpeakerCache> speakerCache,
@@ -42,6 +50,15 @@ internal interface IVoiceBackend : IDisposable
     bool TrySetRemoteVolume(byte playerId, string playerName, float volume);
     int ResetPeerMappingsNoMute();
     int CountMappedRemotePeers(VoiceGameStateSnapshot snapshot);
+
+    // Targeted, non-destructive recovery of ONLY the specific remote clients that are expected but not
+    // currently backed by a live/open peer — re-mapping / re-requesting an offer for each missing client
+    // while leaving every already-open peer's data channel INTACT. This is the per-peer alternative to the
+    // global Rejoin()/ClearPeers() teardown, so a single permanently-unmappable remote cannot drive a
+    // mesh-wide rebuild storm. Returns the number of missing clients the backend was able to act on
+    // (request/recreate) this call; returns -1 when the backend has no targeted path and the caller should
+    // fall back to its existing global rebuild.
+    int TryRecoverMissingClients(VoiceGameStateSnapshot snapshot);
 }
 
 internal readonly record struct VoiceCaptureRuntimeOptions(

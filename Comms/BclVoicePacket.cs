@@ -54,12 +54,19 @@ internal readonly struct BclVoicePacket
         => packet.Length >= 2 && packet[0] == Magic0 && packet[1] == Magic1;
 
     public static byte[] Wrap(byte[] opusPayload, ushort sequence, uint timestamp, ushort duration, BclVoicePacketFlags flags, byte level)
+        => Wrap(opusPayload, opusPayload.Length, sequence, timestamp, duration, flags, level);
+
+    // Length-aware overload: frames only the first payloadLength bytes of opusPayload. Lets the sender wrap
+    // directly from its reusable encode scratch buffer (which is larger than the encoded frame) without an
+    // intermediate trimmed-copy allocation per transmitted frame.
+    public static byte[] Wrap(byte[] opusPayload, int payloadLength, ushort sequence, uint timestamp, ushort duration, BclVoicePacketFlags flags, byte level)
     {
-        if (opusPayload.Length == 0) throw new ArgumentException("Payload must not be empty.", nameof(opusPayload));
+        if (payloadLength <= 0) throw new ArgumentException("Payload must not be empty.", nameof(opusPayload));
+        if (payloadLength > opusPayload.Length) throw new ArgumentOutOfRangeException(nameof(payloadLength));
         if ((flags & ~AllowedFlags) != 0) throw new ArgumentOutOfRangeException(nameof(flags));
         duration = duration == 0 ? (ushort)AudioHelpers.FrameSize : duration;
 
-        var packet = new byte[HeaderBytes + opusPayload.Length];
+        var packet = new byte[HeaderBytes + payloadLength];
         packet[0] = Magic0;
         packet[1] = Magic1;
         packet[2] = Version;
@@ -69,7 +76,7 @@ internal readonly struct BclVoicePacket
         WriteUInt16(packet, 10, duration);
         packet[12] = (byte)flags;
         packet[13] = level;
-        Array.Copy(opusPayload, 0, packet, HeaderBytes, opusPayload.Length);
+        Array.Copy(opusPayload, 0, packet, HeaderBytes, payloadLength);
         return packet;
     }
 
@@ -187,7 +194,24 @@ internal sealed class BclVoiceJitterBuffer
     private int _plcFrames;
     private int _fecFrames;
     private int _maxDepth;
+    // FEC+PLC run length since the last real Audio frame; caps invented audio at ~100 ms (Fix 2b-2).
+    private int _consecutiveConcealed;
+    private const int MaxConsecutiveConcealFrames = 5;
     private DateTime _lastEnqueueUtc = DateTime.MinValue;
+    // True per-peer arrival-jitter estimator (RFC3550-style mean-abs-deviation, in SAMPLE units). Measured
+    // here at Enqueue from packet.Sequence + a MONOTONIC receive timestamp (Stopwatch, not UtcNow) so it
+    // reflects real inter-arrival spread, NOT the synchronous Drain() burst the downstream ring sees. The
+    // ring reads CurrentJitterSamples to set its adaptive depth (Fix 2a). Concealment/silence writes never
+    // enter here, so they cannot pollute the estimate.
+    private long _lastArrivalTicks;
+    private ushort _lastArrivalSeq;
+    private bool _haveArrival;
+    private double _jitterSamples;
+    private static readonly double TicksToSeconds = 1.0 / System.Diagnostics.Stopwatch.Frequency;
+    // Written under PeerConnection._sync in Enqueue, read cross-thread by the ring (no lock). A double can't be
+    // marked volatile in C#, so make the cross-thread read explicit with Volatile.Read (paired Volatile.Write
+    // in Enqueue). Behavior is unchanged; this just documents and orders the unsynchronized read.
+    internal double CurrentJitterSamples => System.Threading.Volatile.Read(ref _jitterSamples);
     // Reused scratch: Enqueue/DrainDue run under PeerConnection._sync and results are consumed
     // before the lock releases, so sharing a list avoids a per-packet alloc with no aliasing risk.
     private readonly List<BclVoicePlayoutFrame> _enqueueScratch = new(MaxDrainFramesPerPacket);
@@ -224,6 +248,7 @@ internal sealed class BclVoiceJitterBuffer
         {
             _packets.Clear();
             _expectedSequence = packet.Sequence;
+            _consecutiveConcealed = 0; // real-frame resume after a discontinuity snap (Fix 2b-2)
         }
 
         if (_packets.ContainsKey(packet.Sequence))
@@ -233,6 +258,26 @@ internal sealed class BclVoiceJitterBuffer
         }
 
         _lastEnqueueUtc = DateTime.UtcNow;
+
+        // --- per-peer arrival-jitter measurement (Fix 2a-2), once per accepted NEW packet ---
+        long nowTicks = System.Diagnostics.Stopwatch.GetTimestamp();
+        if (_haveArrival)
+        {
+            int seqGap = unchecked((ushort)(packet.Sequence - _lastArrivalSeq)); // frames expected between arrivals
+            if (seqGap >= 1)
+            {
+                double elapsedSamples  = (nowTicks - _lastArrivalTicks) * TicksToSeconds * AudioHelpers.ClockRate;
+                double expectedSamples = (double)seqGap * packet.Duration; // Duration is per-frame sample count
+                double deviation       = Math.Abs(elapsedSamples - expectedSamples);
+                const double deadbandSamples = AudioHelpers.ClockRate * 0.005; // ~5 ms dead-band kills clock-tick noise
+                if (deviation < deadbandSamples) deviation = 0;
+                // RFC3550 EWMA, 1/16 smoothing. Volatile.Write pairs with the Volatile.Read in CurrentJitterSamples.
+                System.Threading.Volatile.Write(ref _jitterSamples, _jitterSamples + (deviation - _jitterSamples) / 16.0);
+            }
+        }
+        _lastArrivalTicks = nowTicks;
+        _lastArrivalSeq = packet.Sequence;
+        _haveArrival = true;
 
         // Manual scan instead of LINQ .Any(): avoids per-packet iterator + closure allocation.
         bool anyBufferedAfter = false;
@@ -296,15 +341,24 @@ internal sealed class BclVoiceJitterBuffer
             if (_packets.Remove(_expectedSequence, out var packet))
             {
                 frames.Add(new BclVoicePlayoutFrame(BclVoicePlayoutKind.Audio, packet, packet.Sequence, packet.Duration));
+                _consecutiveConcealed = 0; // a real frame breaks the conceal run (Fix 2b-2)
                 _expectedSequence++;
                 continue;
             }
 
             var nextSequence = FindNextSequence();
-            if (nextSequence == null) return;
+            if (nextSequence == null) return; // trailing stall -> ring layer bridges it (Fix 2b-3)
 
             var next = _packets[nextSequence.Value];
+            // Long real gap: snap forward instead of inventing > ~100 ms of fake audio (Fix 2b-2).
+            if (_consecutiveConcealed >= MaxConsecutiveConcealFrames)
+            {
+                _expectedSequence = nextSequence.Value;
+                _consecutiveConcealed = 0;
+                continue;
+            }
             _lostFrames++;
+            _consecutiveConcealed++;
             if (next.HasLossResistantFec)
             {
                 _fecFrames++;

@@ -365,6 +365,10 @@ internal static class VoiceSnapshotBuilder
 
     private static void MaybeLogCameraDiagnostic(Minigame minigame, int mapId, CameraView cameraView)
     {
+        // Diagnostics are off by default. C# evaluates DescribeCameraMembers (a List alloc + 7 reflection
+        // field/property hierarchy walks) and the interpolated key BEFORE VoiceDiagnostics.Log's internal
+        // IsEnabled check, so without this guard ~12 allocs + 7 reflection lookups ran ~20x/sec the whole
+        // time a player had a surveillance camera open, even with logging disabled.
         if (!VoiceDiagnostics.IsEnabled) return;
 
         var now = DateTime.UtcNow;

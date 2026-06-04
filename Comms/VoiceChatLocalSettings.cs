@@ -186,6 +186,12 @@ public class VoiceChatLocalSettings : LocalSettingsTab
     [LocalToggleSetting("Noise Suppression")]
     public ConfigEntry<bool> NoiseSuppressionEnabled { get; }
 
+    // User-facing toggle (default on). When on, the BetterCrewLink backend offers a TURN relay alongside
+    // STUN so peers that can't establish a direct connection (strict/symmetric NAT, firewalls) still get
+    // audio. Only the peers that actually need it relay; everyone else stays direct. BCL backend only.
+    [LocalToggleSetting("Nat Fix")]
+    public ConfigEntry<bool> NatFix { get; }
+
     [LocalToggleSetting("Debug Voice Stats")]
     public ConfigEntry<bool> DebugVoiceStats { get; }
 
@@ -200,6 +206,12 @@ public class VoiceChatLocalSettings : LocalSettingsTab
     public ConfigEntry<string> LobbyRegistryUrl { get; }
     public ConfigEntry<string> BetterCrewLinkServerUrl { get; }
     public ConfigEntry<string> InterstellarServerUrl { get; }
+
+    // Config-file only (not shown in the in-game menu): the TURN relay used by Nat Fix. Defaults to
+    // BetterCrewLink's public relay; power users can point these at their own coturn server.
+    public ConfigEntry<string> TurnServerUrl { get; }
+    public ConfigEntry<string> TurnUsername { get; }
+    public ConfigEntry<string> TurnCredential { get; }
     public ConfigEntry<bool> UpdateNotificationsEnabled { get; }
     public ConfigEntry<string> UpdateNotificationUrl { get; }
 
@@ -383,7 +395,7 @@ public class VoiceChatLocalSettings : LocalSettingsTab
             VoiceChatPlugin.VoiceChat.JailUnmuteButtonPlacement.MeetingCard,
             new ConfigDescription("Jailor unmute button: Voice HUD or the jailee's meeting card."));
 
-        // Meeting overlay Ă˘â‚¬â€ť on by default.
+        // Meeting overlay — on by default.
         MeetingSpeakingOverlay = config.Bind("UI", "MeetingSpeakingOverlay", true,
             new ConfigDescription(
                 "Show smooth coloured card glows around talking players during meetings"));
@@ -403,6 +415,13 @@ public class VoiceChatLocalSettings : LocalSettingsTab
         MicCalibrationDiagnostics = config.Bind("Debug", "MicCalibrationDiagnostics", false,
             new ConfigDescription("Log live microphone peak/RMS/gate calibration diagnostics for BetterCrewLink."));
 
+        // Debug toggles always start OFF on every game launch, even if a previous session left one on. They
+        // still work when turned on mid-session; they just never persist across a restart, so diagnostic
+        // logging, the frame profiler, and the synthetic test tone can't be accidentally left running.
+        DebugVoiceStats.Value = false;
+        MicCalibrationDiagnostics.Value = false;
+        SyntheticMicTone.Value = false;
+
         LobbyBrowserTitle = config.Bind("Lobby Browser", "Title", "Mega Chujowe Perfect Comms",
             new ConfigDescription("Title shown in the voice lobby browser"));
 
@@ -420,6 +439,19 @@ public class VoiceChatLocalSettings : LocalSettingsTab
         BetterCrewLinkServerUrl = config.Bind("Voice Server", "BetterCrewLinkServerUrl",
             VoiceEndpointSettings.DefaultBetterCrewLinkServerUrl,
             new ConfigDescription("BetterCrewLink Socket.IO signaling server URL."));
+
+        NatFix = config.Bind("Voice Server", "NatFix", true,
+            new ConfigDescription("Route voice through a TURN relay when a direct peer-to-peer connection can't be established (fixes no/garbled audio behind strict or symmetric NATs and firewalls). Only peers that actually need it relay; everyone else stays direct. BetterCrewLink backend only."));
+
+        TurnServerUrl = config.Bind("Voice Server", "TurnServerUrl",
+            "turn:turn.bettercrewl.ink:3478",
+            new ConfigDescription("TURN relay server used by Nat Fix (BetterCrewLink backend). Default is BetterCrewLink's public relay; override with your own coturn server if desired."));
+        TurnUsername = config.Bind("Voice Server", "TurnUsername",
+            "M9DRVaByiujoXeuYAAAG",
+            new ConfigDescription("Username for the Nat Fix TURN relay."));
+        TurnCredential = config.Bind("Voice Server", "TurnCredential",
+            "TpHR9HQNZ8taxjb3",
+            new ConfigDescription("Credential (password) for the Nat Fix TURN relay."));
 
         InterstellarServerUrl = config.Bind("Voice Server", "InterstellarServerUrl",
             VoiceEndpointSettings.DefaultInterstellarServerUrl,
@@ -580,6 +612,14 @@ public class VoiceChatLocalSettings : LocalSettingsTab
         else if (configEntry == BetterCrewLinkServerUrl || configEntry == InterstellarServerUrl)
         {
             VoiceChatRoom.Current?.Rejoin();
+        }
+        else if (configEntry == NatFix || configEntry == TurnServerUrl ||
+                 configEntry == TurnUsername || configEntry == TurnCredential)
+        {
+            // Rebuild the BetterCrewLink ICE/peer-connection pool off the main thread so the new Nat Fix /
+            // TURN policy takes effect on the next peer-join without a render-thread DTLS-cert stall. No
+            // rejoin: existing peers keep their connections.
+            VoiceChatRoom.Current?.RebuildIceConnectionPool();
         }
     }
 

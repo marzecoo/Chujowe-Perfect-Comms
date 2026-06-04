@@ -18,6 +18,10 @@ public static class MeetingSpeakingIndicatorPatch
     private static readonly Dictionary<byte, SpriteRenderer> _cardGlows = new();
     private static readonly Dictionary<byte, float> _speakingLevels = new();
     private static readonly Dictionary<byte, SmoothVisualState> _visualStates = new();
+    // Fix 4-HUD-a(iii): tracks card-glow ids whose static local transform has already been written, so
+    // SyncOverlayTransforms skips the redundant per-frame localPosition/localScale rewrites. Cleared on
+    // reparent (per id) and on meeting teardown (ClearDestroyedMeetingState) so a rebuilt glow re-stamps.
+    private static readonly HashSet<byte> _glowTransformInit = new();
     // Vanilla HighlightedFX state captured before tinting, so the vote-card selection outline is restored intact.
     private static readonly Dictionary<byte, BuiltInHighlightSnapshot> _highlightSnapshots = new();
     private static Sprite? _cardGlowSprite;
@@ -26,6 +30,7 @@ public static class MeetingSpeakingIndicatorPatch
 
     public static void Postfix(MeetingHud __instance)
     {
+        long overlayTicks = VoiceFrameProfiler.Begin();
         try
         {
             UpdateIndicators(VoiceOverlayState.Current(VoiceChatRoom.Current), __instance);
@@ -34,6 +39,7 @@ public static class MeetingSpeakingIndicatorPatch
         {
             LogIndicatorError(ex);
         }
+        VoiceFrameProfiler.End("overlay.meeting", overlayTicks);
     }
 
     private static float _lastIndicatorErrorTime = -999f;
@@ -121,6 +127,19 @@ public static class MeetingSpeakingIndicatorPatch
             if (lid != byte.MaxValue) _speakingLevels[lid] = overlay.Local.Level;
         }
 
+        // Fix 4-HUD-a(i): on idle meeting frames (nobody speaking AND no card still fading out) skip the
+        // whole per-card loop + EnsurePlayerLookup + color math — the bulk of overlay.meeting's cost.
+        // AnyCardStillVisible() keeps the loop running while any card is mid fade-out so rings fade rather
+        // than pop. DisableAll() clears _visualStates, so subsequent idle frames re-hit this fast path; a
+        // new speaker repopulates _speakingLevels and the loop fades in next frame with no added latency.
+        if (_speakingLevels.Count == 0 && !AnyCardStillVisible())
+        {
+            DisableAll();
+            if (logNow)
+                LogHud("hud.meeting.update", $"idle calls={Take(ref _updateCalls)} {DescribeHudRoot(meetingHud)} {DescribeOverlay(overlay)}");
+            return;
+        }
+
         foreach (var state in meetingHud.playerStates)
         {
             if (state == null) continue;
@@ -181,6 +200,16 @@ public static class MeetingSpeakingIndicatorPatch
         }
     }
 
+    // True while any card is still mid fade-out (Visibility above the same 0.01 cutoff the per-card loop
+    // uses) so the idle-skip keeps fading cards out instead of popping their glow/ring off instantly.
+    private static bool AnyCardStillVisible()
+    {
+        foreach (var visual in _visualStates.Values)
+            if (visual.Visibility > 0.01f)
+                return true;
+        return false;
+    }
+
     private static void DisableAll()
     {
         foreach (var sr in _cardGlows.Values)
@@ -209,10 +238,19 @@ public static class MeetingSpeakingIndicatorPatch
         {
             if (state.Background != null)
             {
+                // Fix 4-HUD-a(ii/iii): the local transform is static once parented, so write it only on
+                // (re)parent instead of every frame. Parenting itself stays unconditional so a freshly
+                // created glow never flashes unparented at the overlay-root origin on its first frame.
                 if (glow.transform.parent != state.Background.transform)
+                {
                     glow.transform.SetParent(state.Background.transform, false);
-                glow.transform.localPosition = new Vector3(0f, 0f, -0.05f);
-                glow.transform.localScale = new Vector3(1.10f, 1.28f, 1f);
+                    _glowTransformInit.Remove(state.TargetPlayerId);
+                }
+                if (_glowTransformInit.Add(state.TargetPlayerId))
+                {
+                    glow.transform.localPosition = new Vector3(0f, 0f, -0.05f);
+                    glow.transform.localScale = new Vector3(1.10f, 1.28f, 1f);
+                }
             }
             else
             {
@@ -568,6 +606,7 @@ public static class MeetingSpeakingIndicatorPatch
         _speakingLevels.Clear();
         _visualStates.Clear();
         _highlightSnapshots.Clear();
+        _glowTransformInit.Clear();
     }
 
     private static Sprite GetCardGlowSprite()
@@ -602,30 +641,54 @@ public static class MeetingSpeakingIndicatorPatch
         return _cardGlowSprite;
     }
 
-    private static Color GetPlayerColor(byte playerId)
+    // PlayerId -> PlayerControl lookup rebuilt at most once per frame. Replaces the previous per-visible-
+    // speaker AllPlayerControls scan (O(speakers x players) every meeting frame) with one walk per frame
+    // (O(players)) plus O(1) lookups. Built lazily on first GetPlayerColor call, so an idle meeting (no
+    // visible speakers, hence no GetPlayerColor calls) does no walk at all.
+    private static int _lookupFrame = -1;
+    private static readonly Dictionary<byte, PlayerControl> _playerLookup = new();
+
+    private static void EnsurePlayerLookup()
     {
-        // Resolve live every call (no persistent cache): the glow color must follow conceal-state
-        // changes mid-meeting (camouflage on/off) so it never shows a stale real color for a now-
-        // concealed speaker, nor a stale grey for one whose camo ended. Only called for visible
-        // speakers (Visibility > 0.01f), so the per-call player scan is cheap.
-        var fallback = new Color(0.18f, 0.80f, 0.44f, 1f); // voice fallback green
+        int frame = Time.frameCount;
+        if (_lookupFrame == frame) return;
+        _lookupFrame = frame;
+        _playerLookup.Clear();
         try
         {
             var players = PlayerControl.AllPlayerControls;
-            if (players == null) return fallback;
+            if (players == null) return;
             foreach (var pc in players)
             {
+                // Match the original GetPlayerColor scan: skip half-initialized players (Data == null) so a
+                // transient duplicate PlayerId (join/respawn) can't evict the valid instance from the lookup
+                // and flash the fallback colour for a frame. Keep the FIRST match for a given PlayerId (the
+                // original used AllPlayerControls.FirstOrDefault), so a transient duplicate can't override the
+                // already-resolved valid instance either.
                 if (pc == null || pc.Data == null) continue;
-                if (pc.PlayerId != playerId) continue;
-
-                // Same color source as the speaking bar (live body color w/ transient-red guard,
-                // concealed-aware grey) for parity.
-                return CrewmateAvatarRenderer.GetPaletteColor(pc);
+                if (!_playerLookup.ContainsKey(pc.PlayerId))
+                    _playerLookup[pc.PlayerId] = pc;
             }
         }
         catch
         {
             // AllPlayerControls can be null/throw during scene transitions.
+        }
+    }
+
+    private static Color GetPlayerColor(byte playerId)
+    {
+        // Resolve the palette color live every call (no persistent color cache): the glow must follow
+        // conceal-state changes mid-meeting (camouflage on/off). Only the *player lookup* is cached
+        // per-frame; GetPaletteColor still runs fresh so the color is never stale.
+        var fallback = new Color(0.18f, 0.80f, 0.44f, 1f); // voice fallback green
+        EnsurePlayerLookup();
+        if (_playerLookup.TryGetValue(playerId, out var pc) && pc != null && pc.Data != null)
+        {
+            // Same color source as the speaking bar (live body color w/ transient-red guard,
+            // concealed-aware grey) for parity.
+            try { return CrewmateAvatarRenderer.GetPaletteColor(pc); }
+            catch { /* transient interop failure during scene transitions */ }
         }
 
         return fallback;

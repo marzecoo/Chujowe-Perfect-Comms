@@ -85,9 +85,9 @@ internal static partial class VoiceRoleMuteState
     {
         var settings = VoiceRoomSettingsState.Current;
         var phase = VoiceSceneState.ResolvePhase();
-        bool inMeeting = VoiceSceneState.IsMeetingVoicePhase(phase);
+        bool inMeetingVoicePhase = VoiceSceneState.IsMeetingVoicePhase(phase);
 
-        if (inMeeting && !_wasInMeeting)
+        if (inMeetingVoicePhase && !_wasInMeeting)
         {
             PostMeetingBlackmailedPlayers.Clear();
             MeetingBlackmailedPlayers.Clear();
@@ -96,7 +96,7 @@ internal static partial class VoiceRoleMuteState
 
         RefreshRoleStateCacheIfNeeded();
 
-        if (inMeeting)
+        if (inMeetingVoicePhase)
         {
             _wasInMeeting = true;
             if (settings.MuteBlackmailedInMeetings)

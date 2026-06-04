@@ -1,5 +1,14 @@
 # Changelog
 
+## Mega Chujowe Perfect Comms v1.0.4
+
+Fork release for [Town Of Us Mega Chujowe Extension](https://github.com/HekerB/TownOfUsMegaChujoweExtension).
+
+- Upgraded and merged with upstream Perfect Comms v2.1.3 (includes adaptive jitter buffer, decode guard, reliable peer connections, and performance optimizations).
+- Preserved all TouMCE voice integration, rebranding, and custom tweaks.
+
+See `docs/release-notes-v1.0.4.md` for the full fork release notes.
+
 ## Mega Chujowe Perfect Comms v1.0.3
 
 Fork release for [Town Of Us Mega Chujowe Extension](https://github.com/HekerB/TownOfUsMegaChujoweExtension).

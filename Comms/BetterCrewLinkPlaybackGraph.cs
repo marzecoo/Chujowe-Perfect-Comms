@@ -145,6 +145,9 @@ internal sealed class BclPeerPlaybackRoute
     public void AddSamples(float[] samples, int offset, int count) => _instance.AddSamples(samples, offset, count);
     public void ClearBufferedSamples() => _instance.ClearBufferedSamples();
     public string ConsumeDebugStats() => _instance.ConsumeDebugStats();
+    // Per-peer adaptive jitter-buffer wiring (Fix 2a-3 / 2b-3).
+    public void SetJitterSamplesProvider(Func<double> provider) => _instance.SetJitterSamplesProvider(provider);
+    public void SetPlcFrameProvider(Func<float[]?> provider) => _instance.SetPlcFrameProvider(provider);
 }
 
 internal sealed class BclStereoPlaybackProvider : ISampleProvider
