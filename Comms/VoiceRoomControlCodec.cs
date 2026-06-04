@@ -23,7 +23,8 @@ public static class VoiceRoomControlCodec
 {
     private const byte Magic0 = (byte)'P';
     private const byte Magic1 = (byte)'C';
-    private const byte Version = 14;
+    private const byte Version = 15;
+    private const byte LegacyVersion14 = 14;
     private const byte LegacyVersion13 = 13;
     private const byte LegacyVersion12 = 12;
     private const byte LegacyVersion11 = 11;
@@ -45,7 +46,8 @@ public static class VoiceRoomControlCodec
     private const int LegacyFixedSettingsBytesV11 = 4 + 4 + 4 + 4 + 23 + 4 + 11;
     private const int LegacyFixedSettingsBytesV12 = 4 + 4 + 4 + 4 + 24 + 4 + 11;
     private const int LegacyFixedSettingsBytesV13 = 4 + 4 + 4 + 4 + 24 + 4 + 12;
-    private const int FixedSettingsBytes = 4 + 4 + 4 + 4 + 24 + 4 + 14;
+    private const int LegacyFixedSettingsBytesV14 = 4 + 4 + 4 + 4 + 24 + 4 + 14;
+    private const int FixedSettingsBytes = 4 + 4 + 4 + 4 + 25 + 4 + 14;
     private const int MaxServerUrlBytes = 512;
 
     public static byte[] EncodeHostSettingsSnapshot(VoiceRoomSettingsSnapshot settings)
@@ -119,29 +121,30 @@ public static class VoiceRoomControlCodec
         buffer[26] = ToByte(settings.TeamRadioLovers);
         buffer[27] = ToByte(settings.TeamRadioRecruits);
         buffer[28] = ToByte(settings.TeamRadioLawyer);
-        buffer[29] = ToByte(settings.OnlyGhostsCanTalk);
-        buffer[30] = ToByte(settings.OnlyMeetingOrLobby);
-        buffer[31] = ToByte(settings.OnlyMeetingOrLobbyAffectsGhosts);
-        buffer[32] = ToByte(settings.MuteBlackmailedInMeetings);
-        buffer[33] = ToByte(settings.MuteBlackmailedNextRound);
-        buffer[34] = ToByte(settings.MuteJailedInMeetings);
-        buffer[35] = ToByte(settings.JailorCanUnmuteJailed);
-        buffer[36] = ToByte(settings.MuteParasiteControlled);
-        buffer[37] = ToByte(settings.MutePuppeteerControlled);
-        buffer[38] = ToByte(settings.CrewpostorUsesImpostorVoice);
-        buffer[39] = ToByte(settings.MuteSwooperWhileSwooped);
-        BinaryPrimitives.WriteInt32LittleEndian(buffer[40..], settings.MediumGhostVoice);
-        buffer[44] = ToByte(settings.TouMceHackerJamMutesVoice);
-        buffer[45] = ToByte(settings.MuteGlitchHacked);
-        buffer[46] = ToByte(settings.MuffleBlindedOrFlashedHearing);
-        buffer[47] = ToByte(settings.MuffleHypnotizedDuringHysteria);
-        buffer[48] = ToByte(settings.TeamRadioInMeetings);
-        buffer[49] = ToByte(settings.PuppeteerHearFromVictim);
-        buffer[50] = ToByte(settings.ParasiteHearFromVictim);
-        buffer[51] = ToByte(settings.TouMcePelicanBellyVoice);
-        buffer[52] = ToByte(settings.TouMceRecruitVoice);
-        BinaryPrimitives.WriteInt32LittleEndian(buffer[53..], settings.TouMceSpiritMasterGhostVoice);
-        buffer[57] = ToByte(settings.TouMceLawyerClientVoice);
+        buffer[29] = ToByte(settings.TeamRadioApocalypse);
+        buffer[30] = ToByte(settings.OnlyGhostsCanTalk);
+        buffer[31] = ToByte(settings.OnlyMeetingOrLobby);
+        buffer[32] = ToByte(settings.OnlyMeetingOrLobbyAffectsGhosts);
+        buffer[33] = ToByte(settings.MuteBlackmailedInMeetings);
+        buffer[34] = ToByte(settings.MuteBlackmailedNextRound);
+        buffer[35] = ToByte(settings.MuteJailedInMeetings);
+        buffer[36] = ToByte(settings.JailorCanUnmuteJailed);
+        buffer[37] = ToByte(settings.MuteParasiteControlled);
+        buffer[38] = ToByte(settings.MutePuppeteerControlled);
+        buffer[39] = ToByte(settings.CrewpostorUsesImpostorVoice);
+        buffer[40] = ToByte(settings.MuteSwooperWhileSwooped);
+        BinaryPrimitives.WriteInt32LittleEndian(buffer[41..], settings.MediumGhostVoice);
+        buffer[45] = ToByte(settings.TouMceHackerJamMutesVoice);
+        buffer[46] = ToByte(settings.MuteGlitchHacked);
+        buffer[47] = ToByte(settings.MuffleBlindedOrFlashedHearing);
+        buffer[48] = ToByte(settings.MuffleHypnotizedDuringHysteria);
+        buffer[49] = ToByte(settings.TeamRadioInMeetings);
+        buffer[50] = ToByte(settings.PuppeteerHearFromVictim);
+        buffer[51] = ToByte(settings.ParasiteHearFromVictim);
+        buffer[52] = ToByte(settings.TouMcePelicanBellyVoice);
+        buffer[53] = ToByte(settings.TouMceRecruitVoice);
+        BinaryPrimitives.WriteInt32LittleEndian(buffer[54..], settings.TouMceSpiritMasterGhostVoice);
+        buffer[58] = ToByte(settings.TouMceLawyerClientVoice);
         BinaryPrimitives.WriteUInt16LittleEndian(buffer[FixedSettingsBytes..], checked((ushort)serverUrlBytes.Length));
         serverUrlBytes.CopyTo(buffer[(FixedSettingsBytes + 2)..]);
     }
@@ -156,20 +159,23 @@ public static class VoiceRoomControlCodec
         if (serverUrlLength > MaxServerUrlBytes || buffer.Length != fixedSettingsBytes + 2 + serverUrlLength) return false;
         var serverUrl = System.Text.Encoding.UTF8.GetString(buffer.Slice(fixedSettingsBytes + 2, serverUrlLength));
         bool isCurrent = version == Version;
-        bool hasTouMceTeamRadioSettings = isCurrent || version is LegacyVersion13 or LegacyVersion12 or LegacyVersion11;
+        bool hasTouMceTeamRadioSettings = isCurrent || version is LegacyVersion14 or LegacyVersion13 or LegacyVersion12 or LegacyVersion11;
         bool hasTeamRadioSubSettings = hasTouMceTeamRadioSettings || version is LegacyVersion10 or LegacyVersion9 or LegacyVersion8 or LegacyVersion7 or LegacyVersion6;
-        int tailOffset = hasTouMceTeamRadioSettings ? 29 : hasTeamRadioSubSettings ? 27 : 24;
-        bool hasMediumGhostVoice = isCurrent || version is LegacyVersion13 or LegacyVersion12 or LegacyVersion11 or LegacyVersion10 or LegacyVersion9 or LegacyVersion8 or LegacyVersion7;
-        bool hasMuteGlitchHacked = isCurrent || version is LegacyVersion13 or LegacyVersion12 or LegacyVersion11 or LegacyVersion10 or LegacyVersion9 or LegacyVersion8;
-        bool hasListenerMuffleSettings = isCurrent || version is LegacyVersion13 or LegacyVersion12 or LegacyVersion11 or LegacyVersion10 or LegacyVersion9;
-        bool hasTouMceVoiceSettings = isCurrent || version is LegacyVersion13 or LegacyVersion12 or LegacyVersion11 or LegacyVersion10;
-        bool hasHackerJamSetting = isCurrent || version is LegacyVersion13 or LegacyVersion12 or LegacyVersion11;
-        bool hasMeetingLobbyGhostSetting = isCurrent || version is LegacyVersion13 or LegacyVersion12;
-        bool hasTeamRadioInMeetings = isCurrent || version == LegacyVersion13;
-        bool hasPuppeteerHearFromVictim = isCurrent;
-        bool hasParasiteHearFromVictim = isCurrent;
+        int tailOffset = version == Version ? 30 : hasTouMceTeamRadioSettings ? 29 : hasTeamRadioSubSettings ? 27 : 24;
+        bool hasMediumGhostVoice = isCurrent || version is LegacyVersion14 or LegacyVersion13 or LegacyVersion12 or LegacyVersion11 or LegacyVersion10 or LegacyVersion9 or LegacyVersion8 or LegacyVersion7;
+        bool hasMuteGlitchHacked = isCurrent || version is LegacyVersion14 or LegacyVersion13 or LegacyVersion12 or LegacyVersion11 or LegacyVersion10 or LegacyVersion9 or LegacyVersion8;
+        bool hasListenerMuffleSettings = isCurrent || version is LegacyVersion14 or LegacyVersion13 or LegacyVersion12 or LegacyVersion11 or LegacyVersion10 or LegacyVersion9;
+        bool hasTouMceVoiceSettings = isCurrent || version is LegacyVersion14 or LegacyVersion13 or LegacyVersion12 or LegacyVersion11 or LegacyVersion10;
+        bool hasHackerJamSetting = isCurrent || version is LegacyVersion14 or LegacyVersion13 or LegacyVersion12 or LegacyVersion11;
+        bool hasMeetingLobbyGhostSetting = isCurrent || version is LegacyVersion14 or LegacyVersion13 or LegacyVersion12;
+        bool hasTeamRadioInMeetings = isCurrent || version is LegacyVersion14 or LegacyVersion13;
+        bool hasPuppeteerHearFromVictim = isCurrent || version == LegacyVersion14;
+        bool hasParasiteHearFromVictim = isCurrent || version == LegacyVersion14;
         int roleTailOffset = tailOffset + (hasMeetingLobbyGhostSetting ? 1 : 0);
         int touMceVoiceOffset = roleTailOffset + (hasHackerJamSetting ? 18 : 17) + (hasTeamRadioInMeetings ? 1 : 0) + (hasPuppeteerHearFromVictim || hasParasiteHearFromVictim ? 2 : 0);
+        
+        bool teamRadioApocalypse = version == Version ? buffer[29] != 0 : true;
+
         settings = new VoiceRoomSettingsSnapshot(
             BinaryPrimitives.ReadInt32LittleEndian(buffer),
             serverUrl,
@@ -217,12 +223,13 @@ public static class VoiceRoomControlCodec
                 : hasTouMceVoiceSettings && buffer[touMceVoiceOffset + 1] != 0 ? (int)MediumGhostVoiceMode.Both : (int)MediumGhostVoiceMode.None,
             hasHackerJamSetting
                 ? buffer[touMceVoiceOffset + 6] != 0
-                : hasTouMceVoiceSettings && buffer[touMceVoiceOffset + 2] != 0).Clamp();
+                : hasTouMceVoiceSettings && buffer[touMceVoiceOffset + 2] != 0,
+            teamRadioApocalypse).Clamp();
         return true;
     }
 
     private static bool IsSupportedVersion(byte version)
-        => version is Version or LegacyVersion13 or LegacyVersion12 or LegacyVersion11 or LegacyVersion10 or LegacyVersion9 or LegacyVersion8 or LegacyVersion7 or LegacyVersion6 or LegacyVersion5 or LegacyVersion4;
+        => version is Version or LegacyVersion14 or LegacyVersion13 or LegacyVersion12 or LegacyVersion11 or LegacyVersion10 or LegacyVersion9 or LegacyVersion8 or LegacyVersion7 or LegacyVersion6 or LegacyVersion5 or LegacyVersion4;
 
     private static int FixedSettingsBytesForVersion(byte version)
         => version switch
@@ -237,6 +244,7 @@ public static class VoiceRoomControlCodec
             LegacyVersion11 => LegacyFixedSettingsBytesV11,
             LegacyVersion12 => LegacyFixedSettingsBytesV12,
             LegacyVersion13 => LegacyFixedSettingsBytesV13,
+            LegacyVersion14 => LegacyFixedSettingsBytesV14,
             Version => FixedSettingsBytes,
             _ => -1, // fail closed: reject unknown versions instead of guessing the current layout
         };

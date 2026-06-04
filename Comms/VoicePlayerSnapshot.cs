@@ -49,6 +49,7 @@ internal readonly record struct VoicePlayerSnapshot(
     bool IsTouMceLawyer,
     byte TouMceLawyerClientId,
     byte TouMceLawyerOwnerId,
+    bool IsTouMceApocalypse,
     // Local-player-only control-hearing fields (default None/zero for everyone else).
     VoiceControlHearingMode ControlHearingMode,
     Vector2 ControlledVictimPosition,

@@ -465,6 +465,7 @@ internal static partial class VoiceRoleMuteState
             VoiceTeamRadioChannel.Lovers => settings.TeamRadioLovers && HasRoleRadioState(player, lover: true),
             VoiceTeamRadioChannel.Recruits => settings.TeamRadioRecruits && TouMceVoiceIntegration.HasRecruitVoiceChannel(player),
             VoiceTeamRadioChannel.Lawyer => settings.TeamRadioLawyer && TouMceVoiceIntegration.HasLawyerVoiceChannel(player),
+            VoiceTeamRadioChannel.Apocalypse => settings.TeamRadioApocalypse && TouMceVoiceIntegration.HasApocalypseVoiceChannel(player),
             _ => false,
         };
     }
@@ -689,6 +690,7 @@ internal static partial class VoiceRoleMuteState
     private static string ToDisplayReason(VoiceProximityReason reason)
         => reason switch
         {
+            VoiceProximityReason.MuteAlive => "Alive Player Muted",
             VoiceProximityReason.Blackmailed => "Blackmailed",
             VoiceProximityReason.BlackmailedNextRound => "Blackmailed",
             VoiceProximityReason.Jailed => "Jailed",

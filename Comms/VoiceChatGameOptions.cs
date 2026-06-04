@@ -6,7 +6,7 @@ namespace VoiceChatPlugin.VoiceChat;
 
 public class VoiceChatGameOptions : AbstractOptionGroup
 {
-    public override string GroupName => "Mega Chujowe Perfect Comms";
+    public override string GroupName => VoiceChatLocalSettings.Censor("Mega Chujowe Perfect Comms");
     public override uint GroupPriority => 1000;
 
     public ModdedToggleOption PublicVoiceLobby { get; } = new("Public Voice Lobby", false);
@@ -51,6 +51,10 @@ public class VoiceChatGameOptions : AbstractOptionGroup
         Visible = TeamRadioSubOptionsVisible
     };
     public ModdedToggleOption TeamRadioLawyer      { get; } = new("Team Radio - Lawyer",            true)
+    {
+        Visible = TeamRadioSubOptionsVisible
+    };
+    public ModdedToggleOption TeamRadioApocalypse  { get; } = new("Team Radio - Apocalypse",        true)
     {
         Visible = TeamRadioSubOptionsVisible
     };

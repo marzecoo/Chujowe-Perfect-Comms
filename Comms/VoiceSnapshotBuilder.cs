@@ -83,6 +83,8 @@ internal static class VoiceSnapshotBuilder
                 out byte touMceLawyerClientId,
                 out byte touMceLawyerOwnerId);
 
+            bool isTouMceApocalypse = TouMceVoiceIntegration.HasApocalypseVoiceChannel(player);
+
             players.Add(new VoicePlayerSnapshot(
                 player.PlayerId,
                 clientId,
@@ -119,6 +121,7 @@ internal static class VoiceSnapshotBuilder
                 isTouMceLawyer,
                 touMceLawyerClientId,
                 touMceLawyerOwnerId,
+                isTouMceApocalypse,
                 player.PlayerId == localPlayerId ? localControlMode : VoiceControlHearingMode.None,
                 player.PlayerId == localPlayerId ? localControlledVictimPos : default,
                 player.PlayerId == localPlayerId ? localControlledVictimLight : -1f));

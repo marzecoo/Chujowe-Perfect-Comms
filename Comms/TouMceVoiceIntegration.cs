@@ -1,5 +1,6 @@
 using System;
 using HarmonyLib;
+using BepInEx.Configuration;
 using MiraAPI.Modifiers;
 
 namespace VoiceChatPlugin.VoiceChat;
@@ -292,5 +293,114 @@ internal static class TouMceVoiceIntegration
         {
             return null;
         }
+    }
+
+    internal static bool HasApocalypseVoiceChannel(PlayerControl? player)
+    {
+        if (player == null || player.Data?.IsDead == true)
+            return false;
+
+        var role = player.Data?.Role;
+        if (role == null)
+            return false;
+
+        try
+        {
+            string fullName = role.GetType().FullName ?? "";
+            if (fullName.Contains("Apocalypse", StringComparison.OrdinalIgnoreCase) ||
+                fullName.Contains("Plaguebearer", StringComparison.OrdinalIgnoreCase) ||
+                fullName.Contains("Pestilence", StringComparison.OrdinalIgnoreCase) ||
+                fullName.Contains("Famine", StringComparison.OrdinalIgnoreCase) ||
+                fullName.Contains("DeathRole", StringComparison.OrdinalIgnoreCase) ||
+                fullName.Contains("WarRole", StringComparison.OrdinalIgnoreCase) ||
+                fullName.Contains("BakerRole", StringComparison.OrdinalIgnoreCase) ||
+                fullName.Contains("Baker", StringComparison.OrdinalIgnoreCase) ||
+                fullName.Contains("Berserker", StringComparison.OrdinalIgnoreCase) ||
+                fullName.Contains("SoulCollector", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            // Also check properties for "Faction" or "Team" containing "Apocalypse"
+            var teamProp = role.GetType().GetProperty("Team", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+            if (teamProp != null)
+            {
+                var teamValue = teamProp.GetValue(role);
+                if (teamValue != null && teamValue.ToString()?.Contains("Apocalypse", StringComparison.OrdinalIgnoreCase) == true)
+                    return true;
+            }
+
+            var factionProp = role.GetType().GetProperty("Faction", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+            if (factionProp != null)
+            {
+                var factionValue = factionProp.GetValue(role);
+                if (factionValue != null && factionValue.ToString()?.Contains("Apocalypse", StringComparison.OrdinalIgnoreCase) == true)
+                    return true;
+            }
+        }
+        catch (Exception ex)
+        {
+            VoiceDiagnostics.DebugWarning($"[VC] Error checking Apocalypse role: {ex.Message}");
+        }
+
+        return false;
+    }
+
+    internal static bool IsCensureActive()
+    {
+        try
+        {
+            var chainloaderType = Type.GetType("BepInEx.Unity.IL2CPP.IL2CPPChainloader, BepInEx.Unity.IL2CPP");
+            if (chainloaderType != null)
+            {
+                var instanceProp = chainloaderType.GetProperty("Instance", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+                var instance = instanceProp?.GetValue(null);
+                if (instance != null)
+                {
+                    var pluginsProp = instance.GetType().GetProperty("Plugins", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+                    var plugins = pluginsProp?.GetValue(instance) as System.Collections.IDictionary;
+                    if (plugins != null)
+                    {
+                        foreach (System.Collections.DictionaryEntry entry in plugins)
+                        {
+                            var pluginInfo = entry.Value;
+                            if (pluginInfo != null)
+                            {
+                                var instanceField = pluginInfo.GetType().GetProperty("Instance", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)
+                                    ?? pluginInfo.GetType().GetField("Instance", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance) as System.Reflection.MemberInfo;
+                                object? pluginInstance = null;
+                                if (instanceField is System.Reflection.PropertyInfo pi) pluginInstance = pi.GetValue(pluginInfo);
+                                else if (instanceField is System.Reflection.FieldInfo fi) pluginInstance = fi.GetValue(pluginInfo);
+
+                                if (pluginInstance is BepInEx.Unity.IL2CPP.BasePlugin bp)
+                                {
+                                    var config = bp.Config;
+                                    if (config != null)
+                                    {
+                                        foreach (var configKey in config.Keys)
+                                        {
+                                            if (configKey.Key.Contains("Censure", StringComparison.OrdinalIgnoreCase) ||
+                                                configKey.Key.Contains("Censor", StringComparison.OrdinalIgnoreCase))
+                                            {
+                                                var dict = config as System.Collections.Generic.IDictionary<ConfigDefinition, ConfigEntryBase>;
+                                                if (dict != null && dict.TryGetValue(configKey, out var configEntry))
+                                                {
+                                                    if (configEntry != null && configEntry.BoxedValue is bool val)
+                                                    {
+                                                        return val;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        catch { }
+        return false;
     }
 }

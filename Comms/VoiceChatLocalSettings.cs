@@ -76,11 +76,33 @@ public class VoiceChatLocalSettings : LocalSettingsTab
 {
     public static LoadableResourceAsset MicIcon { get; } = new("VoiceChatPlugin.Resources.miclogo.png");
 
-    public override string TabName => "Mega Chujowe Perfect Comms";
+    public override string TabName => Censor("Mega Chujowe Perfect Comms");
     public override LocalSettingTabAppearance TabAppearance => new()
     {
         TabIcon = MicIcon
     };
+
+    public static bool IsCensored
+    {
+        get
+        {
+            var local = LocalSettingsTabSingleton<VoiceChatLocalSettings>.Instance;
+            if (local != null && local.CensureMode.Value)
+                return true;
+
+            return TouMceVoiceIntegration.IsCensureActive();
+        }
+    }
+
+    public static string Censor(string text)
+    {
+        if (string.IsNullOrEmpty(text)) return text;
+        if (IsCensored)
+        {
+            text = System.Text.RegularExpressions.Regex.Replace(text, "chujowe", "ch**owe", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        }
+        return text;
+    }
 
     private static string[] _micDeviceNames = Array.Empty<string>();
 #if WINDOWS
@@ -112,9 +134,19 @@ public class VoiceChatLocalSettings : LocalSettingsTab
     [LocalEnumSetting("Mic Mode")]
     public ConfigEntry<VoiceMicMode> MicMode { get; }
 
+    [LocalSliderSetting("Mic Gate Threshold", min: 0.0001f, max: 0.10f,
+        displayValue: true, formatString: "0.0000")]
     public ConfigEntry<float> NoiseGateThreshold { get; }
 
+    [LocalSliderSetting("VAD Threshold", min: 0.0001f, max: 0.10f,
+        displayValue: true, formatString: "0.0000")]
     public ConfigEntry<float> VadThreshold { get; }
+
+    [LocalToggleSetting("Mute Alive (Hear Ghosts Only)")]
+    public ConfigEntry<bool> MuteAlivePlayers { get; }
+
+    [LocalToggleSetting("Censure Mode")]
+    public ConfigEntry<bool> CensureMode { get; }
 
     [LocalToggleSetting("Start Muted")]
     public ConfigEntry<bool> StartMuted { get; }
@@ -267,13 +299,19 @@ public class VoiceChatLocalSettings : LocalSettingsTab
         MicMode = config.Bind("Audio", "MicMode", VoiceMicMode.OpenMic,
             new ConfigDescription("Microphone activation mode"));
 
-        NoiseGateThreshold = config.Bind("Audio.Advanced", "NoiseGateThreshold", 0.003f,
+        NoiseGateThreshold = config.Bind("Audio.Advanced", "NoiseGateThreshold", 0.015f,
             new ConfigDescription("Advanced base gate threshold. Effective value is divided by MicSensitivity.",
-                new AcceptableValueRange<float>(0.003f, 0.10f)));
+                new AcceptableValueRange<float>(0.0001f, 0.10f)));
 
-        VadThreshold = config.Bind("Audio.Advanced", "VadThreshold", 0.004f,
+        VadThreshold = config.Bind("Audio.Advanced", "VadThreshold", 0.020f,
             new ConfigDescription("Advanced base speaking indicator threshold. Effective value is divided by MicSensitivity.",
-                new AcceptableValueRange<float>(0.002f, 0.080f)));
+                new AcceptableValueRange<float>(0.0001f, 0.10f)));
+
+        MuteAlivePlayers = config.Bind("Audio", "MuteAlivePlayers", false,
+            new ConfigDescription("Mute all alive players so you only hear dead players/ghosts"));
+
+        CensureMode = config.Bind("UI", "CensureMode", true,
+            new ConfigDescription("Censor the word 'Chujowe' to 'Ch**owe' in user-facing UI labels"));
 
         StartMuted = config.Bind("Audio", "StartMuted", false,
             new ConfigDescription("Start each session with microphone muted"));
@@ -552,6 +590,10 @@ public class VoiceChatLocalSettings : LocalSettingsTab
         else if (configEntry == MicMode)
         {
             VoiceChatHudState.ApplyMicState();
+        }
+        else if (configEntry == MuteAlivePlayers)
+        {
+            VoiceChatRoom.Current?.RefreshLocalAudioSettings();
         }
         else if (configEntry == DebugVoiceStats)
         {

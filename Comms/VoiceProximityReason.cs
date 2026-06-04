@@ -33,5 +33,6 @@ internal enum VoiceProximityReason
     SightBlocked,
     HardOcclusion,
     CameraProxy,
+    MuteAlive,
     Proximity,
 }

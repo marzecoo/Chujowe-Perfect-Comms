@@ -30,7 +30,7 @@ public class VoiceChatPluginMain : BasePlugin, IMiraPlugin
     public const string Version = "1.0.4";
     public static ManualLogSource Logger { get; private set; } = null!;
     public Harmony Harmony { get; } = new(Id);
-    public string OptionsTitleText => "Mega Chujowe Perfect Comms";
+    public string OptionsTitleText => VoiceChatLocalSettings.Censor("Mega Chujowe Perfect Comms");
     public ConfigFile GetConfigFile() => Config;
     private const string ResPrefix = "Lib.";
     private static readonly Dictionary<string, Assembly> _asmCache
@@ -75,7 +75,7 @@ public class VoiceChatPluginMain : BasePlugin, IMiraPlugin
         Logger = Log;
         VanillaLobbyDiagnostics.Configure(message => Logger.LogInfo(message), message => Logger.LogWarning(message));
         VoiceDiagnostics.DebugInfo("[VC] Loading Mega Chujowe Perfect Comms.");
-        ReactorCredits.Register("Mega Chujowe Perfect Comms", Version, false, ReactorCredits.AlwaysShow);
+        ReactorCredits.Register(VoiceChatLocalSettings.Censor("Mega Chujowe Perfect Comms"), Version, false, ReactorCredits.AlwaysShow);
         VoiceDiagnostics.Init();
         if (VoiceDiagnostics.IsEnabled && !string.IsNullOrEmpty(VoiceDiagnostics.Path))
             VoiceDiagnostics.DebugInfo($"[VC] Diagnostics log: {VoiceDiagnostics.Path}");

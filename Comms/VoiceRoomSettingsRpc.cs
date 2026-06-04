@@ -90,6 +90,7 @@ internal static class VoiceRoomSettingsRpc
         writer.Write(settings.TouMceRecruitVoice);
         writer.Write(settings.TouMceSpiritMasterGhostVoice);
         writer.Write(settings.TouMceLawyerClientVoice);
+        writer.Write(settings.TeamRadioApocalypse);
     }
 
     private static VoiceRoomSettingsSnapshot ReadSettings(MessageReader reader)
@@ -153,6 +154,7 @@ internal static class VoiceRoomSettingsRpc
             ? reader.ReadInt32()
             : (int)MediumGhostVoiceMode.Both;
         bool touMceLawyerClientVoice = reader.BytesRemaining > 0 ? reader.ReadBoolean() : true;
+        bool teamRadioApocalypse = reader.BytesRemaining > 0 ? reader.ReadBoolean() : true;
 
         return new VoiceRoomSettingsSnapshot(
             backend,
@@ -195,7 +197,8 @@ internal static class VoiceRoomSettingsRpc
             touMcePelicanBellyVoice,
             touMceRecruitVoice,
             touMceSpiritMasterGhostVoice,
-            touMceLawyerClientVoice).Clamp();
+            touMceLawyerClientVoice,
+            teamRadioApocalypse).Clamp();
     }
 
     [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.HandleRpc))]

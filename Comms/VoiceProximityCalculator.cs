@@ -63,6 +63,10 @@ internal static class VoiceProximityCalculator
         bool localDead = localPlayer?.IsDead == true;
         bool targetDead = target.IsDead;
 
+        var localSettings = MiraAPI.LocalSettings.LocalSettingsTabSingleton<VoiceChatLocalSettings>.Instance;
+        if (localSettings != null && localSettings.MuteAlivePlayers.Value && !targetDead)
+            return VoiceProximityResult.Muted(VoiceProximityReason.MuteAlive);
+
         if (s.TouMceHackerJamMutesVoice && TouMceVoiceIntegration.IsHackerJammed())
             return VoiceProximityResult.Muted(VoiceProximityReason.HackerJam);
 
@@ -192,6 +196,11 @@ internal static class VoiceProximityCalculator
             out cameraPosition);
         bool localDead = localPlayer?.IsDead == true;
         bool targetDead = target.IsDead;
+
+        var localSettings = MiraAPI.LocalSettings.LocalSettingsTabSingleton<VoiceChatLocalSettings>.Instance;
+        if (localSettings != null && localSettings.MuteAlivePlayers.Value && !targetDead)
+            return VoiceProximityResult.Muted(VoiceProximityReason.MuteAlive, previousWallCoefficient);
+
         bool localImp = localPlayer?.IsImpostor == true;
         bool targetImp = target.IsImpostor;
         bool targetInVent = target.InVent;
@@ -440,15 +449,23 @@ internal static class VoiceProximityCalculator
             VoiceTeamRadioChannel.Lovers => settings.TeamRadioLovers && AreLinkedLovers(local, target),
             VoiceTeamRadioChannel.Recruits => settings.TeamRadioRecruits && AreTouMceRecruits(local, target),
             VoiceTeamRadioChannel.Lawyer => settings.TeamRadioLawyer && AreTouMceLawyerPair(local, target),
+            VoiceTeamRadioChannel.Apocalypse => settings.TeamRadioApocalypse && AreTouMceApocalypse(local, target),
             VoiceTeamRadioChannel.All =>
                 (settings.TeamRadioImpostors && local.IsImpostor && target.IsImpostor) ||
                 (settings.TeamRadioVampires && local.IsVampire && target.IsVampire) ||
                 (settings.TeamRadioLovers && AreLinkedLovers(local, target)) ||
                 (settings.TeamRadioRecruits && AreTouMceRecruits(local, target)) ||
-                (settings.TeamRadioLawyer && AreTouMceLawyerPair(local, target)),
+                (settings.TeamRadioLawyer && AreTouMceLawyerPair(local, target)) ||
+                (settings.TeamRadioApocalypse && AreTouMceApocalypse(local, target)),
             _ => false,
         };
     }
+
+    private static bool AreTouMceApocalypse(VoicePlayerSnapshot local, VoicePlayerSnapshot target)
+        => !local.IsDead &&
+           !target.IsDead &&
+           local.IsTouMceApocalypse &&
+           target.IsTouMceApocalypse;
 
     internal static bool IsUnavailableTarget(VoicePlayerSnapshot target)
         => target.Disconnected || target.IsDummy || !target.IsVisible;

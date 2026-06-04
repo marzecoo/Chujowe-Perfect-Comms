@@ -142,7 +142,7 @@ internal static class VoiceLobbyBrowserUi
     internal static void OpenInfoEditor()
     {
         var settings = LocalSettingsTabSingleton<VoiceChatLocalSettings>.Instance;
-        _editTitle = settings?.LobbyBrowserTitle.Value ?? "Mega Chujowe Perfect Comms";
+        _editTitle = VoiceChatLocalSettings.Censor(settings?.LobbyBrowserTitle.Value ?? "Mega Chujowe Perfect Comms");
         _editLanguage = settings?.LobbyBrowserLanguage.Value ?? "English";
         _editingLanguage = false;
         _editorOpen = true;
@@ -508,7 +508,7 @@ internal static class VoiceLobbyBrowserUi
             SetStatus("");
             var empty = CreateText("EmptyState", _rowsRoot.transform, new Vector3(0f, 0.05f, -0.2f),
                 CurrentSource() == VoiceLobbyBrowserSource.BetterCrewLink
-                    ? "No Mega Chujowe Perfect Comms BCL live lobbies listed.\nHost a lobby and enable Public Voice Lobby in game settings."
+                    ? VoiceChatLocalSettings.Censor("No Mega Chujowe Perfect Comms BCL live lobbies listed.\nHost a lobby and enable Public Voice Lobby in game settings.")
                     : "No public voice lobbies listed.\nHost a lobby and enable Public Voice Lobby in game settings.",
                 1.20f, TextAlignmentOptions.Center, SortBase + 4);
             empty.enableWordWrapping = true;
@@ -518,7 +518,7 @@ internal static class VoiceLobbyBrowserUi
         }
 
         SetStatus(CurrentSource() == VoiceLobbyBrowserSource.BetterCrewLink
-            ? $"{listings.Count} Mega Chujowe Perfect Comms BCL live lobby/lobbies found"
+            ? $"{listings.Count} " + VoiceChatLocalSettings.Censor("Mega Chujowe Perfect Comms BCL live lobby/lobbies found")
             : $"{listings.Count} Cloudflare (Limited) lobby/lobbies found");
         int row = 0;
         foreach (var listing in listings)
@@ -529,7 +529,7 @@ internal static class VoiceLobbyBrowserUi
             CreateRowBackground("RowBg" + row, _rowsRoot.transform, new Vector3(0.10f, y, -0.30f));
 
             var title = CreateText("RowTitle" + row, _rowsRoot.transform, new Vector3(-0.18f, y + 0.10f, -0.2f),
-                Truncate(listing.Title, 24), 0.92f, TextAlignmentOptions.Left, SortBase + 4);
+                Truncate(VoiceChatLocalSettings.Censor(listing.Title), 24), 0.92f, TextAlignmentOptions.Left, SortBase + 4);
             title.rectTransform.sizeDelta = new Vector2(5.40f, 0.36f);
             title.enableWordWrapping = false;
             title.overflowMode = TextOverflowModes.Ellipsis;
@@ -774,7 +774,7 @@ internal static class VoiceLobbyBrowserUi
         var settings = LocalSettingsTabSingleton<VoiceChatLocalSettings>.Instance;
         if (settings != null)
         {
-            settings.LobbyBrowserTitle.Value = string.IsNullOrWhiteSpace(_editTitle) ? "Mega Chujowe Perfect Comms" : _editTitle.Trim();
+            settings.LobbyBrowserTitle.Value = string.IsNullOrWhiteSpace(_editTitle) ? VoiceChatLocalSettings.Censor("Mega Chujowe Perfect Comms") : _editTitle.Trim();
             settings.LobbyBrowserLanguage.Value = string.IsNullOrWhiteSpace(_editLanguage) ? "English" : _editLanguage.Trim();
         }
         _editorOpen = false;
