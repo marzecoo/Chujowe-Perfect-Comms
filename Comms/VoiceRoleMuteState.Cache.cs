@@ -30,6 +30,18 @@ internal static partial class VoiceRoleMuteState
             _touMceSpeedyAccelerateModifierType == null &&
             _touMceVanishedModifierType == null &&
             _touMceWraithLanternInvisibilityModifierType == null &&
+            _touMceEvokerBlindedModifierType == null &&
+            _herbalistConfusedModifierType == null &&
+            _injectedConfusedModifierType == null &&
+            _injectedInvertedControlsModifierType == null &&
+            _injectedLowVisionModifierType == null &&
+            _injectedNauseaModifierType == null &&
+            _injectedNoReportModifierType == null &&
+            _injectedNoUseModifierType == null &&
+            _injectedNoVentModifierType == null &&
+            _injectedSlownessModifierType == null &&
+            _injectedVeryLowVisionModifierType == null &&
+            _injectedWeaknessModifierType == null &&
             PostMeetingBlackmailedPlayers.Count == 0)
         {
             RoleStateCache.Clear();
@@ -202,6 +214,21 @@ internal static partial class VoiceRoleMuteState
         _touMceSpeedyAccelerateModifierType = ResolveType(TouMceSpeedyAccelerateModifierName);
         _touMceVanishedModifierType = ResolveType(TouMceVanishedModifierName);
         _touMceWraithLanternInvisibilityModifierType = ResolveType(TouMceWraithLanternInvisibilityModifierName);
+        _touMceEvokerBlindedModifierType = ResolveType(TouMceEvokerBlindedModifierName);
+        _herbalistConfusedModifierType = ResolveType(HerbalistConfusedModifierName1)
+            ?? ResolveType(HerbalistConfusedModifierName2)
+            ?? ResolveType(HerbalistConfusedModifierName3)
+            ?? ResolveType(HerbalistConfusedModifierName4);
+        _injectedConfusedModifierType = ResolveType(InjectedConfusedModifierName);
+        _injectedInvertedControlsModifierType = ResolveType(InjectedInvertedControlsModifierName);
+        _injectedLowVisionModifierType = ResolveType(InjectedLowVisionModifierName);
+        _injectedNauseaModifierType = ResolveType(InjectedNauseaModifierName);
+        _injectedNoReportModifierType = ResolveType(InjectedNoReportModifierName);
+        _injectedNoUseModifierType = ResolveType(InjectedNoUseModifierName);
+        _injectedNoVentModifierType = ResolveType(InjectedNoVentModifierName);
+        _injectedSlownessModifierType = ResolveType(InjectedSlownessModifierName);
+        _injectedVeryLowVisionModifierType = ResolveType(InjectedVeryLowVisionModifierName);
+        _injectedWeaknessModifierType = ResolveType(InjectedWeaknessModifierName);
         _supportedModTypesResolved = true;
         InvalidateRoleStateCache();
     }

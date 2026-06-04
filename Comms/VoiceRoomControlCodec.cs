@@ -224,6 +224,9 @@ public static class VoiceRoomControlCodec
             hasHackerJamSetting
                 ? buffer[touMceVoiceOffset + 6] != 0
                 : hasTouMceVoiceSettings && buffer[touMceVoiceOffset + 2] != 0,
+            true,
+            true,
+            true,
             teamRadioApocalypse).Clamp();
         return true;
     }

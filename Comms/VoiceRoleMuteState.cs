@@ -29,6 +29,21 @@ internal static partial class VoiceRoleMuteState
     private const string TouMceSpeedyAccelerateModifierName = "TouMegaChujoweExtension.Modifiers.Impostor.SpeedyAccelerateModifier";
     private const string TouMceVanishedModifierName = "TouMegaChujoweExtension.Modifiers.Crewmate.VanishModifier";
     private const string TouMceWraithLanternInvisibilityModifierName = "TouMegaChujoweExtension.Modifiers.Impostor.WraithLanternInvisibilityModifier";
+    private const string TouMceEvokerBlindedModifierName = "TouMegaChujoweExtension.Modifiers.Crewmate.EvokerBlindedModifier";
+    private const string HerbalistConfusedModifierName1 = "TownOfUs.Modifiers.Impostor.ConfusedModifier";
+    private const string HerbalistConfusedModifierName2 = "TownOfUs.Modifiers.Impostor.ConfuseModifier";
+    private const string HerbalistConfusedModifierName3 = "TownOfUs.Modifiers.ConfusedModifier";
+    private const string HerbalistConfusedModifierName4 = "TownOfUs.Modifiers.ConfuseModifier";
+    private const string InjectedConfusedModifierName = "TouMegaChujoweExtension.Modifiers.Impostor.InjectedConfusedModifier";
+    private const string InjectedInvertedControlsModifierName = "TouMegaChujoweExtension.Modifiers.Impostor.InjectedInvertedControlsModifier";
+    private const string InjectedLowVisionModifierName = "TouMegaChujoweExtension.Modifiers.Impostor.InjectedLowVisionModifier";
+    private const string InjectedNauseaModifierName = "TouMegaChujoweExtension.Modifiers.Impostor.InjectedNauseaModifier";
+    private const string InjectedNoReportModifierName = "TouMegaChujoweExtension.Modifiers.Impostor.InjectedNoReportModifier";
+    private const string InjectedNoUseModifierName = "TouMegaChujoweExtension.Modifiers.Impostor.InjectedNoUseModifier";
+    private const string InjectedNoVentModifierName = "TouMegaChujoweExtension.Modifiers.Impostor.InjectedNoVentModifier";
+    private const string InjectedSlownessModifierName = "TouMegaChujoweExtension.Modifiers.Impostor.InjectedSlownessModifier";
+    private const string InjectedVeryLowVisionModifierName = "TouMegaChujoweExtension.Modifiers.Impostor.InjectedVeryLowVisionModifier";
+    private const string InjectedWeaknessModifierName = "TouMegaChujoweExtension.Modifiers.Impostor.InjectedWeaknessModifier";
     private const float RoleStateRefreshInterval = 0.25f;
 
     private static readonly HashSet<byte> JailVoiceAllowed = new();
@@ -56,6 +71,18 @@ internal static partial class VoiceRoleMuteState
     private static Type? _touMceSpeedyAccelerateModifierType;
     private static Type? _touMceVanishedModifierType;
     private static Type? _touMceWraithLanternInvisibilityModifierType;
+    private static Type? _touMceEvokerBlindedModifierType;
+    private static Type? _herbalistConfusedModifierType;
+    private static Type? _injectedConfusedModifierType;
+    private static Type? _injectedInvertedControlsModifierType;
+    private static Type? _injectedLowVisionModifierType;
+    private static Type? _injectedNauseaModifierType;
+    private static Type? _injectedNoReportModifierType;
+    private static Type? _injectedNoUseModifierType;
+    private static Type? _injectedNoVentModifierType;
+    private static Type? _injectedSlownessModifierType;
+    private static Type? _injectedVeryLowVisionModifierType;
+    private static Type? _injectedWeaknessModifierType;
     private static bool _supportedModTypesResolved;
     private static int _resolvedGameId = int.MinValue;
     private static VoiceGamePhase _resolvedPhase = VoiceGamePhase.Unknown;
@@ -174,11 +201,53 @@ internal static partial class VoiceRoleMuteState
         return IsHypnotisedHysteriaActive(GetModifier(local, _hypnotisedModifierType));
     }
 
+    internal static bool IsLocalListenerEvokerBlinded()
+    {
+        var local = PlayerControl.LocalPlayer;
+        if (local == null)
+            return false;
+
+        RefreshSupportedModTypesIfNeeded();
+        return GetModifier(local, _touMceEvokerBlindedModifierType) != null;
+    }
+
+    internal static bool IsLocalListenerDoctorInjectorInjectedWithNegative()
+    {
+        var local = PlayerControl.LocalPlayer;
+        if (local == null)
+            return false;
+
+        RefreshSupportedModTypesIfNeeded();
+        return GetModifier(local, _injectedConfusedModifierType) != null ||
+               GetModifier(local, _injectedInvertedControlsModifierType) != null ||
+               GetModifier(local, _injectedLowVisionModifierType) != null ||
+               GetModifier(local, _injectedNauseaModifierType) != null ||
+               GetModifier(local, _injectedNoReportModifierType) != null ||
+               GetModifier(local, _injectedNoUseModifierType) != null ||
+               GetModifier(local, _injectedNoVentModifierType) != null ||
+               GetModifier(local, _injectedSlownessModifierType) != null ||
+               GetModifier(local, _injectedVeryLowVisionModifierType) != null ||
+               GetModifier(local, _injectedWeaknessModifierType) != null;
+    }
+
+    internal static bool IsLocalListenerHerbalistConfused()
+    {
+        var local = PlayerControl.LocalPlayer;
+        if (local == null)
+            return false;
+
+        RefreshSupportedModTypesIfNeeded();
+        return GetModifier(local, _herbalistConfusedModifierType) != null;
+    }
+
     internal static bool IsLocalListenerAudioMuffled()
     {
         var settings = VoiceRoomSettingsState.Current;
         return settings.MuffleBlindedOrFlashedHearing && IsLocalListenerBlindedOrFlashed() ||
-               settings.MuffleHypnotizedDuringHysteria && IsLocalListenerHypnotizedDuringHysteria();
+               settings.MuffleHypnotizedDuringHysteria && IsLocalListenerHypnotizedDuringHysteria() ||
+               settings.MuffleDoctorInjectorNegativeEffects && IsLocalListenerDoctorInjectorInjectedWithNegative() ||
+               settings.MuffleHerbalistConfuse && IsLocalListenerHerbalistConfused() ||
+               settings.MuffleEvokerBlinded && IsLocalListenerEvokerBlinded();
     }
 
     internal static VoiceProximityResult ApplyLocalListenerAudioMuffle(VoiceProximityResult result)

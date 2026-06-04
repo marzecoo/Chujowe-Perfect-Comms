@@ -19,6 +19,9 @@ public class VoiceRoleIntegrationOptions : AbstractOptionGroup
 
     public ModdedToggleOption MuffleBlindedOrFlashedHearing { get; } = new("<color=#FF0000><b>Eclipsal/Grenadier</b></color>: Muffle Blinded/Flashed Hearing", true);
     public ModdedToggleOption MuffleHypnotizedDuringHysteria { get; } = new("<color=#FF0000><b>Hypnotist</b></color>: Muffle Hypnotized During Hysteria", true);
+    public ModdedToggleOption MuffleDoctorInjectorNegativeEffects { get; } = new("<color=#D12B2B><b>Doctor/Injector</b></color>: Muffle Negative Effects", true);
+    public ModdedToggleOption MuffleHerbalistConfuse { get; } = new("<color=#D12B2B><b>Herbalist</b></color>: Muffle Confused Hearing", true);
+    public ModdedToggleOption MuffleEvokerBlinded { get; } = new("<color=#5FBFCF><b>Evoker</b></color>: Muffle Blinded Hearing", true);
     public ModdedToggleOption CrewpostorUsesImpostorVoice { get; } = new("<color=#FF0000><b>Crewpostor</b></color>: Use Impostor Voice", true);
     public ModdedToggleOption TouMceHackerJamMutesVoice { get; } = new("<color=#D12B2B><b>Hacker</b></color>: Jam Mutes Voice", true);
     public ModdedToggleOption MuteGlitchHacked { get; } = new("<color=#00FF00><b>Glitch</b></color>: Mute Hacked Players", true);

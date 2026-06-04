@@ -290,7 +290,7 @@ public class VoiceChatLocalSettings : LocalSettingsTab
             new ConfigDescription("Master output volume",
                 new AcceptableValueRange<float>(0.1f, 3f)));
 
-        VoiceFalloffSoftness = config.Bind("Audio", "VoiceFalloffSoftness", 0.30f,
+        VoiceFalloffSoftness = config.Bind("Audio", "VoiceFalloffSoftness", 0.40f,
             new ConfigDescription(
                 "How gently voices fade near the edge of vision/range. 0% keeps the original fade; higher keeps voices clear across most of your vision and fades only near the edge. Layers on top of the host's falloff and never extends hearing range.",
                 new AcceptableValueRange<float>(0f, 1f)));
@@ -442,7 +442,7 @@ public class VoiceChatLocalSettings : LocalSettingsTab
             new ConfigDescription("Scale for voice HUD buttons",
                 new AcceptableValueRange<float>(0.75f, 3.00f)));
 
-        NoiseSuppressionEnabled = config.Bind("Audio", "NoiseSuppressionEnabled", false,
+        NoiseSuppressionEnabled = config.Bind("Audio", "NoiseSuppressionEnabled", true,
             new ConfigDescription("Use RNNoise to suppress outgoing microphone background noise."));
 
         DebugVoiceStats = config.Bind("Debug", "DebugVoiceStats", false,

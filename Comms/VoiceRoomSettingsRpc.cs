@@ -91,6 +91,9 @@ internal static class VoiceRoomSettingsRpc
         writer.Write(settings.TouMceSpiritMasterGhostVoice);
         writer.Write(settings.TouMceLawyerClientVoice);
         writer.Write(settings.TeamRadioApocalypse);
+        writer.Write(settings.MuffleDoctorInjectorNegativeEffects);
+        writer.Write(settings.MuffleHerbalistConfuse);
+        writer.Write(settings.MuffleEvokerBlinded);
     }
 
     private static VoiceRoomSettingsSnapshot ReadSettings(MessageReader reader)
@@ -155,6 +158,9 @@ internal static class VoiceRoomSettingsRpc
             : (int)MediumGhostVoiceMode.Both;
         bool touMceLawyerClientVoice = reader.BytesRemaining > 0 ? reader.ReadBoolean() : true;
         bool teamRadioApocalypse = reader.BytesRemaining > 0 ? reader.ReadBoolean() : true;
+        bool muffleDoctorInjectorNegativeEffects = reader.BytesRemaining > 0 ? reader.ReadBoolean() : true;
+        bool muffleHerbalistConfuse = reader.BytesRemaining > 0 ? reader.ReadBoolean() : true;
+        bool muffleEvokerBlinded = reader.BytesRemaining > 0 ? reader.ReadBoolean() : true;
 
         return new VoiceRoomSettingsSnapshot(
             backend,
@@ -198,6 +204,9 @@ internal static class VoiceRoomSettingsRpc
             touMceRecruitVoice,
             touMceSpiritMasterGhostVoice,
             touMceLawyerClientVoice,
+            muffleDoctorInjectorNegativeEffects,
+            muffleHerbalistConfuse,
+            muffleEvokerBlinded,
             teamRadioApocalypse).Clamp();
     }
 

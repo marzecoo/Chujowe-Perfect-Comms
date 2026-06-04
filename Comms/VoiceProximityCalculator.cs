@@ -64,7 +64,7 @@ internal static class VoiceProximityCalculator
         bool targetDead = target.IsDead;
 
         var localSettings = MiraAPI.LocalSettings.LocalSettingsTabSingleton<VoiceChatLocalSettings>.Instance;
-        if (localSettings != null && localSettings.MuteAlivePlayers.Value && !targetDead)
+        if (localSettings != null && localSettings.MuteAlivePlayers.Value && localDead && !targetDead)
             return VoiceProximityResult.Muted(VoiceProximityReason.MuteAlive);
 
         if (s.TouMceHackerJamMutesVoice && TouMceVoiceIntegration.IsHackerJammed())
@@ -198,7 +198,7 @@ internal static class VoiceProximityCalculator
         bool targetDead = target.IsDead;
 
         var localSettings = MiraAPI.LocalSettings.LocalSettingsTabSingleton<VoiceChatLocalSettings>.Instance;
-        if (localSettings != null && localSettings.MuteAlivePlayers.Value && !targetDead)
+        if (localSettings != null && localSettings.MuteAlivePlayers.Value && localDead && !targetDead)
             return VoiceProximityResult.Muted(VoiceProximityReason.MuteAlive, previousWallCoefficient);
 
         bool localImp = localPlayer?.IsImpostor == true;

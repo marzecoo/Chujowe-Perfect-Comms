@@ -45,6 +45,9 @@ public readonly record struct VoiceRoomSettingsSnapshot(
     bool TouMceRecruitVoice,
     int TouMceSpiritMasterGhostVoice,
     bool TouMceLawyerClientVoice,
+    bool MuffleDoctorInjectorNegativeEffects,
+    bool MuffleHerbalistConfuse,
+    bool MuffleEvokerBlinded,
     bool TeamRadioApocalypse)
 {
     public const float MinChatDistance = 1.5f;
@@ -92,6 +95,9 @@ public readonly record struct VoiceRoomSettingsSnapshot(
         false,
         (int)MediumGhostVoiceMode.Both,
         false,
+        true,
+        true,
+        true,
         true);
 
     public static VoiceRoomSettingsSnapshot FromGameOptions()
@@ -146,6 +152,9 @@ public readonly record struct VoiceRoomSettingsSnapshot(
             false,
             role.TouMceSpiritMasterGhostVoice.Value,
             false,
+            role.MuffleDoctorInjectorNegativeEffects.Value,
+            role.MuffleHerbalistConfuse.Value,
+            role.MuffleEvokerBlinded.Value,
             s.TeamRadioApocalypse.Value).Clamp();
     }
 
