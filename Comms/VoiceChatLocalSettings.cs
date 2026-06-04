@@ -13,30 +13,30 @@ using VoiceChatPlugin.Audio;
 namespace VoiceChatPlugin.VoiceChat;
 public enum MicDeviceEnum
 {
-    Default   =  0,
-    Device1   =  1, Device2   =  2, Device3   =  3, Device4   =  4,
-    Device5   =  5, Device6   =  6, Device7   =  7, Device8   =  8,
-    Device9   =  9, Device10  = 10
+    Default = 0,
+    Device1 = 1, Device2 = 2, Device3 = 3, Device4 = 4,
+    Device5 = 5, Device6 = 6, Device7 = 7, Device8 = 8,
+    Device9 = 9, Device10 = 10
 }
 
 public enum SpkDeviceEnum
 {
-    Default   =  0,
-    Device1   =  1, Device2   =  2, Device3   =  3, Device4   =  4,
-    Device5   =  5, Device6   =  6, Device7   =  7, Device8   =  8,
-    Device9   =  9, Device10  = 10
+    Default = 0,
+    Device1 = 1, Device2 = 2, Device3 = 3, Device4 = 4,
+    Device5 = 5, Device6 = 6, Device7 = 7, Device8 = 8,
+    Device9 = 9, Device10 = 10
 }
 
 public enum SpeakingBarPosition
 {
-    TopLeft      = 0,
-    TopMiddle    = 1,
-    TopRight     = 2,
-    MiddleLeft   = 6,
-    MiddleRight  = 7,
-    BottomLeft   = 3,
+    TopLeft = 0,
+    TopMiddle = 1,
+    TopRight = 2,
+    MiddleLeft = 6,
+    MiddleRight = 7,
+    BottomLeft = 3,
     BottomMiddle = 4,
-    BottomRight  = 5,
+    BottomRight = 5,
 }
 
 public enum VoiceControlsLayout
@@ -48,9 +48,9 @@ public enum VoiceControlsLayout
 public enum SpeakingBarNamePosition
 {
     Bottom = 0,
-    Top    = 1,
-    Left   = 2,
-    Right  = 3,
+    Top = 1,
+    Left = 2,
+    Right = 3,
 }
 
 public enum JailUnmuteButtonPlacement
@@ -86,11 +86,18 @@ public class VoiceChatLocalSettings : LocalSettingsTab
     {
         get
         {
-            var local = LocalSettingsTabSingleton<VoiceChatLocalSettings>.Instance;
-            if (local != null && local.CensureMode.Value)
-                return true;
+            try
+            {
+                var local = LocalSettingsTabSingleton<VoiceChatLocalSettings>.Instance;
+                if (local != null)
+                    return local.CensureMode.Value || TouMceVoiceIntegration.IsCensureActive();
+            }
+            catch (InvalidOperationException)
+            {
+                // Fallback when settings tab is not yet registered/initialized by MiraAPI
+            }
 
-            return TouMceVoiceIntegration.IsCensureActive();
+            return true; // Default to true for safety during early initialization (e.g. keybind registration)
         }
     }
 
@@ -99,7 +106,7 @@ public class VoiceChatLocalSettings : LocalSettingsTab
         if (string.IsNullOrEmpty(text)) return text;
         if (IsCensored)
         {
-            text = System.Text.RegularExpressions.Regex.Replace(text, "chujowe", "ch**owe", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            text = System.Text.RegularExpressions.Regex.Replace(text, "Chujowe", "Ch**owe", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
         }
         return text;
     }
@@ -355,7 +362,7 @@ public class VoiceChatLocalSettings : LocalSettingsTab
         {
             if (_correcting) return;
             int newIdx = (int)MicrophoneDeviceIndex.Value;
-            int count  = _micDeviceNames.Length;
+            int count = _micDeviceNames.Length;
             if (newIdx < count) return;
 
             _correcting = true;
@@ -380,7 +387,7 @@ public class VoiceChatLocalSettings : LocalSettingsTab
         {
             if (_correcting) return;
             int newIdx = (int)SpeakerDeviceIndex.Value;
-            int count  = _spkDeviceNames.Length;
+            int count = _spkDeviceNames.Length;
             if (newIdx < count) return;
 
             _correcting = true;
@@ -540,7 +547,7 @@ public class VoiceChatLocalSettings : LocalSettingsTab
             int count = WaveInEvent.DeviceCount;
             for (int i = 0; i < count; i++)
             {
-                var cap  = WaveInEvent.GetCapabilities(i);
+                var cap = WaveInEvent.GetCapabilities(i);
                 string n = cap.ProductName?.Trim() ?? "";
                 if (!string.IsNullOrEmpty(n) && n != "Microsoft Sound Mapper")
                     mics.Add(n);
@@ -801,7 +808,7 @@ public static class DeviceLabelPatch
             if (isMic)
             {
                 var names = VoiceChatLocalSettings.MicDeviceNames;
-                __result = idx == 0           ? "Default"
+                __result = idx == 0 ? "Default"
                          : idx < names.Length ? names[idx]
                          : "Default";
             }
@@ -809,12 +816,12 @@ public static class DeviceLabelPatch
             else if (isSpk)
             {
                 var names = VoiceChatLocalSettings.SpkDeviceNames;
-                __result = idx == 0           ? "Default"
+                __result = idx == 0 ? "Default"
                          : idx < names.Length ? names[idx]
                          : "Default";
             }
 #endif
         }
-        catch {}
+        catch { }
     }
 }
