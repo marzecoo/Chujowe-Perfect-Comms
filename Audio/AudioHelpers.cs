@@ -24,7 +24,7 @@ internal static class AudioHelpers
     // per-peer ceiling) required before the per-peer ceiling ratchets up one frame-step. A single unclamped
     // recompute (or an idle-reset) clears the streak, so a transient jitter spike never deepens a healthy peer;
     // only a genuinely jittery link sustains the clamp long enough to earn the extra latency.
-    public const int PerPeerCeilingClampStreakToGrow = 5;
+    public const int PerPeerCeilingClampStreakToGrow = 2;
     public const int JitterDepthMarginSamples = FrameSize * 2; // 40 ms safety margin above measured jitter
     public const float JitterGain = 2.5f;                       // target ~= baseline + gain*jitterStdev + margin
     public const int RecoveryGrowFloorSamples = FrameSize * 2;  // min +40 ms jump per underrun for a not-yet-measured peer
@@ -68,6 +68,9 @@ internal static class AudioHelpers
         int lowered = currentCeilingSamples - FrameSize;
         return Math.Clamp(lowered, PlaybackMaxRecoveryPrebufferSamples, PlaybackMaxRecoveryPrebufferSamplesHard);
     }
+
+    public static int NextClampStreak(int currentStreak, bool clamped)
+        => clamped ? currentStreak + 1 : Math.Max(0, currentStreak - 1);
 
     public static float GetTransmitLimiterGain(float peak)
     {

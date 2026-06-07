@@ -382,17 +382,13 @@ internal class BufferedSampleProvider : ISampleProvider
                    + AudioHelpers.JitterDepthMarginSamples;
 
         // P0.2: track whether the link wants more than the current per-peer ceiling, then ratchet up on a streak.
+        // Decay the streak on a below-ceiling sample instead of hard-resetting it (NextClampStreak), so oscillating
+        // jitter still accrues toward the grow threshold instead of being perpetually wiped (the prior dead path).
         int ceiling = ReachableCeilingLocked();
-        if (AudioHelpers.PeerCeilingIsClamped(unclampedTarget, ceiling))
-        {
-            _clampStreak++;
-            if (TryGrowPerPeerCeilingLocked())
-                _clampStreak = 0; // grew one frame-step; re-arm the streak for the next step toward the hard cap
-        }
-        else
-        {
-            _clampStreak = 0; // link is comfortably under the ceiling — no escalation pressure
-        }
+        bool clamped = AudioHelpers.PeerCeilingIsClamped(unclampedTarget, ceiling);
+        _clampStreak = AudioHelpers.NextClampStreak(_clampStreak, clamped);
+        if (clamped && TryGrowPerPeerCeilingLocked())
+            _clampStreak = 0; // grew one frame-step; re-arm the streak for the next step toward the hard cap
 
         _jitterSetpointSamples = Math.Clamp(unclampedTarget,
             AudioHelpers.PlaybackRecoveryPrebufferSamples, ReachableCeilingLocked());
