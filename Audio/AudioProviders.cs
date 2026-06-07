@@ -368,6 +368,21 @@ internal class BufferedSampleProvider : ISampleProvider
         return Math.Max(AudioHelpers.PlaybackRecoveryPrebufferSamples, cap);
     }
 
+    private int ComputeUnclampedTargetLocked()
+    {
+        double j = _jitterSamplesProvider?.Invoke() ?? 0.0;
+        return AudioHelpers.PlaybackRecoveryPrebufferSamples
+               + (int)(AudioHelpers.JitterGain * j)
+               + AudioHelpers.JitterDepthMarginSamples;
+    }
+
+    private void RefreshJitterSetpointLocked()
+    {
+        int unclampedTarget = ComputeUnclampedTargetLocked();
+        _jitterSetpointSamples = Math.Clamp(unclampedTarget,
+            AudioHelpers.PlaybackRecoveryPrebufferSamples, ReachableCeilingLocked());
+    }
+
     // Pull the clean per-peer jitter signal and translate it into a depth setpoint (Fix 2a-3). Also drives the
     // per-peer link-aware ceiling escalation (P0.2): the UNCLAMPED target (before clamping to the ceiling) is what
     // reveals that the link genuinely wants more depth than the ceiling allows. A sustained streak of clamped
@@ -376,14 +391,13 @@ internal class BufferedSampleProvider : ISampleProvider
     // decays the streak by one (floored at 0), so a single transient spike is not enough to deepen a healthy peer. Idle-reset also clears it.
     private void RecomputeSetpointLocked()
     {
-        double j = _jitterSamplesProvider?.Invoke() ?? 0.0;
-        int unclampedTarget = AudioHelpers.PlaybackRecoveryPrebufferSamples
-                   + (int)(AudioHelpers.JitterGain * j)
-                   + AudioHelpers.JitterDepthMarginSamples;
+        int unclampedTarget = ComputeUnclampedTargetLocked();
 
         // P0.2: track whether the link wants more than the current per-peer ceiling, then ratchet up on a streak.
         // Decay the streak on a below-ceiling sample instead of hard-resetting it (NextClampStreak), so oscillating
         // jitter still accrues toward the grow threshold instead of being perpetually wiped (the prior dead path).
+        // ESCALATION-ONLY: call this from the underrun/decay paths, NEVER from the prebuffer probe path (use
+        // RefreshJitterSetpointLocked there) — the clamp streak must count clamped UNDERRUNS, not poll ticks.
         int ceiling = ReachableCeilingLocked();
         bool clamped = AudioHelpers.PeerCeilingIsClamped(unclampedTarget, ceiling);
         _clampStreak = AudioHelpers.NextClampStreak(_clampStreak, clamped);
@@ -399,9 +413,10 @@ internal class BufferedSampleProvider : ISampleProvider
         if (!_hasPlayedAudio)
             return _prebufferSamples; // startup onset hold UNCHANGED
 
-        // Proactive prefill: pull the live per-peer jitter EVERY release decision so a jittery peer fills the
-        // cushion to its measured depth at talkspurt onset, instead of only ratcheting up AFTER an underrun.
-        RecomputeSetpointLocked();
+        // Proactive prefill: refresh the depth setpoint from live per-peer jitter while prebuffering so a jittery
+        // peer fills the cushion to its measured depth, instead of only deepening AFTER an underrun. This is the
+        // side-effect-free refresh (no clamp-streak/ceiling mutation) — escalation stays on the underrun path.
+        RefreshJitterSetpointLocked();
         int ceiling = ReachableCeilingLocked(); // SAME ceiling as Increase — both move together
         int target = Math.Max(_adaptiveRecoveryPrebufferSamples, _jitterSetpointSamples);
         return Math.Clamp(target,
