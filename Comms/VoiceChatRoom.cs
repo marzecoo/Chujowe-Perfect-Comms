@@ -118,7 +118,7 @@ public class VoiceChatRoom
     // the best mapped count seen, so escalation to a global rebuild is reserved for a real collapse.
     private int _missingPeerRecoveryAttempts;          // consecutive non-improving attempts on the current shortfall (targeted path)
     private int _globalRebuildAttempts;                 // consecutive global/collapse rebuilds (bounds the collapse-path backoff)
-    private int _lastRecoveryMappedPeers = -1;          // mappedPeers observed at the previous attempt
+    private int _lastRecoveryOpenPeers = -1;             // openPeers observed at the previous attempt
     private int _lastHealthyMappedPeers;                // best mappedPeers ever seen this session (diagnostics only)
     private int _lastRecoveryRemoteSignature;           // cheap hash of the expected-remote set at the previous attempt
     private bool _missingPeerRecoveryLatched;           // true once capped; cleared when the set/count changes
@@ -678,7 +678,7 @@ public class VoiceChatRoom
                 _missingPeerRecoveryAttempts = 0;
                 _globalRebuildAttempts = 0;
                 _missingPeerRecoveryLatched = false;
-                _lastRecoveryMappedPeers = -1;
+                _lastRecoveryOpenPeers = -1;
                 _lastRecoveryRemoteSignature = 0;
             }
             return;
@@ -694,7 +694,7 @@ public class VoiceChatRoom
         // actually fires.
         int remoteSignature = HashExpectedRemotePlayers(snapshot);
         bool setChanged = remoteSignature != _lastRecoveryRemoteSignature;
-        bool improved = _lastRecoveryMappedPeers >= 0 && openPeers > _lastRecoveryMappedPeers;
+        bool improved = _lastRecoveryOpenPeers >= 0 && openPeers > _lastRecoveryOpenPeers;
         if (setChanged || improved)
         {
             _missingPeerRecoveryLatched = false;
@@ -724,7 +724,7 @@ public class VoiceChatRoom
         _lastMissingPeerRecoveryTime = Time.time;
         string remoteSignatureText = DescribeExpectedRemotePlayers(snapshot);
         VoiceDiagnostics.Log("transport.peer-recovery",
-            $"backend={_activeBackend} reason=missing-peer remotePlayers={remotePlayers} peers={mappedPeers} rawPeers={_voiceBackend.PeerCount} " +
+            $"backend={_activeBackend} reason=missing-peer remotePlayers={remotePlayers} peers={mappedPeers} open={openPeers} rawPeers={_voiceBackend.PeerCount} " +
             $"mode={(collapsed ? "global" : "targeted")} attempt={(collapsed ? _globalRebuildAttempts + 1 : _missingPeerRecoveryAttempts + 1)}/{MissingPeerRecoveryMaxAttempts} healthyPeak={_lastHealthyMappedPeers} backoffSec={backoff:0.0} " +
             $"room={_activeRoomCode ?? "unknown"} region={_activeRegion ?? "unknown"} " +
             $"liveClients=[{remoteSignatureText}]");
@@ -794,7 +794,7 @@ public class VoiceChatRoom
                     $"reason=permanent-shortfall liveClients=[{remoteSignatureText}]");
             }
         }
-        _lastRecoveryMappedPeers = openPeers;
+        _lastRecoveryOpenPeers = openPeers;
         _lastRecoveryRemoteSignature = remoteSignature;
     }
 
@@ -1148,7 +1148,7 @@ public class VoiceChatRoom
     {
         _missingPeerRecoveryAttempts = 0;
         _globalRebuildAttempts = 0;
-        _lastRecoveryMappedPeers = -1;
+        _lastRecoveryOpenPeers = -1;
         _lastHealthyMappedPeers = 0;
         _lastRecoveryRemoteSignature = 0;
         _missingPeerRecoveryLatched = false;

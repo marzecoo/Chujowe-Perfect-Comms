@@ -140,6 +140,8 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
         return count;
     }
 
+    // Interstellar has no per-peer RTCDataChannel; relay-stream health is not observable at this layer, so a
+    // mapped peer is the best available "open" signal. (BCL distinguishes mapped-but-unopened; Interstellar cannot.)
     public int CountPeersWithOpenChannel(VoiceGameStateSnapshot snapshot)
         => CountMappedRemotePeers(snapshot);
 
