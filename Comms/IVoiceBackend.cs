@@ -50,6 +50,7 @@ internal interface IVoiceBackend : IDisposable
     bool TrySetRemoteVolume(byte playerId, string playerName, float volume);
     int ResetPeerMappingsNoMute();
     int CountMappedRemotePeers(VoiceGameStateSnapshot snapshot);
+    int CountPeersWithOpenChannel(VoiceGameStateSnapshot snapshot);
 
     // Targeted, non-destructive recovery of ONLY the specific remote clients that are expected but not
     // currently backed by a live/open peer — re-mapping / re-requesting an offer for each missing client

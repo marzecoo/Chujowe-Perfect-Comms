@@ -140,6 +140,9 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
         return count;
     }
 
+    public int CountPeersWithOpenChannel(VoiceGameStateSnapshot snapshot)
+        => CountMappedRemotePeers(snapshot);
+
     public bool TrySetRemoteVolume(byte playerId, string playerName, float volume)
     {
         foreach (var peer in _peers.Values)

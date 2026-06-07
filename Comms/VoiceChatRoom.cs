@@ -664,10 +664,11 @@ public class VoiceChatRoom
             return;
 
         int remotePlayers = CountExpectedRemotePlayers(snapshot);
-        int mappedPeers = _voiceBackend.CountMappedRemotePeers(snapshot);
+        int mappedPeers = _voiceBackend.CountMappedRemotePeers(snapshot);   // telemetry/peak only
+        int openPeers = _voiceBackend.CountPeersWithOpenChannel(snapshot);  // health + collapse decision
         if (mappedPeers > _lastHealthyMappedPeers)
             _lastHealthyMappedPeers = mappedPeers; // diagnostics-only peak; NOT used to judge collapse (see IsMeshCollapse)
-        if (remotePlayers == 0 || mappedPeers >= remotePlayers)
+        if (remotePlayers == 0 || openPeers >= remotePlayers)
         {
             // Fully healthy (or no remotes). Reset the grace timer AND the storm guard so the next genuine
             // shortfall starts a fresh capped/back-off cycle.
@@ -693,7 +694,7 @@ public class VoiceChatRoom
         // actually fires.
         int remoteSignature = HashExpectedRemotePlayers(snapshot);
         bool setChanged = remoteSignature != _lastRecoveryRemoteSignature;
-        bool improved = _lastRecoveryMappedPeers >= 0 && mappedPeers > _lastRecoveryMappedPeers;
+        bool improved = _lastRecoveryMappedPeers >= 0 && openPeers > _lastRecoveryMappedPeers;
         if (setChanged || improved)
         {
             _missingPeerRecoveryLatched = false;
@@ -710,7 +711,7 @@ public class VoiceChatRoom
         // targeted, non-destructive path so already-open peers keep their channels. The threshold is relative
         // to the live roster (NOT a stale healthy peak) so a roster shrink can't be misread as a collapse and
         // re-fire the destructive global Rejoin on a healthy-but-smaller lobby.
-        bool collapsed = IsMeshCollapse(mappedPeers, remotePlayers);
+        bool collapsed = IsMeshCollapse(openPeers, remotePlayers);
 
         // Exponential backoff between attempts. The targeted path and the global/collapse path use SEPARATE
         // counters so a genuine total collapse (mappedPeers == 0, signaling down) is still bounded instead of
@@ -793,7 +794,7 @@ public class VoiceChatRoom
                     $"reason=permanent-shortfall liveClients=[{remoteSignatureText}]");
             }
         }
-        _lastRecoveryMappedPeers = mappedPeers;
+        _lastRecoveryMappedPeers = openPeers;
         _lastRecoveryRemoteSignature = remoteSignature;
     }
 

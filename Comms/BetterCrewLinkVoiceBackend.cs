@@ -275,6 +275,28 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         return count;
     }
 
+    public int CountPeersWithOpenChannel(VoiceGameStateSnapshot snapshot)
+    {
+        var count = 0;
+        lock (_peerSync)
+        {
+            foreach (var peer in _peersBySocket.Values)
+            {
+                if (peer.PlayerId == byte.MaxValue) continue;
+                if (peer.DataChannel?.readyState != RTCDataChannelState.open) continue;
+                foreach (var player in snapshot.Players)
+                {
+                    if (!player.IsLocal && !player.Disconnected && !player.IsDummy && player.PlayerId == peer.PlayerId)
+                    {
+                        count++;
+                        break;
+                    }
+                }
+            }
+        }
+        return count;
+    }
+
     // Targeted, non-destructive recovery (P0.2). For each expected remote player that has a mapped peer
     // whose link is unhealthy (data channel not open while the connection is alive/dead), re-drive ONLY that
     // peer through the existing per-peer recovery (role-aware: initiator recreates+re-offers, answerer
