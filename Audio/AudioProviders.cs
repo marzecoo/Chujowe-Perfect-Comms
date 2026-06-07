@@ -399,9 +399,19 @@ internal class BufferedSampleProvider : ISampleProvider
         if (!_hasPlayedAudio)
             return _prebufferSamples; // startup onset hold UNCHANGED
 
+        // Proactive prefill: pull the live per-peer jitter EVERY release decision so a jittery peer fills the
+        // cushion to its measured depth at talkspurt onset, instead of only ratcheting up AFTER an underrun.
+        RecomputeSetpointLocked();
         int ceiling = ReachableCeilingLocked(); // SAME ceiling as Increase — both move together
-        return Math.Clamp(_adaptiveRecoveryPrebufferSamples,
+        int target = Math.Max(_adaptiveRecoveryPrebufferSamples, _jitterSetpointSamples);
+        return Math.Clamp(target,
             AudioHelpers.PlaybackRecoveryPrebufferSamples, ceiling);
+    }
+
+    // Test-only seam: exercise the proactive prebuffer target under the state lock without a live audio thread.
+    internal int GetPrebufferTargetForTest()
+    {
+        lock (_stateLock) return GetPrebufferTargetLocked();
     }
 
     private void IncreaseRecoveryPrebufferLocked()
