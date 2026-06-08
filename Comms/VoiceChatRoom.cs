@@ -663,12 +663,33 @@ public class VoiceChatRoom
         if (_voiceBackend == null || snapshot == null)
             return;
 
+        // During a round transition (game ends -> EndGame -> lobby reforms) the local player is briefly
+        // unassigned (PlayerId 255, not yet in the snapshot). While that holds the backend cannot re-announce
+        // its identity to the signaling server (JoinAsync requires a real local playerId), so peers that
+        // survived the transition legitimately read as unmapped. Firing recovery in this window misreads the
+        // settling state as a mesh collapse and forces a destructive global rebuild (new socket) right as the
+        // lobby reforms -- the visible "everyone reconnects a few seconds after returning to the lobby" glitch.
+        // Defer recovery (keep the grace fresh) until the local player resolves; the per-frame re-announce in
+        // the backend Update then remaps the surviving peers in place, with no socket churn.
+        if (!snapshot.TryGetLocalPlayer(out _))
+        {
+            _missingPeerRecoveryReadyTime = Time.time + MissingPeerRecoveryGraceSeconds;
+            return;
+        }
+
         int remotePlayers = CountExpectedRemotePlayers(snapshot);
         int mappedPeers = _voiceBackend.CountMappedRemotePeers(snapshot);   // telemetry/peak only
         int openPeers = _voiceBackend.CountPeersWithOpenChannel(snapshot);  // health + collapse decision
+        // Peers whose data channel is physically open even if their clientId isn't mapped to a live snapshot
+        // player yet. On the lobby right after a round, a surviving peer is briefly unmapped (the local roster
+        // hasn't re-listed the remote) while its channel is healthy and audio flows; the mapping self-heals via
+        // the routing's FindTarget. Counting those as healthy here stops recovery from firing a destructive
+        // global rebuild (new socket) ~8s into the lobby. A genuine split-brain (channel NOT open) still fails
+        // this check and recovers, because its channel is closed/never-opened.
+        int openChannelsRaw = _voiceBackend.CountOpenDataChannels();
         if (mappedPeers > _lastHealthyMappedPeers)
             _lastHealthyMappedPeers = mappedPeers; // diagnostics-only peak; NOT used to judge collapse (see IsMeshCollapse)
-        if (remotePlayers == 0 || openPeers >= remotePlayers)
+        if (remotePlayers == 0 || openPeers >= remotePlayers || openChannelsRaw >= remotePlayers)
         {
             // Fully healthy (or no remotes). Reset the grace timer AND the storm guard so the next genuine
             // shortfall starts a fresh capped/back-off cycle.

@@ -139,12 +139,14 @@ internal static class VoiceChatRoomDriver
         bool inEndGame = VoiceSceneState.IsEndGameActive;
         if (inEndGame && !_wasInEndGame)
         {
-            // EndGame transition: rejoin once so the room/backend resets cleanly for the next round.
-            VoiceChatRoom.Current.Rejoin();
+            // Keep the voice mesh alive through EndGame so win-screen reactions stay audible and the next
+            // round needs no reconnect. Do NOT Rejoin here: that tears down every peer connection. Stale
+            // per-round peer mappings are reset non-destructively at the next IntroCutscene end (deferred
+            // remap) and by missing-peer recovery, so no teardown is needed.
             VoiceChatRoom.Current.ForceUpdateLocalProfile();
             _pendingRemap = false;
             _remapCountdown = 0;
-            VoiceDiagnostics.DebugInfo("[VC] EndGame: room rejoined.");
+            VoiceDiagnostics.DebugInfo("[VC] EndGame: voice mesh kept alive.");
         }
         _wasInEndGame = inEndGame;
 

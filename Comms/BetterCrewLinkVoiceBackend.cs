@@ -305,6 +305,19 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         return count;
     }
 
+    // Peers with a physically-open data channel, ignoring clientId->player mapping. Lets the room tell a
+    // healthy-but-not-yet-remapped mesh (round boundary; audio still flowing) apart from a real collapse.
+    public int CountOpenDataChannels()
+    {
+        var count = 0;
+        lock (_peerSync)
+        {
+            foreach (var peer in _peersBySocket.Values)
+                if (peer.DataChannel?.readyState == RTCDataChannelState.open) count++;
+        }
+        return count;
+    }
+
     // Targeted, non-destructive recovery (P0.2). For each expected remote player that has a mapped peer
     // whose link is unhealthy (data channel not open while the connection is alive/dead), re-drive ONLY that
     // peer through the existing per-peer recovery (role-aware: initiator recreates+re-offers, answerer
@@ -1045,7 +1058,9 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
                 ApplySavedVolume(peer);
 
             VoiceProximityResult result;
-            if (VoiceSceneState.IsLobbyVoicePhase(snapshot.Phase))
+            if (snapshot.Phase == VoiceGamePhase.EndGame)
+                result = VoiceProximityCalculator.CalculateEndGame();
+            else if (VoiceSceneState.IsLobbyVoicePhase(snapshot.Phase))
                 result = VoiceProximityCalculator.CalculateLobby(target, listenerPos);
             else if (VoiceSceneState.IsMeetingVoicePhase(snapshot.Phase))
                 result = VoiceProximityCalculator.CalculateMeeting(localPlayer, target, peer.RadioActive, snapshot.Phase, peer.RadioChannel);

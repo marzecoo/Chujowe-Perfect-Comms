@@ -145,6 +145,9 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
     public int CountPeersWithOpenChannel(VoiceGameStateSnapshot snapshot)
         => CountMappedRemotePeers(snapshot);
 
+    // No observable per-peer data channel; the connected peer count is the best "physically alive" signal.
+    public int CountOpenDataChannels() => _peers.Count;
+
     public bool TrySetRemoteVolume(byte playerId, string playerName, float volume)
     {
         foreach (var peer in _peers.Values)
@@ -859,7 +862,9 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
                 ApplySavedVolume(peer);
 
             VoiceProximityResult result;
-            if (VoiceSceneState.IsLobbyVoicePhase(snapshot.Phase))
+            if (snapshot.Phase == VoiceGamePhase.EndGame)
+                result = VoiceProximityCalculator.CalculateEndGame();
+            else if (VoiceSceneState.IsLobbyVoicePhase(snapshot.Phase))
                 result = VoiceProximityCalculator.CalculateLobby(target, listenerPos);
             else if (VoiceSceneState.IsMeetingVoicePhase(snapshot.Phase))
                 result = VoiceProximityCalculator.CalculateMeeting(localPlayer, target, peer.RadioActive, snapshot.Phase, peer.RadioChannel);

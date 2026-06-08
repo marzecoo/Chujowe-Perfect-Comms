@@ -78,6 +78,7 @@ internal class VCManager : MonoBehaviour
                 SafeUpdateHud();
                 VoiceFrameProfiler.End("hud", hudTicks);
                 VoiceChatRoomDriver.Update();
+                PingTrackerPatch.RenderEndGameOverlay();
                 long pubTicks = VoiceFrameProfiler.Begin();
                 VoiceLobbyRegistryPublisher.Update();
                 VoiceFrameProfiler.End("publisher", pubTicks);

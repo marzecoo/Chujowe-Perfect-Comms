@@ -111,6 +111,9 @@ public static class PingTrackerPatch
     private static readonly Dictionary<byte, SpeakerSlot> _slots = new();
     private static readonly HashSet<byte> _activeSpeakerIds = new();
     private static readonly Dictionary<byte, float> _activeSpeakerLevels = new();
+    // Voice-profile names of the current speakers, used to label the end-game avatars where there is no live
+    // PlayerControl to read a name from.
+    private static readonly Dictionary<byte, string> _activeSpeakerNames = new();
     private static readonly List<byte> _fadedSlotIds = new();
     // Per-frame O(1) player lookup, rebuilt once per Postfix from a single AllPlayerControls pass.
     private static readonly Dictionary<byte, PlayerControl> _playerLookup = new();
@@ -188,7 +191,21 @@ public static class PingTrackerPatch
     static void Postfix(PingTracker __instance)
     {
         if (__instance?.text == null) return;
+        RenderOverlay(__instance);
+    }
 
+    // Drives the speaking-bar overlay on the end-game results screen, where no PingTracker ticks (its Update
+    // postfix never fires) and the in-game HUD is gone. Called per-frame from VCManager while EndGameManager is
+    // active so win-screen reactions show who is talking. Self-gates to the EndGame phase; cheap no-op otherwise.
+    internal static void RenderEndGameOverlay()
+    {
+        if (!VoiceSceneState.IsEndGameActive || Camera.main == null) return;
+        try { RenderOverlay(null); }
+        catch (System.Exception ex) { LogOverlayError("EndGame overlay", ex); }
+    }
+
+    private static void RenderOverlay(PingTracker? __instance)
+    {
         long overlayTicks = VoiceFrameProfiler.Begin();
         long ensureBarTicks = VoiceFrameProfiler.Begin();
         EnsureBar(__instance);
@@ -210,6 +227,7 @@ public static class PingTrackerPatch
             var overlay = VoiceOverlayState.Current(room);
             _activeSpeakerIds.Clear();
             _activeSpeakerLevels.Clear();
+            _activeSpeakerNames.Clear();
 
             foreach (var remote in overlay.RemotePlayers)
             {
@@ -217,6 +235,7 @@ public static class PingTrackerPatch
                 {
                     _activeSpeakerIds.Add(remote.PlayerId);
                     _activeSpeakerLevels[remote.PlayerId] = remote.Level;
+                    _activeSpeakerNames[remote.PlayerId] = remote.PlayerName;
                 }
             }
 
@@ -294,7 +313,7 @@ public static class PingTrackerPatch
                         else if (!slot.CosmeticsComplete && player != null && CrewmateAvatarRenderer.OutfitCosmeticsResolved(player))
                         {
                             // The player's cosmetics finished loading — attach them in place (no destroy/recreate pop).
-                            CrewmateAvatarRenderer.TryRefreshOutfitCosmetics(slot.IconGO, player);
+                            CrewmateAvatarRenderer.TryRefreshOutfitCosmetics(slot.IconGO, player, id);
                             slot.CosmeticsComplete = true;
                             _layoutDirty = true;
                             _sortingDirty = true;
@@ -334,7 +353,7 @@ public static class PingTrackerPatch
         VoiceDiagnostics.DebugError($"[VC] {where} failed: {ex.Message}");
     }
 
-    private static void EnsureBar(PingTracker template)
+    private static void EnsureBar(PingTracker? template)
     {
         if (_barRoot != null) return;
 
@@ -390,6 +409,16 @@ public static class PingTrackerPatch
         var hud = HudManager.Instance;
         if (hud != null)
             return hud.transform.parent != null ? hud.transform.parent : hud.transform;
+
+        // End-game results screen: no HudManager/MeetingHud/PingTracker. Anchor to the end-game UI (or the main
+        // camera) so the speaking bar still has a parent to render under.
+        if (VoiceSceneState.IsEndGameActive)
+        {
+            var endGameManager = Object.FindObjectOfType<EndGameManager>();
+            if (endGameManager != null) return endGameManager.transform;
+            var endGameCamera = Camera.main;
+            if (endGameCamera != null) return endGameCamera.transform;
+        }
 
         if (template?.transform.parent != null) return template.transform.parent;
         if (template != null) return template.transform;
@@ -662,6 +691,9 @@ public static class PingTrackerPatch
         tmp.rectTransform.sizeDelta = new Vector2(1.4f, 0.45f);
         slot.LabelTMP = tmp;
         UpdateSlotLabel(slot, player);
+        // End-game (no live PlayerControl): label from the cached voice profile name so it isn't blank.
+        if (player == null && _activeSpeakerNames.TryGetValue(playerId, out var fallbackName) && !string.IsNullOrWhiteSpace(fallbackName))
+            slot.LabelTMP.text = fallbackName;
         VCOverlayCamera.EnsureOnTop(labelGO);
         _slots[playerId] = slot;
         _layoutDirty = true;
@@ -685,6 +717,19 @@ public static class PingTrackerPatch
             slot.IconGO = iconGO;
             slot.Fingerprint = GetFingerprint(playerId);
             slot.CosmeticsComplete = CrewmateAvatarRenderer.OutfitCosmeticsResolved(player);
+            slot.PendingFingerprint = default;
+            _layoutDirty = true;
+            _sortingDirty = true;
+            created = true;
+        }
+        // End-game results screen: the player has no live PlayerControl, so rebuild the avatar from the outfit
+        // cached while in-game (body + real cosmetics). Falls through to a ring + name slot if never cached.
+        else if (player == null && CrewmateAvatarRenderer.TryCreateFromCache(playerId, _barRoot.transform, out var cachedIcon))
+        {
+            if (slot.IconGO != null) Object.Destroy(slot.IconGO);
+            slot.IconGO = cachedIcon;
+            slot.Fingerprint = GetFingerprint(playerId);
+            slot.CosmeticsComplete = true;
             slot.PendingFingerprint = default;
             _layoutDirty = true;
             _sortingDirty = true;

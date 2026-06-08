@@ -39,6 +39,13 @@ internal static class VoiceProximityCalculator
             volume > 0f, VoiceProximityReason.Lobby, 1f);
     }
 
+    // End-game summary screen: the Among Us world (player controls, positions) is gone, so the snapshot has no
+    // players and proximity cannot be computed -- CalculateLobby would mute every peer (Unmapped / NoListener).
+    // EndGame is already a global voice phase, so treat it like a post-game group call: every connected peer is
+    // heard at full volume, centered, letting players react to the result (e.g. a jester win) together.
+    public static VoiceProximityResult CalculateEndGame()
+        => new(1f, 0f, 0f, 0f, VoiceAudioFilterMode.None, true, VoiceProximityReason.Lobby, 1f);
+
     public static VoiceProximityResult CalculateMeeting(
         VoicePlayerSnapshot? localPlayer,
         VoicePlayerSnapshot? targetPlayer,
