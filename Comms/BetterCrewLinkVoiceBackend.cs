@@ -1817,6 +1817,17 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         return connection == null || IsDeadConnectionState(connection.connectionState);
     }
 
+    internal static bool RemoteConnectionWasRecreated(string previousUfrag, string incomingUfrag)
+        => !string.IsNullOrEmpty(previousUfrag) && !string.IsNullOrEmpty(incomingUfrag)
+           && !string.Equals(previousUfrag, incomingUfrag, StringComparison.Ordinal);
+
+    internal static string ExtractIceUfrag(string? sdp)
+    {
+        if (string.IsNullOrEmpty(sdp)) return string.Empty;
+        var m = System.Text.RegularExpressions.Regex.Match(sdp, @"a=ice-ufrag:(\S+)");
+        return m.Success ? m.Groups[1].Value : string.Empty;
+    }
+
     // Decides whether an incoming OFFER must be answered on a freshly-rebuilt connection. A second offer for a
     // peer only happens when the initiator RE-created its connection and re-offered, so any offer that arrives
     // while our connection has left 'new' AND we have no open data channel is such a re-offer — answer it on a
@@ -2006,7 +2017,15 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             // previously cleared. OfferRequiresRebuild covers that 'connected/connecting-but-no-channel' case
             // in addition to the dead states, while leaving a true first-contact offer (connection 'new') and
             // a healthy already-open channel untouched.
-            if (OfferRequiresRebuild(peer.Connection.connectionState, peer.DataChannel?.readyState))
+            // RemoteConnectionWasRecreated: if the remote ICE ufrag changed, the remote RECREATED its
+            // RTCPeerConnection — our open channel is now stale (the open answerer split-brain sub-case).
+            string incomingUfrag = ExtractIceUfrag(signal.Sdp);
+            string prevUfrag;
+            lock (_peerSync) { prevUfrag = peer.LastRemoteIceUfrag; }
+            bool ufragDriven = RemoteConnectionWasRecreated(prevUfrag, incomingUfrag);
+            if (ufragDriven)
+                VoiceDiagnostics.Log("bcl.offer.rebuild", $"reason=ufrag-changed socket={fromSocketId}");
+            if (OfferRequiresRebuild(peer.Connection.connectionState, peer.DataChannel?.readyState) || ufragDriven)
             {
                 RecreatePeerConnection(fromSocketId);
                 PeerConnection? rebuilt = null;
@@ -2028,6 +2047,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             lock (_peerSync)
             {
                 if (_disposed || !ReferenceEquals(peer.Connection, answerConn)) return; // swapped/closed underneath us
+                peer.LastRemoteIceUfrag = incomingUfrag;
             }
             var answerJson = JsonSerializer.Serialize(new { type = "answer", sdp = answer.sdp });
             await _socket.EmitAsync("signal", new object[] { new { to = fromSocketId, data = answerJson } });
@@ -2978,6 +2998,9 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         public int PlaybackGroupId { get; }
         public RTCPeerConnection? Connection { get; set; }
         public RTCDataChannel? DataChannel { get; set; }
+        // Last remote offer's ICE ufrag. A CHANGED ufrag on a new offer means the remote recreated its
+        // connection, so our 'open' channel is stale (the open-answerer split-brain sub-case) and must rebuild.
+        public string LastRemoteIceUfrag { get; set; } = string.Empty;
         // Set when the initiator creates the channel; lets it detect a wedged 'connecting' handshake.
         public DateTime OfferStartedUtc { get; set; } = DateTime.MinValue;
         // Last recovery rebuild time; debounces re-offer storms.
