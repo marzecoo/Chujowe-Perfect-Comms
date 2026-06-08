@@ -126,6 +126,10 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
     private int _txSamplesSinceStats;
     private readonly float[] _captureFrameBuffer = new float[AudioHelpers.FrameSize];
     private int _captureFrameSamples;
+    // Bumped under _captureFrameSync on every capture stop/restart. A WaveInEvent callback that was already
+    // dispatched before teardown snapshots the epoch on entry and is dropped once it acquires the lock, so a
+    // stale device's frame can never push samples into state the next device is about to reuse.
+    private int _captureEpoch;
 
     private SocketIOClient.SocketIO? _socket;
 #if WINDOWS
@@ -136,6 +140,10 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
     private bool _captureDesiredRunning;
     private string _captureDesiredReason = "init";
     private int _captureTransitionVersion;
+    private static readonly TimeSpan SpeakerTopologyPollInterval = TimeSpan.FromSeconds(3);
+    private DateTime _speakerTopologyNextPollUtc = DateTime.MinValue;
+    private string _speakerTopologySignature = string.Empty;
+    private string _lastSpeakerDeviceName = string.Empty;
 #endif
 #if ANDROID
     private AndroidMicrophone? _androidMicrophone;
@@ -569,11 +577,16 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             try { waveIn.Dispose(); } catch { }
         }
         _microphoneReady = false;
+        // Reset the native RNNoise preprocessor INSIDE the capture lock: a WaveInEvent callback can still be
+        // mid-flight in ProcessMicrophoneFrameLocked -> TryApplyNoiseSuppression (native ProcessFrame on the
+        // same state pointer Reset destroys). Holding _captureFrameSync makes the two mutually exclusive and
+        // closes the use-after-free that crashed the game on fast device/mic switches.
         lock (_captureFrameSync)
         {
+            _captureEpoch++;
             _captureFrameSamples = 0;
+            _micPreprocessor.Reset();
         }
-        _micPreprocessor.Reset();
         _localLevel = 0f;
         _localSpeaking = false;
         if (hadMic)
@@ -636,6 +649,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             if (DeviceNamesMatch(requested, productName))
                 return i;
         }
+        VoiceDiagnostics.Log("bcl.mic", $"ready=false reason=device-miss requested=\"{requested}\" fallback=mapper waveInDevices=\"{DescribeWaveInDevices()}\"");
         return -1;
     }
 
@@ -687,6 +701,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
                 if (DeviceNamesMatch(requested, productName))
                     return i;
             }
+            VoiceDiagnostics.Log("bcl.speaker", $"ready=false reason=device-miss requested=\"{requested}\" fallback=mapper outputDevices=\"{DescribeWaveOutDevices()}\"");
         }
 
         return -1;
@@ -758,9 +773,10 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         _microphoneReady = false;
         lock (_captureFrameSync)
         {
+            _captureEpoch++;
             _captureFrameSamples = 0;
+            _micPreprocessor.Reset();
         }
-        _micPreprocessor.Reset();
         _localLevel = 0f;
         _localSpeaking = false;
         if (hadMic)
@@ -780,7 +796,21 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         }
         if (samples <= 0) return;
         Interlocked.Add(ref _micSamples, samples);
-        ProcessMicrophoneCaptureSamples(buffer, samples);
+
+        var epoch = Volatile.Read(ref _captureEpoch);
+        lock (_captureFrameSync)
+        {
+            if (epoch != _captureEpoch) return;
+            try
+            {
+                ProcessMicrophoneCaptureSamples(buffer, samples);
+            }
+            catch (Exception ex)
+            {
+                Interlocked.Increment(ref _micEncodeFailures);
+                VoiceDiagnostics.Log("bcl.mic.capture_error", $"source=android error=\"{ex.Message}\"");
+            }
+        }
     }
 #endif
 
@@ -795,6 +825,9 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
 #if WINDOWS
         try
         {
+            _lastSpeakerDeviceName = deviceName ?? string.Empty;
+            _speakerTopologySignature = DescribeWaveOutDevices();
+            _speakerTopologyNextPollUtc = DateTime.UtcNow + SpeakerTopologyPollInterval;
             _waveOut?.Stop();
             _waveOut?.Dispose();
             _waveOut = null;
@@ -839,6 +872,31 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
 #endif
 #endif
     }
+
+#if WINDOWS
+    // WinMM WaveOutEvent binds to the OS default output only at open time and never follows later default
+    // changes (CoreAudio/WASAPI notifications are intentionally absent from this build). When the user is on
+    // the "Default" speaker (empty device name) and the output-device topology changes — e.g. a headset is
+    // (un)plugged, which is also when Windows flips the default — reopen so audio follows. A pinned device is
+    // left untouched. This is the "I had to switch device to hear them" symptom on the speaker side.
+    private void MaybeFollowDefaultSpeaker()
+    {
+        if (_disposed || !_speakerReady) return;
+        if (!string.IsNullOrWhiteSpace(_lastSpeakerDeviceName)) return;
+
+        var now = DateTime.UtcNow;
+        if (now < _speakerTopologyNextPollUtc) return;
+        _speakerTopologyNextPollUtc = now + SpeakerTopologyPollInterval;
+
+        string signature;
+        try { signature = DescribeWaveOutDevices(); }
+        catch { return; }
+        if (signature == _speakerTopologySignature) return;
+
+        VoiceDiagnostics.Log("bcl.speaker", $"ready={_speakerReady} reason=default-follow oldDevices=\"{_speakerTopologySignature}\" newDevices=\"{signature}\"");
+        SetSpeaker(_lastSpeakerDeviceName); // re-resolves WAVE_MAPPER against the new default; refreshes signature
+    }
+#endif
 
     public void UpdateProfile(byte playerId, string playerName)
     {
@@ -1007,6 +1065,9 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         }
         VoiceFrameProfiler.End("room.backend.proximity", proxTicks);
 
+#if WINDOWS
+        MaybeFollowDefaultSpeaker();
+#endif
         MaybeLogStats(snapshot, "ok");
     }
 
@@ -1023,7 +1084,8 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         try { _androidSpeaker?.Dispose(); } catch { }
         _androidSpeaker = null;
 #endif
-        _micPreprocessor.Dispose();
+        lock (_captureFrameSync)
+            _micPreprocessor.Dispose();
         var socket = _socket;
         _socket = null;
         if (socket != null)
@@ -2296,12 +2358,30 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             return;
         }
         if (recordedBytes <= 1) return;
-        var format = (sender as IWaveIn)?.WaveFormat ?? _waveIn?.WaveFormat;
-        if (format == null) return;
-        var samples = ConvertMicrophoneBufferToMonoFloat(buffer, recordedBytes, format, out var floatPcm);
-        if (samples <= 0) return;
-        Interlocked.Add(ref _micSamples, samples);
-        ProcessMicrophoneCaptureSamples(floatPcm, samples);
+
+        // Serialize the whole capture path (buffer conversion writes the shared _micConvertScratch, which is
+        // reallocated lock-free) under _captureFrameSync so overlapping callbacks during a fast device switch
+        // can't tear it. Snapshot the epoch first and drop the frame if a teardown happened in between. Never
+        // let an exception escape onto NAudio's callback thread — that would crash the process.
+        var epoch = Volatile.Read(ref _captureEpoch);
+        lock (_captureFrameSync)
+        {
+            if (epoch != _captureEpoch) return;
+            try
+            {
+                var format = (sender as IWaveIn)?.WaveFormat ?? _waveIn?.WaveFormat;
+                if (format == null) return;
+                var samples = ConvertMicrophoneBufferToMonoFloat(buffer, recordedBytes, format, out var floatPcm);
+                if (samples <= 0) return;
+                Interlocked.Add(ref _micSamples, samples);
+                ProcessMicrophoneCaptureSamples(floatPcm, samples);
+            }
+            catch (Exception ex)
+            {
+                Interlocked.Increment(ref _micEncodeFailures);
+                VoiceDiagnostics.Log("bcl.mic.capture_error", $"source=callback error=\"{ex.Message}\"");
+            }
+        }
     }
 #endif
 
