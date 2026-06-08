@@ -479,6 +479,10 @@ public class VoiceChatRoom
         VoiceDiagnostics.Log("voice.refresh.applied",
             $"{sender.ToDiagnosticFields()} nonce={nonce} trigger={trigger} backend={_activeBackend} room={LogSafe(_activeRoomCode ?? "unknown")} region={LogSafe(_activeRegion ?? "unknown")} peers={_voiceBackend?.PeerCount ?? 0}");
 
+        VoiceChatHudState.ShowToast(trigger == "rpc"
+            ? "Host refreshed voice connections"
+            : "You refreshed voice for everyone");
+
         // Rejoin() begins with ClearVoiceUiForLifecycleReset, so the UI teardown runs exactly once.
         StartTransitionTrace($"host voice refresh: {trigger}", snapshot);
         Rejoin("host voice refresh");
@@ -489,6 +493,8 @@ public class VoiceChatRoom
         var snapshot = CurrentSnapshot;
         VoiceDiagnostics.Log("voice.refresh.local.applied",
             $"trigger={trigger} backend={_activeBackend} room={LogSafe(_activeRoomCode ?? "unknown")} region={LogSafe(_activeRegion ?? "unknown")} peers={_voiceBackend?.PeerCount ?? 0}");
+
+        VoiceChatHudState.ShowToast("Voice connection refreshed");
 
         // Rejoin() begins with ClearVoiceUiForLifecycleReset, so the UI teardown runs exactly once.
         StartTransitionTrace($"local voice refresh: {trigger}", snapshot);

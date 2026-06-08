@@ -61,6 +61,14 @@ public static class VoiceChatHudState
     private static Renderer[]?    _spkTooltipRenderers;
     private static TextMeshPro[]? _micTooltipTmps;
     private static TextMeshPro[]? _spkTooltipTmps;
+    private static GameObject?    _toastObj;
+    private static TextMeshPro?   _toastTmp;
+    private static Renderer[]?    _toastRenderers;
+    private static TextMeshPro[]? _toastTmps;
+    private static string _toastMessage = "";
+    private static float _toastExpiry;
+    private const float ToastDurationSeconds = 4f;
+    private const float ToastViewportY = 0.84f;
     private static bool _micMuted;
     private static bool _teamRadioHeld;
     private static VoiceTeamRadioChannel _teamRadioChannel = VoiceTeamRadioChannel.None;
@@ -74,6 +82,13 @@ public static class VoiceChatHudState
     public static bool IsImpostorRadio => IsTeamRadio;
     public static bool IsSpeakerMuted => _speakerMuted;
     internal static bool IsLocalTransmitBlocked => TryGetLocalTransmitBlockReason(out _);
+
+    internal static void ShowToast(string message)
+    {
+        _toastMessage = message ?? "";
+        _toastExpiry = Time.time + ToastDurationSeconds;
+    }
+
     internal static void Init()
     {
         if (_initialized) return;
@@ -84,6 +99,7 @@ public static class VoiceChatHudState
             {
                 DestroyButtons();
                 DestroyTooltips();
+                DestroyToast();
             });
 
         var settings = LocalSettingsTabSingleton<VoiceChatLocalSettings>.Instance;
@@ -274,6 +290,7 @@ public static class VoiceChatHudState
         long vTicks = VoiceFrameProfiler.Begin();
         RefreshButtonVisuals();
         VoiceFrameProfiler.End("hud.visuals", vTicks);
+        UpdateToast(hud);
     }
 
     private static void EnsureHudButtons(HudManager hud)
@@ -669,6 +686,71 @@ public static class VoiceChatHudState
         _micTooltipRenderers = null; _spkTooltipRenderers = null;
         _micTooltipTmps = null; _spkTooltipTmps = null;
     }
+
+    // Transient on-screen banner shown on the VC overlay layer (same surface as the mic/speaker
+    // icons), so it stays visible above the meeting HUD. Lazily created in the per-frame UpdateHud
+    // path, mirroring EnsureHudButtons/EnsureTooltips.
+    private static void UpdateToast(HudManager hud)
+    {
+        bool active = !string.IsNullOrEmpty(_toastMessage) && Time.time < _toastExpiry;
+        if (!active)
+        {
+            if (_toastObj != null && _toastObj.activeSelf) _toastObj.SetActive(false);
+            return;
+        }
+
+        var root = ResolveHudRoot(hud);
+        if (_toastObj == null)
+            _toastObj = CreateToastObject(root, out _toastTmp);
+        ReparentToRoot(_toastObj, root);
+
+        if (_toastTmp != null && _toastTmp.text != _toastMessage)
+            _toastTmp.text = _toastMessage;
+
+        PositionToast();
+        KeepTooltipOnTop(_toastObj, ref _toastRenderers, ref _toastTmps);
+        if (!_toastObj.activeSelf) _toastObj.SetActive(true);
+    }
+
+    private static void PositionToast()
+    {
+        if (_toastObj == null) return;
+        var cam = Camera.main;
+        if (cam == null) return;
+        var world = cam.ViewportToWorldPoint(new Vector3(0.5f, ToastViewportY, ButtonViewportDepth));
+        _toastObj.transform.position = new Vector3(world.x, world.y, world.z - 1f);
+    }
+
+    private static GameObject CreateToastObject(Transform root, out TextMeshPro tmp)
+    {
+        var go = new GameObject("VC_Toast");
+        go.transform.SetParent(root, false);
+        go.transform.localPosition = new Vector3(0f, 0f, -80f);
+
+        var textGo = new GameObject("Text");
+        textGo.transform.SetParent(go.transform, false);
+        textGo.transform.localPosition = Vector3.zero;
+        tmp = textGo.AddComponent<TextMeshPro>();
+        tmp.fontSize = 2.2f;
+        tmp.fontStyle = FontStyles.Bold;
+        tmp.color = new Color(1f, 0.85f, 0.4f);
+        tmp.alignment = TextAlignmentOptions.Center;
+        tmp.enableWordWrapping = false;
+        tmp.sortingLayerID = SortingLayer.NameToID(VCSorting.Layer);
+        tmp.sortingOrder = TooltipSortOrder;
+        tmp.rectTransform.sizeDelta = new Vector2(10f, 1.6f);
+        go.SetActive(false);
+        return go;
+    }
+
+    private static void DestroyToast()
+    {
+        if (_toastObj != null) { Object.Destroy(_toastObj); _toastObj = null; }
+        _toastTmp = null;
+        _toastRenderers = null;
+        _toastTmps = null;
+    }
+
     private static GameObject CreateTooltipObject(Transform root, out TextMeshPro tmp)
     {
         var go = new GameObject("VC_Tooltip");
