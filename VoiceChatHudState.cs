@@ -549,6 +549,17 @@ public static class VoiceChatHudState
     internal static bool IsPushToTalkMode()
         => LocalSettingsTabSingleton<VoiceChatLocalSettings>.Instance?.MicMode.Value == VoiceMicMode.PushToTalk;
 
+    internal static void ToggleMicMode()
+    {
+        var settings = LocalSettingsTabSingleton<VoiceChatLocalSettings>.Instance;
+        if (settings == null) return;
+        var next = settings.MicMode.Value == VoiceMicMode.PushToTalk ? VoiceMicMode.OpenMic : VoiceMicMode.PushToTalk;
+        settings.MicMode.Value = next;
+        ApplyMicState();
+        RefreshButtonVisuals();
+        ShowToast(next == VoiceMicMode.PushToTalk ? "Push To Talk" : "Open Mic");
+    }
+
     private static bool IsManualMuteActive()
         => _micMuted && !IsPushToTalkMode();
 

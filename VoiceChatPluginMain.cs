@@ -27,7 +27,7 @@ namespace VoiceChatPlugin;
 public class VoiceChatPluginMain : BasePlugin, IMiraPlugin
 {
     public const string Id = "com.edgetel.perfectcomms";
-    public const string Version = "2.1.5";
+    public const string Version = "2.1.6";
     public static ManualLogSource Logger { get; private set; } = null!;
     public Harmony Harmony { get; } = new(Id);
     public string OptionsTitleText => "Perfect Comms";

@@ -20,6 +20,9 @@ public static class VoiceChatKeybinds
     public static MiraKeybind PushToTalk { get; } =
         new("Push To Talk (Hold)", KeyboardKeyCode.C);
 
+    public static MiraKeybind ToggleMicMode { get; } =
+        new("Toggle Open Mic / Push To Talk", KeyboardKeyCode.None);
+
     public static MiraKeybind ToggleSpeaker { get; } =
         new("Toggle Speaker", KeyboardKeyCode.N);
 
