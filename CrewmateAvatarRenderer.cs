@@ -346,6 +346,14 @@ internal static class CrewmateAvatarRenderer
         return (Color)Palette.PlayerColors[ClampColorId(GetPlayerColorId(pc))];
     }
 
+    internal static Sprite? GetBodySpriteFor(PlayerControl? pc)
+    {
+        if (pc?.Data == null) return null;
+        if (IsConcealed(pc)) return GetConcealedBaseSprite();
+        int colorId = ClampColorId(GetPlayerColorId(pc));
+        return IsRainbowColorIdCached(colorId) ? GetRainbowBaseSprite(0) : GetBaseSprite(colorId);
+    }
+
     // True when this speaker picked the animated "Rainbow" color and is NOT concealed — i.e. GetPaletteColor returns
     // a time-varying color for them. The speaking bar caches a slot's color and only refreshes it on a fingerprint
     // change (which never fires for a fixed Rainbow color id), so it consults this to recompute rainbow rings live.
