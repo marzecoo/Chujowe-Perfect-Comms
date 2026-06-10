@@ -967,8 +967,11 @@ public static class VoiceChatHudState
 
     private static void ClearButtonBG(GameObject obj)
     {
-        foreach (var sr in obj.GetComponentsInChildren<SpriteRenderer>())
+        foreach (var sr in obj.GetComponentsInChildren<SpriteRenderer>(true))
+        {
+            sr.sprite = null;
             sr.color = Color.clear;
+        }
     }
 
     private static SpriteRenderer CreateIconChild(GameObject parent, string resource)
