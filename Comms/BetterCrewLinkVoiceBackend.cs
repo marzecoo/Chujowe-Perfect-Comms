@@ -2750,6 +2750,8 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         {
             if (++_micChannelSwitchStreak >= MicChannelSwitchStreakCallbacks)
             {
+                VoiceDiagnostics.Log("bcl.mic.channel-latch",
+                    $"from={_latchedMicChannel} to={bestChannel} energy={bestEnergy:0.000000} latchedEnergy={energies[_latchedMicChannel]:0.000000}");
                 _latchedMicChannel = bestChannel;
                 _micChannelSwitchStreak = 0;
             }
@@ -3252,7 +3254,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             $"micCallbacks={Volatile.Read(ref _micCallbacks)} micBytes={Volatile.Read(ref _micBytes)} micSamples={Volatile.Read(ref _micSamples)} micWindowSamples={micWindowSamples} micPeak={micPeak:0.000000} micRms={micRms:0.000000} micCrest={micCrest:0.00} micNonZeroSamples={micNonZeroSamples} micSilentCallbacks={micSilentCallbacks} micNearClipSamples={micNearClipSamples} micClipPct={micClipPct:0.000} micZeroCrossRate={micZeroCrossRate:0.0000} " +
             $"micMutedDrops={Volatile.Read(ref _micMutedDrops)} micEncodeFailures={Volatile.Read(ref _micEncodeFailures)} micEncodedFrames={Volatile.Read(ref _micEncodedFrames)} micNoOpenChannelDrops={Volatile.Read(ref _micNoOpenChannelDrops)} audioDecodeFailures={Volatile.Read(ref _audioDecodeFailures)} " +
             $"noiseGate={noiseGateThreshold:0.000000} vadThreshold={vadThreshold:0.000000} gateReason={_lastGateReason} gatePeak={_lastGatePeak:0.000000} gateRms={_lastGateRms:0.000000} gateThreshold={_lastGateThreshold:0.000000} txGain={_lastTransmitGain:0.000} txPeak={_lastTransmitPeak:0.000000} txPeakMax={txPeakMax:0.000000} txRms={txRms:0.000000} txSamples={txSamples} opusBytesAvg={opusAvgBytes:0.0} opusBytesMin={opusMinBytes} opusBytesMax={opusMaxBytes} " +
-            $"syntheticTone={_captureOptions.SyntheticMicToneEnabled} noiseSuppression={_captureOptions.NoiseSuppressionEnabled} {rnnoiseSummary} syntheticFrames={Volatile.Read(ref _syntheticFrames)} capture={DescribeCaptureMode()} calibration={_captureOptions.MicCalibrationDiagnostics} sensitivity={_captureOptions.MicSensitivity:0.00} micReady={_microphoneReady} speakerReady={_speakerReady}");
+            $"syntheticTone={_captureOptions.SyntheticMicToneEnabled} noiseSuppression={_captureOptions.NoiseSuppressionEnabled} {rnnoiseSummary} syntheticFrames={Volatile.Read(ref _syntheticFrames)} capture={DescribeCaptureMode()} calibration={_captureOptions.MicCalibrationDiagnostics} sensitivity={_captureOptions.MicSensitivity:0.00} micReady={_microphoneReady} speakerReady={_speakerReady} plp={_adaptedPacketLossPercent} bitrate={_adaptedBitrate}");
         if ((_captureOptions.NoiseSuppressionEnabled || rnnoise.Attempts > 0 || rnnoise.UnavailableFrames > 0)
             && now - _lastRnNoiseStatsLogUtc >= RnNoiseStatsLogInterval)
         {
@@ -3488,6 +3490,8 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         {
             Volatile.Write(ref _reportedLossPermille, lossPermille);
             Interlocked.Exchange(ref _reportedLossAtTicks, DateTime.UtcNow.Ticks);
+            if (VoiceDiagnostics.IsEnabled)
+                VoiceDiagnostics.Log("bcl.lossreport.rx", $"client={ClientId} permille={lossPermille}");
         }
 
         public int GetFreshLossReportPermille(DateTime nowUtc)
@@ -3516,6 +3520,9 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             try
             {
                 channel.send(BuildLossReportMessage(lossPermille));
+                if (VoiceDiagnostics.IsEnabled)
+                    VoiceDiagnostics.Log("bcl.lossreport.tx",
+                        $"client={ClientId} permille={lossPermille} lostDelta={deltaLost} acceptedDelta={deltaAccepted}");
             }
             catch
             {
@@ -3692,7 +3699,35 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
                 _audibleSamplesSinceStats++;
                 if (!speaking) _audibleSilentSamplesSinceStats++;
             }
+
+            var targetFrames = _jitterBuffer.CurrentTargetDelayFrames;
+            if (targetFrames != _lastLoggedJitterTarget)
+            {
+                if (_lastLoggedJitterTarget > 0 && VoiceDiagnostics.IsEnabled)
+                    VoiceDiagnostics.Log("bcl.jitter.window",
+                        $"client={ClientId} target={targetFrames} prev={_lastLoggedJitterTarget} jitterMs={_jitterBuffer.CurrentJitterSamples * 1000.0 / AudioHelpers.ClockRate:0.0}");
+                _lastLoggedJitterTarget = targetFrames;
+            }
+
+            if (VoiceDiagnostics.IsEnabled && ++_lrDivergenceCheckCounter >= 30)
+            {
+                _lrDivergenceCheckCounter = 0;
+                int leftBuffered = _leftRoute.BufferedSamples;
+                int rightBuffered = _rightRoute.BufferedSamples;
+                if (Math.Abs(leftBuffered - rightBuffered) >= AudioHelpers.FrameSize
+                    && DateTime.UtcNow - _lastLrDivergenceLogUtc >= LrDivergenceLogInterval)
+                {
+                    _lastLrDivergenceLogUtc = DateTime.UtcNow;
+                    VoiceDiagnostics.Log("bcl.lr.divergence",
+                        $"client={ClientId} left={leftBuffered} right={rightBuffered}");
+                }
+            }
         }
+
+        private int _lastLoggedJitterTarget;
+        private int _lrDivergenceCheckCounter;
+        private DateTime _lastLrDivergenceLogUtc = DateTime.MinValue;
+        private static readonly TimeSpan LrDivergenceLogInterval = TimeSpan.FromSeconds(5);
         public PeerDiagnostics ConsumeDiagnostics()
         {
             lock (_sync)
@@ -3809,7 +3844,11 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
 
                 // A capped forced drain can leave tail frames behind; re-arm so they flush instead of stranding.
                 if (frames.Count > 0 && _jitterBuffer.HasBufferedPackets)
+                {
                     ScheduleTailFlushLocked();
+                    if (VoiceDiagnostics.IsEnabled)
+                        VoiceDiagnostics.Log("bcl.audio.tailflush.rearm", $"client={ClientId} drained={frames.Count}");
+                }
 
                 return true;
             }

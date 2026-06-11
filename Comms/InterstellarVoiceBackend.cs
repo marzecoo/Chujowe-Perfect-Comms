@@ -611,6 +611,8 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
         {
             if (++_micChannelSwitchStreak >= MicChannelSwitchStreakCallbacks)
             {
+                VoiceDiagnostics.Log("interstellar.mic.channel-latch",
+                    $"from={_latchedMicChannel} to={bestChannel} energy={bestEnergy:0.000000} latchedEnergy={energies[_latchedMicChannel]:0.000000}");
                 _latchedMicChannel = bestChannel;
                 _micChannelSwitchStreak = 0;
             }

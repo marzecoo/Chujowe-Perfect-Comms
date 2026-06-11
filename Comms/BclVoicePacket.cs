@@ -145,7 +145,7 @@ internal readonly struct BclVoicePlayoutFrame
 
 internal readonly struct BclVoiceJitterWindowStats
 {
-    public BclVoiceJitterWindowStats(int v2Packets, int legacyPackets, int lateDrops, int duplicateDrops, int reorderedPackets, int lostFrames, int plcFrames, int fecFrames, int maxDepth, int currentDepth)
+    public BclVoiceJitterWindowStats(int v2Packets, int legacyPackets, int lateDrops, int duplicateDrops, int reorderedPackets, int lostFrames, int plcFrames, int fecFrames, int maxDepth, int currentDepth, int targetDelayFrames = 0, double jitterMs = 0.0)
     {
         V2Packets = v2Packets;
         LegacyPackets = legacyPackets;
@@ -157,6 +157,8 @@ internal readonly struct BclVoiceJitterWindowStats
         FecFrames = fecFrames;
         MaxDepth = maxDepth;
         CurrentDepth = currentDepth;
+        TargetDelayFrames = targetDelayFrames;
+        JitterMs = jitterMs;
     }
 
     public int V2Packets { get; }
@@ -169,9 +171,11 @@ internal readonly struct BclVoiceJitterWindowStats
     public int FecFrames { get; }
     public int MaxDepth { get; }
     public int CurrentDepth { get; }
+    public int TargetDelayFrames { get; }
+    public double JitterMs { get; }
 
     public string ToCompactString()
-        => $"v2:{V2Packets} legacy:{LegacyPackets} late:{LateDrops} dup:{DuplicateDrops} reorder:{ReorderedPackets} lost:{LostFrames} plc:{PlcFrames} fec:{FecFrames} depth:{CurrentDepth}/{MaxDepth}";
+        => $"v2:{V2Packets} legacy:{LegacyPackets} late:{LateDrops} dup:{DuplicateDrops} reorder:{ReorderedPackets} lost:{LostFrames} plc:{PlcFrames} fec:{FecFrames} depth:{CurrentDepth}/{MaxDepth} target:{TargetDelayFrames} jitterMs:{JitterMs:0.0}";
 }
 
 internal sealed class BclVoiceJitterBuffer
@@ -389,7 +393,7 @@ internal sealed class BclVoiceJitterBuffer
 
     public BclVoiceJitterWindowStats ConsumeStats()
     {
-        var stats = new BclVoiceJitterWindowStats(_v2Packets, _legacyPackets, _lateDrops, _duplicateDrops, _reorderedPackets, _lostFrames, _plcFrames, _fecFrames, _maxDepth, _packets.Count);
+        var stats = new BclVoiceJitterWindowStats(_v2Packets, _legacyPackets, _lateDrops, _duplicateDrops, _reorderedPackets, _lostFrames, _plcFrames, _fecFrames, _maxDepth, _packets.Count, _targetDelayFrames, CurrentJitterSamples * 1000.0 / AudioHelpers.ClockRate);
         _v2Packets = 0;
         _legacyPackets = 0;
         _lateDrops = 0;

@@ -55,6 +55,8 @@ internal class BufferedSampleProvider : ISampleProvider
     private const int DiscontinuityFadeSamples = 240;
     private bool _pendingFadeClear;
     private int _resumeFadeRemaining;
+    private long _fadeClears;
+    private long _resumeFades;
     // Reused scratch for tapering the bridge frame ACROSS emissions (the provider returns the SAME array up to
     // MaxTrailingPlcFrames times). Scaling in place into this buffer keeps the bridge allocation-free while it
     // fades 1.0 -> 0.66 -> 0.33 toward silence instead of plateauing at the provider's ~0.5 gain (buzz).
@@ -191,6 +193,7 @@ internal class BufferedSampleProvider : ISampleProvider
             int discard = _ring.Count + count - _ring.MaxLength;
             _ring.Discard(discard);
             _resumeFadeRemaining = DiscontinuityFadeSamples;
+            System.Threading.Interlocked.Increment(ref _resumeFades);
             System.Threading.Interlocked.Add(ref _discardedSamples, discard);
             LogBufferEvent("audio.buffer.discard", $"reason=overflow discard={discard} incoming={count} buffered={_ring.Count} max={_ring.MaxLength}");
         }
@@ -209,6 +212,7 @@ internal class BufferedSampleProvider : ISampleProvider
         {
             _ring.Discard(_ring.Count - BufferCutToSize);
             _resumeFadeRemaining = DiscontinuityFadeSamples;
+            System.Threading.Interlocked.Increment(ref _resumeFades);
         }
         if (EnableRecoveryPrebuffer && _prebufferSamples > 0 && _isPrebuffering)
         {
@@ -276,6 +280,9 @@ internal class BufferedSampleProvider : ISampleProvider
                 for (int i = 0; i < faded; i++)
                     buffer[offset + i] *= 1f - (i + 1f) / faded;
             }
+            System.Threading.Interlocked.Increment(ref _fadeClears);
+            if (VoiceChatPlugin.VoiceChat.VoiceDiagnostics.IsEnabled)
+                WriteBufferEvent("audio.buffer.fadeclear", $"faded={faded} requested={count}");
             ClearLocked();
             System.Threading.Interlocked.Increment(ref _readRequests);
             System.Threading.Interlocked.Add(ref _requestedSamples, count);
@@ -311,6 +318,7 @@ internal class BufferedSampleProvider : ISampleProvider
                 int drain = _ring.Count - AudioHelpers.PlaybackRecoveryPrebufferSamples;
                 _ring.Discard(drain);
                 _resumeFadeRemaining = DiscontinuityFadeSamples;
+                System.Threading.Interlocked.Increment(ref _resumeFades);
                 System.Threading.Interlocked.Add(ref _discardedSamples, drain);
             }
         }
@@ -427,6 +435,7 @@ internal class BufferedSampleProvider : ISampleProvider
             for (int i = 0; i < fade; i++)
                 buffer[offset + num - fade + i] *= 1f - (i + 1f) / fade;
             _resumeFadeRemaining = DiscontinuityFadeSamples;
+            System.Threading.Interlocked.Increment(ref _resumeFades);
         }
         return CompleteRead(buffer, offset, count, num);
     }
@@ -565,7 +574,9 @@ internal class BufferedSampleProvider : ISampleProvider
            $"requested={System.Threading.Interlocked.Exchange(ref _requestedSamples, 0)} " +
            $"actual={System.Threading.Interlocked.Exchange(ref _actualReadSamples, 0)} " +
            $"underruns={System.Threading.Interlocked.Exchange(ref _underruns, 0)} " +
-           $"prebufferSilence={System.Threading.Interlocked.Exchange(ref _prebufferSilenceReads, 0)}";
+           $"prebufferSilence={System.Threading.Interlocked.Exchange(ref _prebufferSilenceReads, 0)} " +
+           $"fadeClears={System.Threading.Interlocked.Exchange(ref _fadeClears, 0)} " +
+           $"resumeFades={System.Threading.Interlocked.Exchange(ref _resumeFades, 0)}";
 
     private int CompleteRead(float[] buffer, int offset, int count, int num)
     {
