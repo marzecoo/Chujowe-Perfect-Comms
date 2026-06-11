@@ -9,6 +9,7 @@ using NAudio.Wave;
 using Interstellar.Routing;
 using Interstellar.Routing.Router;
 using Interstellar.VoiceChat;
+using MiraAPI.LocalSettings;
 using UnityEngine;
 
 namespace VoiceChatPlugin.VoiceChat;
@@ -33,8 +34,8 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
     private const float RadioDistortionThreshold = 0.85f;
     private const double SyntheticToneFrequency = 220.0;
     private const float SyntheticToneAmplitude = 0.012f;
-    private const int InterstellarReceiveBufferSamples = 2048;
-    private const int InterstellarReceiveBufferAdditionalSamples = 2048;
+    private const int InterstellarReceiveBufferSamples = 4800;
+    private const int InterstellarReceiveBufferAdditionalSamples = 9600;
     private const string DiagnosticsVersion = "interstellar-fang-switch-full-reconnect-20260522";
 
     private readonly LevelMeterRouter _levelMeter;
@@ -53,6 +54,12 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
     private AndroidSpeaker? _androidSpeaker;
 #endif
 #if WINDOWS
+    private readonly Audio.MicPreprocessor _micPreprocessor = new();
+    private bool _autoMicGain = true;
+    private float _transmitLimiterGain = 1f;
+    private int _latchedMicChannel;
+    private int _micChannelSwitchStreak;
+    private double[] _micChannelEnergyScratch = Array.Empty<double>();
     private IWaveIn? _windowsMicrophoneCapture;
     private ManualMicrophone? _windowsMicrophone;
     private IWavePlayer? _windowsSpeakerOutput;
@@ -303,10 +310,35 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
     {
         var restartCapture = _captureOptions.SyntheticMicToneEnabled != options.SyntheticMicToneEnabled;
         _captureOptions = options;
+#if WINDOWS
+        _autoMicGain = ReadAutoMicGainSetting();
+        try
+        {
+            _micPreprocessor.SetNoiseSuppressionEnabled(options.NoiseSuppressionEnabled);
+        }
+        catch (Exception ex)
+        {
+            VoiceDiagnostics.Log("interstellar.mic", $"noiseSuppression=error error=\"{ex.Message}\"");
+        }
+#endif
         if (restartCapture && _microphoneReady && !Mute)
             SetMicrophone(_lastMicDeviceName, _lastMicVolume);
-        VoiceDiagnostics.Log("interstellar.capture-options", $"syntheticTone={options.SyntheticMicToneEnabled}");
+        VoiceDiagnostics.Log("interstellar.capture-options", $"syntheticTone={options.SyntheticMicToneEnabled} noiseSuppression={options.NoiseSuppressionEnabled}");
     }
+
+#if WINDOWS
+    private static bool ReadAutoMicGainSetting()
+    {
+        try
+        {
+            return LocalSettingsTabSingleton<VoiceChatLocalSettings>.Instance?.AutoMicGain.Value ?? true;
+        }
+        catch
+        {
+            return true;
+        }
+    }
+#endif
 
     private float ResolveSpeakingThreshold()
     {
@@ -330,6 +362,8 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
             StopSyntheticMicTone();
 #if WINDOWS
             StopWindowsMicrophoneCapture();
+            _latchedMicChannel = 0;
+            _micChannelSwitchStreak = 0;
 #endif
             if (_captureOptions.SyntheticMicToneEnabled)
             {
@@ -452,13 +486,25 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
         {
             Interlocked.Add(ref _windowsMicSamples, samples);
             Volatile.Write(ref _windowsMicLastSamples, samples);
+            try
+            {
+                _micPreprocessor.ApplyHighPass(floatPcm, samples);
+                _micPreprocessor.ApplyAutoGain(floatPcm, samples, _autoMicGain, out _);
+                if (_captureOptions.NoiseSuppressionEnabled)
+                    _micPreprocessor.TryApplyNoiseSuppression(floatPcm, samples);
+            }
+            catch (Exception ex)
+            {
+                VoiceDiagnostics.Log("interstellar.mic.capture_error", $"stage=preprocess error=\"{ex.Message}\"");
+            }
             var peak = Audio.AudioHelpers.MeasurePeak(floatPcm, samples);
             if (peak <= 0.001f)
                 Interlocked.Increment(ref _windowsMicSilentCallbacks);
             var peakMilli = ToMilli(peak);
             Volatile.Write(ref _windowsMicLastPeakMilli, peakMilli);
             UpdateMax(ref _windowsMicPeakMilli, peakMilli);
-            var transmitGain = Audio.AudioHelpers.GetTransmitLimiterGain(peak);
+            var transmitGain = Audio.AudioHelpers.GetSmoothedTransmitLimiterGain(_transmitLimiterGain, peak);
+            _transmitLimiterGain = transmitGain;
             Volatile.Write(ref _windowsMicLastGainMilli, ToMilli(transmitGain));
             Audio.AudioHelpers.ApplyGain(floatPcm, samples, transmitGain);
             Interlocked.Increment(ref _windowsMicPushedFrames);
@@ -500,7 +546,7 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
         while (Interlocked.CompareExchange(ref target, value, current) != current);
     }
 
-    private static int ConvertWindowsFloat32ToMono(byte[] buffer, int recordedBytes, int channels, out float[] floatPcm)
+    private int ConvertWindowsFloat32ToMono(byte[] buffer, int recordedBytes, int channels, out float[] floatPcm)
     {
         var frames = recordedBytes / (sizeof(float) * channels);
         floatPcm = new float[frames];
@@ -513,7 +559,7 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
         return frames;
     }
 
-    private static int ConvertWindowsPcm16ToMono(byte[] buffer, int recordedBytes, int channels, out float[] floatPcm)
+    private int ConvertWindowsPcm16ToMono(byte[] buffer, int recordedBytes, int channels, out float[] floatPcm)
     {
         var frames = recordedBytes / (sizeof(short) * channels);
         floatPcm = new float[frames];
@@ -526,11 +572,61 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
         return frames;
     }
 
-    private static int SelectDominantWindowsFloat32Channel(byte[] buffer, int frames, int channels)
+    private const double MicChannelSwitchEnergyRatio = 2.0;
+    private const int MicChannelSwitchStreakCallbacks = 25;
+
+    private double[] EnsureMicChannelEnergyCapacity(int channels)
     {
-        if (channels <= 1) return 0;
+        if (_micChannelEnergyScratch is null || _micChannelEnergyScratch.Length < channels)
+            _micChannelEnergyScratch = new double[channels];
+        return _micChannelEnergyScratch;
+    }
+
+    private int LatchDominantChannel(double[] energies, int channels)
+    {
+        if (_latchedMicChannel >= channels)
+        {
+            _latchedMicChannel = 0;
+            _micChannelSwitchStreak = 0;
+        }
+
         var bestChannel = 0;
         var bestEnergy = 0.0;
+        for (var channel = 0; channel < channels; channel++)
+        {
+            if (energies[channel] > bestEnergy)
+            {
+                bestEnergy = energies[channel];
+                bestChannel = channel;
+            }
+        }
+
+        if (bestChannel == _latchedMicChannel)
+        {
+            _micChannelSwitchStreak = 0;
+            return _latchedMicChannel;
+        }
+
+        if (bestEnergy > energies[_latchedMicChannel] * MicChannelSwitchEnergyRatio)
+        {
+            if (++_micChannelSwitchStreak >= MicChannelSwitchStreakCallbacks)
+            {
+                _latchedMicChannel = bestChannel;
+                _micChannelSwitchStreak = 0;
+            }
+        }
+        else
+        {
+            _micChannelSwitchStreak = 0;
+        }
+
+        return _latchedMicChannel;
+    }
+
+    private int SelectDominantWindowsFloat32Channel(byte[] buffer, int frames, int channels)
+    {
+        if (channels <= 1) return 0;
+        var energies = EnsureMicChannelEnergyCapacity(channels);
         for (var channel = 0; channel < channels; channel++)
         {
             var energy = 0.0;
@@ -540,20 +636,15 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
                 var sample = ReadWindowsFloat32Sample(buffer, offset);
                 energy += (double)sample * sample;
             }
-            if (energy > bestEnergy)
-            {
-                bestEnergy = energy;
-                bestChannel = channel;
-            }
+            energies[channel] = energy;
         }
-        return bestChannel;
+        return LatchDominantChannel(energies, channels);
     }
 
-    private static int SelectDominantWindowsPcm16Channel(byte[] buffer, int frames, int channels)
+    private int SelectDominantWindowsPcm16Channel(byte[] buffer, int frames, int channels)
     {
         if (channels <= 1) return 0;
-        var bestChannel = 0;
-        var bestEnergy = 0.0;
+        var energies = EnsureMicChannelEnergyCapacity(channels);
         for (var channel = 0; channel < channels; channel++)
         {
             var energy = 0.0;
@@ -563,13 +654,9 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
                 var sample = BitConverter.ToInt16(buffer, offset) / (float)short.MaxValue;
                 energy += (double)sample * sample;
             }
-            if (energy > bestEnergy)
-            {
-                bestEnergy = energy;
-                bestChannel = channel;
-            }
+            energies[channel] = energy;
         }
-        return bestChannel;
+        return LatchDominantChannel(energies, channels);
     }
 
     private static float ReadWindowsFloat32Sample(byte[] buffer, int offset)
@@ -926,6 +1013,9 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
         StopMicrophone("dispose");
         try { _room.Disconnect(); } catch { }
         _peers.Clear();
+#if WINDOWS
+        try { _micPreprocessor.Dispose(); } catch { }
+#endif
 #if ANDROID
         _androidSpeaker?.Dispose();
         _androidSpeaker = null;

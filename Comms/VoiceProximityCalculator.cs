@@ -301,12 +301,18 @@ internal static class VoiceProximityCalculator
                     return hardOcclusionVirtualRoute;
                 if (hasCameraProxy)
                     return CalculateCameraProxy(targetPos, cameraPosition, s, previousWallCoefficient);
-                return VoiceProximityResult.Muted(VoiceProximityReason.HardOcclusion, wallCoefficient);
+                // Smooth hard occlusion toward silence instead of an instant cut at every wall edge.
+                wallCoefficient += (0f - wallCoefficient) * Math.Clamp(Time.deltaTime * 8f, 0f, 1f);
+                if (wallCoefficient < 0.02f)
+                    return VoiceProximityResult.Muted(VoiceProximityReason.HardOcclusion, 0f);
+                filterMode = VoiceAudioFilterMode.WallMuffle;
             }
-
-            wallCoefficient += (occlusion.TargetVolumeMultiplier - wallCoefficient) *
-                               Math.Clamp(Time.deltaTime * 4f, 0f, 1f);
-            filterMode = occlusion.FilterMode;
+            else
+            {
+                wallCoefficient += (occlusion.TargetVolumeMultiplier - wallCoefficient) *
+                                   Math.Clamp(Time.deltaTime * 4f, 0f, 1f);
+                filterMode = occlusion.FilterMode;
+            }
         }
         else
         {

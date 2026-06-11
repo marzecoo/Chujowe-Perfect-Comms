@@ -52,6 +52,9 @@ internal class BufferedSampleProvider : ISampleProvider
     private Func<float[]?>? _plcFrameProvider;       // per-peer: () => one Opus-PLC frame (or null)
     private int _trailingPlcEmitted;
     private const int MaxTrailingPlcFrames = 3;      // ~60 ms bridge, then allow true silence
+    private const int DiscontinuityFadeSamples = 240;
+    private bool _pendingFadeClear;
+    private int _resumeFadeRemaining;
     // Reused scratch for tapering the bridge frame ACROSS emissions (the provider returns the SAME array up to
     // MaxTrailingPlcFrames times). Scaling in place into this buffer keeps the bridge allocation-free while it
     // fades 1.0 -> 0.66 -> 0.33 toward silence instead of plateauing at the provider's ~0.5 gain (buzz).
@@ -187,6 +190,7 @@ internal class BufferedSampleProvider : ISampleProvider
         {
             int discard = _ring.Count + count - _ring.MaxLength;
             _ring.Discard(discard);
+            _resumeFadeRemaining = DiscontinuityFadeSamples;
             System.Threading.Interlocked.Add(ref _discardedSamples, discard);
             LogBufferEvent("audio.buffer.discard", $"reason=overflow discard={discard} incoming={count} buffered={_ring.Count} max={_ring.MaxLength}");
         }
@@ -204,6 +208,7 @@ internal class BufferedSampleProvider : ISampleProvider
         if (_ring.Count > BufferCutSize && BufferCutSize > BufferCutToSize)
         {
             _ring.Discard(_ring.Count - BufferCutToSize);
+            _resumeFadeRemaining = DiscontinuityFadeSamples;
         }
         if (EnableRecoveryPrebuffer && _prebufferSamples > 0 && _isPrebuffering)
         {
@@ -219,20 +224,38 @@ internal class BufferedSampleProvider : ISampleProvider
     public void Clear()
     {
         lock (_stateLock)
+            ClearLocked();
+    }
+
+    public void RequestFadeClear()
+    {
+        lock (_stateLock)
         {
-            _ring?.Reset();
-            _isPrebuffering = EnableRecoveryPrebuffer && _prebufferSamples > 0;
-            ResetPrebufferLogStateLocked();
-            _lastReadEndedSilent = true;
-            _hasPlayedAudio = false;
-            _prebufferFirstSampleUtc = DateTime.MinValue;
-            _adaptiveRecoveryPrebufferSamples = AudioHelpers.PlaybackRecoveryPrebufferSamples;
-            _stableReadCycles = 0;
-            _lastWriteUtc = DateTime.MinValue;
-            _jitterSetpointSamples = AudioHelpers.PlaybackRecoveryPrebufferSamples;
-            _trailingPlcEmitted = 0;
-            _clampStreak = 0;
+            if (_ring == null || _ring.Count == 0)
+            {
+                ClearLocked();
+                return;
+            }
+            _pendingFadeClear = true;
         }
+    }
+
+    private void ClearLocked()
+    {
+        _ring?.Reset();
+        _isPrebuffering = EnableRecoveryPrebuffer && _prebufferSamples > 0;
+        ResetPrebufferLogStateLocked();
+        _lastReadEndedSilent = true;
+        _hasPlayedAudio = false;
+        _prebufferFirstSampleUtc = DateTime.MinValue;
+        _adaptiveRecoveryPrebufferSamples = AudioHelpers.PlaybackRecoveryPrebufferSamples;
+        _stableReadCycles = 0;
+        _lastWriteUtc = DateTime.MinValue;
+        _jitterSetpointSamples = AudioHelpers.PlaybackRecoveryPrebufferSamples;
+        _trailingPlcEmitted = 0;
+        _clampStreak = 0;
+        _pendingFadeClear = false;
+        _resumeFadeRemaining = DiscontinuityFadeSamples;
     }
 
     public int Read(float[] buffer, int offset, int count)
@@ -243,6 +266,25 @@ internal class BufferedSampleProvider : ISampleProvider
 
     private int ReadLocked(float[] buffer, int offset, int count)
     {
+        if (_pendingFadeClear)
+        {
+            _pendingFadeClear = false;
+            int faded = 0;
+            if (_ring != null && _ring.Count > 0)
+            {
+                faded = _ring.Read(buffer, offset, Math.Min(count, DiscontinuityFadeSamples));
+                for (int i = 0; i < faded; i++)
+                    buffer[offset + i] *= 1f - (i + 1f) / faded;
+            }
+            ClearLocked();
+            System.Threading.Interlocked.Increment(ref _readRequests);
+            System.Threading.Interlocked.Add(ref _requestedSamples, count);
+            System.Threading.Interlocked.Add(ref _actualReadSamples, faded);
+            if (!ReadFully) return faded;
+            Array.Clear(buffer, offset + faded, count - faded);
+            return count;
+        }
+
         // End-of-talk / reopen: once the talker has been silent past the idle window, drop the escalated
         // recovery prebuffer back to baseline so the next talkspurt resumes at minimal onset latency. A
         // mid-utterance jitter stall keeps writing within the window, so its escalation is preserved.
@@ -268,6 +310,7 @@ internal class BufferedSampleProvider : ISampleProvider
             {
                 int drain = _ring.Count - AudioHelpers.PlaybackRecoveryPrebufferSamples;
                 _ring.Discard(drain);
+                _resumeFadeRemaining = DiscontinuityFadeSamples;
                 System.Threading.Interlocked.Add(ref _discardedSamples, drain);
             }
         }
@@ -372,6 +415,18 @@ internal class BufferedSampleProvider : ISampleProvider
         {
             _trailingPlcEmitted = 0; // a clean full read ends the bridge
             DecayRecoveryPrebufferLocked();
+        }
+        if (_resumeFadeRemaining > 0 && num > 0)
+        {
+            for (int i = 0; i < num && _resumeFadeRemaining > 0; i++, _resumeFadeRemaining--)
+                buffer[offset + i] *= 1f - (float)_resumeFadeRemaining / DiscontinuityFadeSamples;
+        }
+        if (num > 0 && num < count)
+        {
+            int fade = Math.Min(num, DiscontinuityFadeSamples);
+            for (int i = 0; i < fade; i++)
+                buffer[offset + num - fade + i] *= 1f - (i + 1f) / fade;
+            _resumeFadeRemaining = DiscontinuityFadeSamples;
         }
         return CompleteRead(buffer, offset, count, num);
     }
@@ -685,8 +740,12 @@ internal class StereoSampleProvider : ISampleProvider
 
 internal class ReverbSampleProvider : ISampleProvider
 {
+    private const float FeedbackDamping = 0.35f;
+    private const float DenormalGuard = 1e-20f;
+
     private readonly ISampleProvider _src;
     private readonly float[] _delay;
+    private readonly float[] _feedbackLp;
     private int   _pos;
     private float _decay, _wet, _dry;
 
@@ -699,6 +758,7 @@ internal class ReverbSampleProvider : ISampleProvider
         _src   = src;
         int n  = (int)(src.WaveFormat.SampleRate * (delayMs / 1000f)) * src.WaveFormat.Channels;
         _delay = new float[Math.Max(1, n)]; // avoid zero-length line (modulo-by-zero on _delay[_pos])
+        _feedbackLp = new float[Math.Max(1, src.WaveFormat.Channels)];
         Decay     = decay;
         WetDryMix = wetDry;
     }
@@ -710,7 +770,9 @@ internal class ReverbSampleProvider : ISampleProvider
         {
             float cur     = buffer[offset + i];
             float delayed = _delay[_pos];
-            _delay[_pos]       = cur + delayed * _decay;
+            int channel = i % _feedbackLp.Length;
+            _feedbackLp[channel] += FeedbackDamping * (delayed - _feedbackLp[channel]);
+            _delay[_pos]       = cur + _feedbackLp[channel] * _decay + DenormalGuard;
             buffer[offset + i] = cur * _dry + delayed * _wet;
             _pos = (_pos + 1) % _delay.Length;
         }
@@ -757,6 +819,7 @@ internal class AudioMixer : ISampleProvider
     private Input[] _inputSnapshot = Array.Empty<Input>();
     private float[] _tmp = null!;
     private DateTime _lastOutputPeakLogUtc = DateTime.MinValue;
+    private DateTime _lastInputErrorLogUtc = DateTime.MinValue;
     private float _mixLimiterGain = 1f;
 
     public WaveFormat WaveFormat => _fmt;
@@ -773,7 +836,21 @@ internal class AudioMixer : ISampleProvider
         if (inputs.Length == 0) return count;
         foreach (var inp in inputs)
         {
-            int r = inp.Provider.Read(_tmp, 0, count);
+            int r;
+            try
+            {
+                r = inp.Provider.Read(_tmp, 0, count);
+            }
+            catch (Exception ex)
+            {
+                var now = DateTime.UtcNow;
+                if ((now - _lastInputErrorLogUtc).TotalSeconds >= 1.0)
+                {
+                    _lastInputErrorLogUtc = now;
+                    VoiceChatPlugin.VoiceChat.VoiceDiagnostics.Log("audio.mixer.input_error", $"group={inp.GroupId} error=\"{ex.Message}\"");
+                }
+                continue;
+            }
             for (int i = 0; i < r; i++) buffer[offset + i] += _tmp[i];
         }
 
@@ -939,6 +1016,7 @@ public class AudioRoutingInstance : IHasAudioPropertyNode
     }
 
     public void ClearBufferedSamples() => _source.Clear();
+    public void FadeClearBufferedSamples() => _source.RequestFadeClear();
 
     // Per-peer adaptive jitter-buffer wiring (Fix 2a-3 / 2b-3): the owning PeerConnection supplies the clean
     // arrival-jitter signal and a PLC bridge frame so the ring deepens/conceals per peer.

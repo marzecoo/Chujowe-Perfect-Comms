@@ -404,7 +404,8 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         if (Mute == mute) return;
         Mute = mute;
 #if WINDOWS
-        QueueMicrophoneTransition(!mute, mute ? "muted" : "unmuted");
+        if (!mute && !_microphoneReady)
+            QueueMicrophoneTransition(true, "unmuted");
 #elif ANDROID
         if (mute) StopAndroidMicrophone("muted");
         else StartAndroidMicrophone("unmuted");
@@ -563,6 +564,8 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         try
         {
             StopMicrophone($"restart:{reason}");
+            _latchedMicChannel = 0;
+            _micChannelSwitchStreak = 0;
             var captureKind = "wavein";
             var captureDevice = "mapper";
             int waveInDevice = -1;
@@ -878,6 +881,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
                 DesiredLatency = BclPlaybackLatencyMs,
                 NumberOfBuffers = 3,
             };
+            _waveOut.PlaybackStopped += OnPlaybackStopped;
             _waveOut.Init(_playbackProvider.ToWaveProvider());
             _waveOut.Play();
             _speakerReady = _waveOut.PlaybackState == PlaybackState.Playing;
@@ -919,6 +923,22 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
     // the "Default" speaker (empty device name) and the output-device topology changes — e.g. a headset is
     // (un)plugged, which is also when Windows flips the default — reopen so audio follows. A pinned device is
     // left untouched. This is the "I had to switch device to hear them" symptom on the speaker side.
+    private void OnPlaybackStopped(object? sender, StoppedEventArgs e)
+    {
+        if (_disposed || e.Exception == null) return;
+        if (!ReferenceEquals(sender, _waveOut)) return;
+        _speakerReady = false;
+        VoiceDiagnostics.Log("bcl.speaker", $"ready=false reason=playback-stopped error=\"{e.Exception.Message}\"");
+        try
+        {
+            SetSpeaker(_lastSpeakerDeviceName);
+        }
+        catch (Exception ex)
+        {
+            VoiceDiagnostics.Log("bcl.speaker", $"ready=false reason=restart-failed error=\"{ex.Message}\"");
+        }
+    }
+
     private void MaybeFollowDefaultSpeaker()
     {
         if (_disposed || !_speakerReady) return;
@@ -1740,6 +1760,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             var leftRoute = _leftPlayback.Generate(playbackGroupId);
             var rightRoute = _rightPlayback.Generate(playbackGroupId);
             var peer = new PeerConnection(socketId, clientId, playbackGroupId, leftRoute, rightRoute);
+            peer.SetInterleaveSync(_playbackProvider.InterleaveSync);
             WireNewPeerConnection(peer, socketId);
             _peersBySocket[socketId] = peer;
             VoiceDiagnostics.Log("bcl.peer.created", $"socket={socketId} client={clientId} playbackGroup={playbackGroupId} provisional={(clientId < 0).ToString().ToLowerInvariant()}");
@@ -2596,7 +2617,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         for (var frame = 0; frame < frames; frame++)
         {
             var offset = (frame * channels + dominantChannel) * sizeof(float);
-            floatPcm[frame] = Math.Clamp(ReadIeeeFloat32Sample(buffer, offset) * _micVolume, -1f, 1f);
+            floatPcm[frame] = ReadIeeeFloat32Sample(buffer, offset) * _micVolume;
         }
         return frames;
     }
@@ -2610,7 +2631,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         {
             var offset = (frame * channels + dominantChannel) * sizeof(short);
             var sample = BitConverter.ToInt16(buffer, offset) / (float)short.MaxValue;
-            floatPcm[frame] = Math.Clamp(sample * _micVolume, -1f, 1f);
+            floatPcm[frame] = sample * _micVolume;
         }
         return frames;
     }
@@ -2625,7 +2646,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         {
             var offset = (frame * channels + dominantChannel) * bytesPerSample;
             var sample = ReadPcm24Sample(buffer, offset);
-            floatPcm[frame] = Math.Clamp(sample * _micVolume, -1f, 1f);
+            floatPcm[frame] = sample * _micVolume;
         }
         return frames;
     }
@@ -2639,16 +2660,69 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         {
             var offset = (frame * channels + dominantChannel) * sizeof(int);
             var sample = BitConverter.ToInt32(buffer, offset) / 2147483648f;
-            floatPcm[frame] = Math.Clamp(sample * _micVolume, -1f, 1f);
+            floatPcm[frame] = sample * _micVolume;
         }
         return frames;
     }
 
-    private static int SelectDominantIeeeFloat32Channel(byte[] buffer, int frames, int channels)
+    private const double MicChannelSwitchEnergyRatio = 2.0;
+    private const int MicChannelSwitchStreakCallbacks = 25;
+    private int _latchedMicChannel;
+    private int _micChannelSwitchStreak;
+    private double[] _micChannelEnergyScratch = Array.Empty<double>();
+
+    private double[] EnsureMicChannelEnergyCapacity(int channels)
     {
-        if (channels <= 1) return 0;
+        if (_micChannelEnergyScratch is null || _micChannelEnergyScratch.Length < channels)
+            _micChannelEnergyScratch = new double[channels];
+        return _micChannelEnergyScratch;
+    }
+
+    private int LatchDominantChannel(double[] energies, int channels)
+    {
+        if (_latchedMicChannel >= channels)
+        {
+            _latchedMicChannel = 0;
+            _micChannelSwitchStreak = 0;
+        }
+
         var bestChannel = 0;
         var bestEnergy = 0.0;
+        for (var channel = 0; channel < channels; channel++)
+        {
+            if (energies[channel] > bestEnergy)
+            {
+                bestEnergy = energies[channel];
+                bestChannel = channel;
+            }
+        }
+
+        if (bestChannel == _latchedMicChannel)
+        {
+            _micChannelSwitchStreak = 0;
+            return _latchedMicChannel;
+        }
+
+        if (bestEnergy > energies[_latchedMicChannel] * MicChannelSwitchEnergyRatio)
+        {
+            if (++_micChannelSwitchStreak >= MicChannelSwitchStreakCallbacks)
+            {
+                _latchedMicChannel = bestChannel;
+                _micChannelSwitchStreak = 0;
+            }
+        }
+        else
+        {
+            _micChannelSwitchStreak = 0;
+        }
+
+        return _latchedMicChannel;
+    }
+
+    private int SelectDominantIeeeFloat32Channel(byte[] buffer, int frames, int channels)
+    {
+        if (channels <= 1) return 0;
+        var energies = EnsureMicChannelEnergyCapacity(channels);
         for (var channel = 0; channel < channels; channel++)
         {
             var energy = 0.0;
@@ -2658,20 +2732,15 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
                 var sample = ReadIeeeFloat32Sample(buffer, offset);
                 energy += (double)sample * sample;
             }
-            if (energy > bestEnergy)
-            {
-                bestEnergy = energy;
-                bestChannel = channel;
-            }
+            energies[channel] = energy;
         }
-        return bestChannel;
+        return LatchDominantChannel(energies, channels);
     }
 
-    private static int SelectDominantPcm16Channel(byte[] buffer, int frames, int channels)
+    private int SelectDominantPcm16Channel(byte[] buffer, int frames, int channels)
     {
         if (channels <= 1) return 0;
-        var bestChannel = 0;
-        var bestEnergy = 0.0;
+        var energies = EnsureMicChannelEnergyCapacity(channels);
         for (var channel = 0; channel < channels; channel++)
         {
             var energy = 0.0;
@@ -2681,20 +2750,15 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
                 var sample = BitConverter.ToInt16(buffer, offset) / (float)short.MaxValue;
                 energy += (double)sample * sample;
             }
-            if (energy > bestEnergy)
-            {
-                bestEnergy = energy;
-                bestChannel = channel;
-            }
+            energies[channel] = energy;
         }
-        return bestChannel;
+        return LatchDominantChannel(energies, channels);
     }
 
-    private static int SelectDominantPcm24Channel(byte[] buffer, int frames, int channels)
+    private int SelectDominantPcm24Channel(byte[] buffer, int frames, int channels)
     {
         if (channels <= 1) return 0;
-        var bestChannel = 0;
-        var bestEnergy = 0.0;
+        var energies = EnsureMicChannelEnergyCapacity(channels);
         const int bytesPerSample = 3;
         for (var channel = 0; channel < channels; channel++)
         {
@@ -2705,20 +2769,15 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
                 var sample = ReadPcm24Sample(buffer, offset);
                 energy += (double)sample * sample;
             }
-            if (energy > bestEnergy)
-            {
-                bestEnergy = energy;
-                bestChannel = channel;
-            }
+            energies[channel] = energy;
         }
-        return bestChannel;
+        return LatchDominantChannel(energies, channels);
     }
 
-    private static int SelectDominantPcm32Channel(byte[] buffer, int frames, int channels)
+    private int SelectDominantPcm32Channel(byte[] buffer, int frames, int channels)
     {
         if (channels <= 1) return 0;
-        var bestChannel = 0;
-        var bestEnergy = 0.0;
+        var energies = EnsureMicChannelEnergyCapacity(channels);
         for (var channel = 0; channel < channels; channel++)
         {
             var energy = 0.0;
@@ -2728,13 +2787,9 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
                 var sample = BitConverter.ToInt32(buffer, offset) / 2147483648f;
                 energy += (double)sample * sample;
             }
-            if (energy > bestEnergy)
-            {
-                bestEnergy = energy;
-                bestChannel = channel;
-            }
+            energies[channel] = energy;
         }
-        return bestChannel;
+        return LatchDominantChannel(energies, channels);
     }
 
     private static float ReadIeeeFloat32Sample(byte[] buffer, int offset)
@@ -2816,7 +2871,17 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             return;
         }
 
+        if (!IsSyntheticSource(source))
+            _micPreprocessor.ApplyHighPass(floatPcm, samples);
+
         var agcGain = _micPreprocessor.ApplyAutoGain(floatPcm, samples, _autoMicGain && !IsSyntheticSource(source), out var preSuppressionPeak);
+
+        var preSuppressionGuardGain = AudioHelpers.GetCaptureEncodeLimiterGain(preSuppressionPeak);
+        if (preSuppressionGuardGain < 1f)
+        {
+            AudioHelpers.ApplyGain(floatPcm, samples, preSuppressionGuardGain);
+            preSuppressionPeak *= preSuppressionGuardGain;
+        }
 
         if (_captureOptions.NoiseSuppressionEnabled && !IsSyntheticSource(source))
             _micPreprocessor.TryApplyNoiseSuppression(floatPcm, samples);
@@ -3318,6 +3383,9 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             MuteAll();
         }
 
+        private object _lrSync = new();
+        public void SetInterleaveSync(object sync) => _lrSync = sync;
+
         public string SocketId { get; }
         public int ClientId { get; private set; }
         public int PlaybackGroupId { get; }
@@ -3460,12 +3528,12 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             _currentRoute = result;
             WallCoefficient = result.WallCoefficient;
             _appliedPan = result.Pan;
-            var clearBufferedAudio = !result.Audible || !wasAudible && result.Audible;
-            var bufferedSamples = clearBufferedAudio ? Math.Max(_leftRoute.BufferedSamples, _rightRoute.BufferedSamples) : 0;
+            // Edge-only fade-clear; clearing on BECOMING audible chops speech onsets and re-arms a >=60ms prebuffer.
+            var bufferedSamples = wasAudible && !result.Audible ? Math.Max(_leftRoute.BufferedSamples, _rightRoute.BufferedSamples) : 0;
             if (bufferedSamples > 0)
             {
-                _leftRoute.ClearBufferedSamples();
-                _rightRoute.ClearBufferedSamples();
+                _leftRoute.FadeClearBufferedSamples();
+                _rightRoute.FadeClearBufferedSamples();
                 _routeClearsSinceStats++;
                 // Gate the interpolated diagnostic string: it fires in bursts on audible<->inaudible
                 // transitions, so building it eagerly (even with diagnostics off) is needless alloc churn.
@@ -3815,8 +3883,11 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
                 if (abs > peak) peak = abs;
             }
             ObserveVoiceLevel(peak);
-            _leftRoute.AddSamples(samples, 0, decoded);
-            _rightRoute.AddSamples(samples, 0, decoded);
+            lock (_lrSync)
+            {
+                _leftRoute.AddSamples(samples, 0, decoded);
+                _rightRoute.AddSamples(samples, 0, decoded);
+            }
             // Publish a bridge concealment frame for the ring's trailing-stall PLC (Fix 2b-3). Only after a
             // real decode, never on a conceal path. NOTE (deviation from plan, [confirm in code]): the plan
             // asked for live Opus PLC synthesis from the ring's read thread, but the peer Decoder is shared
@@ -3847,12 +3918,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             _bridgeSlot = (_bridgeSlot + 1) % BridgeSlotCount; // advance to the next slot in the ring
             var frame = _bridgeSlots[_bridgeSlot];
             int start = decoded - n; // take the most recent frame's worth of samples
-            for (int i = 0; i < n; i++)
-            {
-                // Linear fade across the frame so a multi-frame held bridge tapers toward silence.
-                float fade = 1f - (i / (float)n) * 0.5f;
-                frame[i] = samples[start + i] * fade;
-            }
+            Array.Copy(samples, start, frame, 0, n);
             // Publish the frame, then its monotonic age stamp. Order doesn't matter for correctness because the
             // reader only USES a frame whose stamp is fresh; a torn read at worst expires a still-valid frame.
             System.Threading.Volatile.Write(ref _latestPlcFrame, frame);
@@ -3879,8 +3945,11 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             if (n <= 0) return;
             if (_decodeFloat.Length < n) _decodeFloat = new float[n];
             Array.Clear(_decodeFloat, 0, n);
-            _leftRoute.AddSamples(_decodeFloat, 0, n);
-            _rightRoute.AddSamples(_decodeFloat, 0, n);
+            lock (_lrSync)
+            {
+                _leftRoute.AddSamples(_decodeFloat, 0, n);
+                _rightRoute.AddSamples(_decodeFloat, 0, n);
+            }
         }
         public void Dispose()
         {

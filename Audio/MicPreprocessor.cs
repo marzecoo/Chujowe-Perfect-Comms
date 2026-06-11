@@ -36,13 +36,17 @@ internal sealed class MicPreprocessor : IDisposable
     private const float AgcGainRisePerFrame = 1.02f;
     private const float AgcSpeechPeakDecay = 0.995f;
     private const float AgcSpeechPeakRisePerFrame = 1.10f;
+    private const float HighPassCoefficient = 0.98953f;
 
     public float AutoGainSeedFloor { get; set; } = 0.003f;
 
     private readonly object _noiseSuppressionStatsLock = new();
     private int _hangoverFramesRemaining;
     private float _agcGain = 1f;
+    private float _agcLastAppliedGain = 1f;
     private float _agcRecentSpeechPeak;
+    private float _hpfLastInput;
+    private float _hpfLastOutput;
     private RnNoiseSuppressor? _noiseSuppressor;
     private string _noiseSuppressionState = "disabled";
     private string _noiseSuppressionLastError = "none";
@@ -62,8 +66,28 @@ internal sealed class MicPreprocessor : IDisposable
     {
         _hangoverFramesRemaining = 0;
         _agcGain = 1f;
+        _agcLastAppliedGain = 1f;
         _agcRecentSpeechPeak = 0f;
+        _hpfLastInput = 0f;
+        _hpfLastOutput = 0f;
         _noiseSuppressor?.Reset();
+    }
+
+    public void ApplyHighPass(float[] pcm, int sampleCount)
+    {
+        int count = Math.Min(sampleCount, pcm.Length);
+        float lastIn = _hpfLastInput;
+        float lastOut = _hpfLastOutput;
+        for (int i = 0; i < count; i++)
+        {
+            float input = pcm[i];
+            if (!float.IsFinite(input)) input = 0f;
+            lastOut = HighPassCoefficient * (lastOut + input - lastIn);
+            lastIn = input;
+            pcm[i] = lastOut;
+        }
+        _hpfLastInput = lastIn;
+        _hpfLastOutput = lastOut;
     }
 
     public float ProcessCaptureSample(float sample, float gain) => sample;
@@ -85,6 +109,7 @@ internal sealed class MicPreprocessor : IDisposable
         if (!enabled || count <= 0)
         {
             _agcGain = 1f;
+            _agcLastAppliedGain = 1f;
             _agcRecentSpeechPeak = 0f;
             postGainPeak = peak;
             return 1f;
@@ -109,12 +134,19 @@ internal sealed class MicPreprocessor : IDisposable
             gain = AgcPeakCeiling / peak;
 
         _agcGain = gain;
-        postGainPeak = peak * gain;
-        if (gain == 1f)
+        float previousGain = _agcLastAppliedGain;
+        _agcLastAppliedGain = gain;
+        postGainPeak = peak * Math.Max(previousGain, gain);
+        if (gain == 1f && previousGain == 1f)
             return 1f;
 
+        float rampStep = (gain - previousGain) / count;
+        float applied = previousGain;
         for (int i = 0; i < count; i++)
-            pcm[i] *= gain;
+        {
+            applied += rampStep;
+            pcm[i] *= applied;
+        }
 
         return gain;
     }

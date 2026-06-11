@@ -268,10 +268,15 @@ public class VolumeRouter : AbstractAudioNodeProvider<VolumeRouter.Property>
 
     public class Property : ISampleProvider
     {
+        private const float GainSmoothingPerSample = 0.008f;
+        private const float GainSettleEpsilon = 0.0001f;
+
         private readonly ISampleProvider _src;
         // _volume is set on the Unity main thread and read on the NAudio pull thread.
         private volatile float _volume;
         private float _limiterGain = 1f; // audio-thread only
+        private float _currentGain;      // audio-thread only
+        private bool _gainInitialized;   // audio-thread only
 
         public float Volume
         {
@@ -284,23 +289,45 @@ public class VolumeRouter : AbstractAudioNodeProvider<VolumeRouter.Property>
 
         public int Read(float[] buffer, int offset, int count)
         {
-            if (_volume <= 0f)
+            float target = _volume;
+            if (!_gainInitialized)
             {
-                Array.Clear(buffer, offset, count);
-                return count;
+                _currentGain = target;
+                _gainInitialized = true;
             }
 
             int read = _src.Read(buffer, offset, count);
-            if (Math.Abs(_volume - 1f) <= 0.0001f) return read;
+
+            if (Math.Abs(target - _currentGain) <= GainSettleEpsilon)
+            {
+                _currentGain = target;
+                if (target <= 0f)
+                {
+                    Array.Clear(buffer, offset, count);
+                    return count;
+                }
+                if (Math.Abs(target - 1f) <= GainSettleEpsilon) return read;
+                for (int i = 0; i < read; i++)
+                    buffer[offset + i] *= target;
+                LimitAmplifiedPeakIfNeeded(buffer, offset, read, target);
+                return read;
+            }
+
+            float maxApplied = Math.Max(_currentGain, target);
             for (int i = 0; i < read; i++)
-                buffer[offset + i] *= _volume;
-            LimitAmplifiedPeakIfNeeded(buffer, offset, read);
+            {
+                _currentGain += (target - _currentGain) * GainSmoothingPerSample;
+                buffer[offset + i] *= _currentGain;
+            }
+            if (Math.Abs(target - _currentGain) <= GainSettleEpsilon)
+                _currentGain = target;
+            LimitAmplifiedPeakIfNeeded(buffer, offset, read, maxApplied);
             return read;
         }
 
-        private void LimitAmplifiedPeakIfNeeded(float[] buffer, int offset, int count)
+        private void LimitAmplifiedPeakIfNeeded(float[] buffer, int offset, int count, float appliedGain)
         {
-            if (_volume <= 1f || count <= 0) return;
+            if (appliedGain <= 1f || count <= 0) return;
 
             float peak = 0f;
             for (int i = 0; i < count; i++)

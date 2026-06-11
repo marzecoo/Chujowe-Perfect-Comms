@@ -359,7 +359,7 @@ internal sealed class BclVoiceJitterBuffer
             }
             _lostFrames++;
             _consecutiveConcealed++;
-            if (next.HasLossResistantFec)
+            if (next.HasLossResistantFec && Distance(_expectedSequence, nextSequence.Value) == 1)
             {
                 _fecFrames++;
                 frames.Add(new BclVoicePlayoutFrame(BclVoicePlayoutKind.Fec, next, _expectedSequence, next.Duration));

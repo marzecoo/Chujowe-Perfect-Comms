@@ -144,6 +144,7 @@ internal sealed class BclPeerPlaybackRoute
 
     public void AddSamples(float[] samples, int offset, int count) => _instance.AddSamples(samples, offset, count);
     public void ClearBufferedSamples() => _instance.ClearBufferedSamples();
+    public void FadeClearBufferedSamples() => _instance.FadeClearBufferedSamples();
     public string ConsumeDebugStats() => _instance.ConsumeDebugStats();
     // Per-peer adaptive jitter-buffer wiring (Fix 2a-3 / 2b-3).
     public void SetJitterSamplesProvider(Func<double> provider) => _instance.SetJitterSamplesProvider(provider);
@@ -168,15 +169,14 @@ internal sealed class BclStereoPlaybackProvider : ISampleProvider
 
     public WaveFormat WaveFormat { get; } = WaveFormat.CreateIeeeFloatWaveFormat(AudioHelpers.ClockRate, 2);
 
+    public object InterleaveSync { get; } = new();
+
     public static void GetPanGains(float pan, out float leftGain, out float rightGain)
     {
         pan = Math.Clamp(pan, -1f, 1f);
-        leftGain = 1f;
-        rightGain = 1f;
-        if (pan > 0f)
-            leftGain = 1f - pan * (1f - FullPanFarSideGain);
-        else if (pan < 0f)
-            rightGain = 1f + pan * (1f - FullPanFarSideGain);
+        float farGain = FullPanFarSideGain + (1f - FullPanFarSideGain) * MathF.Cos(Math.Abs(pan) * (MathF.PI / 2f));
+        leftGain = pan > 0f ? farGain : 1f;
+        rightGain = pan < 0f ? farGain : 1f;
     }
 
     public int Read(float[] buffer, int offset, int count)
@@ -193,8 +193,12 @@ internal sealed class BclStereoPlaybackProvider : ISampleProvider
         if (_leftBuffer.Length < frames) _leftBuffer = new float[frames];
         if (_rightBuffer.Length < frames) _rightBuffer = new float[frames];
 
-        var leftRead = _left.Read(_leftBuffer, 0, frames);
-        var rightRead = _right.Read(_rightBuffer, 0, frames);
+        int leftRead, rightRead;
+        lock (InterleaveSync)
+        {
+            leftRead = _left.Read(_leftBuffer, 0, frames);
+            rightRead = _right.Read(_rightBuffer, 0, frames);
+        }
 
         for (var frame = 0; frame < frames; frame++)
         {
