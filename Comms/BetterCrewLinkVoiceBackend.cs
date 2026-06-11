@@ -26,6 +26,10 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
     private const int BclPlaybackLatencyMs = 60;
     private const int BclJitterTargetDelayFrames = 4;
     private const int BclJitterMaxBufferedFrames = 8;
+    private const int BclJitterMinTargetFrames = 2;
+    private const int BclJitterMaxTargetFrames = 6;
+    private const int CodecAdaptIntervalFrames = 100;
+    private const int PlpDeadbandPercent = 3;
     private const float RemoteSpeakingThreshold = 0.004f;
     private const double SyntheticToneFrequency = 220.0;
     private const float SyntheticToneAmplitude = 0.012f;
@@ -36,6 +40,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
     private static readonly TimeSpan BclQuietTailFlushTimerDelay = BclQuietTailFlushDelay + TimeSpan.FromMilliseconds(10);
     private static readonly TimeSpan SignalRejectLogInterval = TimeSpan.FromSeconds(5);
     private static readonly byte[] DataControlPrefix = [(byte)'P', (byte)'C', (byte)'B', (byte)'C'];
+    private static readonly byte[] LossReportMagic = [(byte)'P', (byte)'C', (byte)'L', (byte)'R'];
     private static readonly byte[] RadioStateMagic = [(byte)'P', (byte)'C', (byte)'R', (byte)'D'];
     private static readonly RTCIceServer[] DefaultIceServers = [new() { urls = "stun:stun.l.google.com:19302" }];
 
@@ -1097,6 +1102,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         long proxTicks = VoiceFrameProfiler.Begin();
         SnapshotPeersInto(_updatePeerScratch);
         _routeClientScratch.Clear();
+        var lossReportNowUtc = DateTime.UtcNow;
         foreach (var peer in _updatePeerScratch)
         {
             if (peer.ClientId >= 0)
@@ -1138,6 +1144,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             // the per-peer 40 ms _tailFlushTimer (re-armed on every received packet in TryReceiveVoicePacket),
             // so all Opus decode now happens on the receive/timer threads only. Worst case: ~40 ms extra tail
             // latency on the final frames of a talkspurt, which is imperceptible.
+            peer.MaybeSendLossReport(lossReportNowUtc);
             peer.SampleDiagnostics();
         }
         VoiceFrameProfiler.End("room.backend.proximity", proxTicks);
@@ -2494,6 +2501,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             var payload = new byte[data.Length - DataControlPrefixLength];
             Array.Copy(data, DataControlPrefixLength, payload, 0, payload.Length);
             if (TryHandleRadioState(payload, peer.PlayerId)) return;
+            if (TryHandleLossReport(payload, peer)) return;
             Interlocked.Increment(ref _customRx);
             // Side-channel is untrusted for authority (self-asserted id); also avoids a torn
             // read of peer.ClientId/PlayerId on this background thread vs the mapping thread.
@@ -2544,6 +2552,41 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         var active = payload[5] != 0;
         var channel = VoiceTeamRadioChannels.FromWire(active, payload.Length >= 7 ? payload[6] : null);
         ApplyRemoteRadioState(playerId, channel);
+        return true;
+    }
+
+    private static bool TryHandleLossReport(byte[] payload, PeerConnection peer)
+    {
+        if (!TryParseLossReportPayload(payload, out var lossPermille)) return false;
+        peer.StoreLossReport(lossPermille);
+        return true;
+    }
+
+    internal static byte[] BuildLossReportMessage(int lossPermille)
+    {
+        var permille = (ushort)Math.Clamp(lossPermille, 0, 1000);
+        return new byte[]
+        {
+            DataControlPrefix[0], DataControlPrefix[1], DataControlPrefix[2], DataControlPrefix[3],
+            LossReportMagic[0], LossReportMagic[1], LossReportMagic[2], LossReportMagic[3],
+            1,
+            (byte)(permille >> 8), (byte)permille,
+        };
+    }
+
+    internal static bool TryParseLossReportPayload(byte[] payload, out int lossPermille)
+    {
+        lossPermille = 0;
+        if (payload.Length != 7
+            || payload[0] != LossReportMagic[0]
+            || payload[1] != LossReportMagic[1]
+            || payload[2] != LossReportMagic[2]
+            || payload[3] != LossReportMagic[3]
+            || payload[4] != 1)
+            return false;
+        var permille = (payload[5] << 8) | payload[6];
+        if (permille > 1000) return false;
+        lossPermille = permille;
         return true;
     }
 
@@ -2870,6 +2913,8 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             VoiceDiagnostics.Log("bcl.mic.encode_error", $"source={source} samples={samples} expected={AudioHelpers.FrameSize} error=\"invalid-opus-frame-size\"");
             return;
         }
+
+        MaybeAdaptEncoderLocked();
 
         if (!IsSyntheticSource(source))
             _micPreprocessor.ApplyHighPass(floatPcm, samples);
@@ -3229,6 +3274,50 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
 #endif
     }
 
+    private int _adaptedPacketLossPercent = BclOpusPacketLossPercent;
+    private int _adaptedBitrate = BclOpusBitrate;
+    private int _framesSinceCodecAdaptCheck;
+
+    // Capture thread under _captureFrameSync (same nesting into _peerSync as SnapshotOpenChannelsInto).
+    private void MaybeAdaptEncoderLocked()
+    {
+        if (++_framesSinceCodecAdaptCheck < CodecAdaptIntervalFrames) return;
+        _framesSinceCodecAdaptCheck = 0;
+
+        int maxLossPermille = -1;
+        var nowUtc = DateTime.UtcNow;
+        lock (_peerSync)
+        {
+            foreach (var peer in _peersBySocket.Values)
+            {
+                var reported = peer.GetFreshLossReportPermille(nowUtc);
+                if (reported > maxLossPermille) maxLossPermille = reported;
+            }
+        }
+
+        // No fresh report = no information; keep last value or PLP flips mid-spurt after every silence gap.
+        if (maxLossPermille < 0) return;
+
+        int targetPlp = AudioHelpers.ComputeAdaptedPacketLossPercent(maxLossPermille);
+        if (Math.Abs(targetPlp - _adaptedPacketLossPercent) < PlpDeadbandPercent) return;
+
+        int targetBitrate = AudioHelpers.ComputeAdaptedBitrate(targetPlp);
+        try
+        {
+            _encoder.PacketLossPercent = targetPlp;
+            if (targetBitrate != _adaptedBitrate)
+                _encoder.Bitrate = targetBitrate;
+        }
+        catch (Exception ex)
+        {
+            VoiceDiagnostics.Log("bcl.codec.adapt", $"error=\"{ex.Message}\"");
+            return;
+        }
+        _adaptedPacketLossPercent = targetPlp;
+        _adaptedBitrate = targetBitrate;
+        VoiceDiagnostics.Log("bcl.codec.adapt", $"plp={targetPlp} bitrate={targetBitrate} maxLossPermille={maxLossPermille}");
+    }
+
     private static OpusEncoder CreateEncoder()
     {
 #pragma warning disable CS0618
@@ -3294,7 +3383,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         private readonly object _sync = new();
         private readonly BclPeerPlaybackRoute _leftRoute;
         private readonly BclPeerPlaybackRoute _rightRoute;
-        private readonly BclVoiceJitterBuffer _jitterBuffer = new(targetDelayFrames: BclJitterTargetDelayFrames, maxBufferedFrames: BclJitterMaxBufferedFrames);
+        private readonly BclVoiceJitterBuffer _jitterBuffer = new(targetDelayFrames: BclJitterTargetDelayFrames, maxBufferedFrames: BclJitterMaxBufferedFrames, minTargetDelayFrames: BclJitterMinTargetFrames, maxTargetDelayFrames: BclJitterMaxTargetFrames);
         private VoiceProximityResult _currentRoute = VoiceProximityResult.Muted(VoiceProximityReason.Unmapped);
         private float _levelPeakSinceStats;
         private float _packetLevelPeakSinceStats;
@@ -3385,6 +3474,53 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
 
         private object _lrSync = new();
         public void SetInterleaveSync(object sync) => _lrSync = sync;
+
+        private const int MinPacketsForLossReport = 25;
+        private static readonly TimeSpan LossReportInterval = TimeSpan.FromSeconds(2);
+        private static readonly TimeSpan LossReportFreshness = TimeSpan.FromSeconds(6);
+        private int _reportedLossPermille = -1;
+        private long _reportedLossAtTicks;
+        private DateTime _lastLossReportSentUtc = DateTime.MinValue;
+        private long _lastReportedAcceptedPackets;
+        private long _lastReportedLostFrames;
+
+        public void StoreLossReport(int lossPermille)
+        {
+            Volatile.Write(ref _reportedLossPermille, lossPermille);
+            Interlocked.Exchange(ref _reportedLossAtTicks, DateTime.UtcNow.Ticks);
+        }
+
+        public int GetFreshLossReportPermille(DateTime nowUtc)
+        {
+            long atTicks = Interlocked.Read(ref _reportedLossAtTicks);
+            if (atTicks == 0 || nowUtc.Ticks - atTicks > LossReportFreshness.Ticks) return -1;
+            return Volatile.Read(ref _reportedLossPermille);
+        }
+
+        // Main thread only (backend Update); reports this link's recent loss so the talker tunes FEC per need.
+        public void MaybeSendLossReport(DateTime nowUtc)
+        {
+            if (nowUtc - _lastLossReportSentUtc < LossReportInterval) return;
+            _lastLossReportSentUtc = nowUtc;
+            long accepted = _jitterBuffer.CumulativeAcceptedPackets;
+            long lost = _jitterBuffer.CumulativeLostFrames;
+            long deltaAccepted = accepted - _lastReportedAcceptedPackets;
+            long deltaLost = lost - _lastReportedLostFrames;
+            _lastReportedAcceptedPackets = accepted;
+            _lastReportedLostFrames = lost;
+            long total = deltaAccepted + deltaLost;
+            if (total < MinPacketsForLossReport) return;
+            int lossPermille = (int)Math.Clamp(deltaLost * 1000 / total, 0, 1000);
+            var channel = DataChannel;
+            if (channel?.readyState != RTCDataChannelState.open) return;
+            try
+            {
+                channel.send(BuildLossReportMessage(lossPermille));
+            }
+            catch
+            {
+            }
+        }
 
         public string SocketId { get; }
         public int ClientId { get; private set; }
@@ -3670,6 +3806,10 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
                     else if (string.IsNullOrEmpty(error))
                         error = frameError;
                 }
+
+                // A capped forced drain can leave tail frames behind; re-arm so they flush instead of stranding.
+                if (frames.Count > 0 && _jitterBuffer.HasBufferedPackets)
+                    ScheduleTailFlushLocked();
 
                 return true;
             }

@@ -35,6 +35,9 @@ internal static class AudioHelpers
     public const bool OpusUseConstrainedVbr = true;
     public const bool OpusUseInbandFec = true;     // arm the LossResistant flag + the Drain() Fec arm
     public const int OpusPacketLossPercent = 15;   // non-zero PLP so Opus actually EMBEDS FEC redundancy
+    public const int OpusMinAdaptedPacketLossPercent = 5;
+    public const int OpusMaxAdaptedPacketLossPercent = 25;
+    public const int OpusElevatedFecBitrate = 56_000;
     public const float TransmitPeakCeiling = 0.30f;
     public const float TransmitLimiterReleasePerFrame = 0.025f;
     public const float CaptureEncodePeakCeiling = 0.95f;
@@ -72,6 +75,16 @@ internal static class AudioHelpers
 
     public static int NextClampStreak(int currentStreak, bool clamped)
         => clamped ? currentStreak + 1 : Math.Max(0, currentStreak - 1);
+
+    public static int ComputeAdaptedPacketLossPercent(int lossPermille)
+    {
+        int percent = (int)Math.Round(lossPermille / 10.0);
+        return Math.Clamp(percent, OpusMinAdaptedPacketLossPercent, OpusMaxAdaptedPacketLossPercent);
+    }
+
+    // At a fixed bitrate Opus steals primary-quality bits for FEC, so elevated PLP pairs with a modest bitrate bump.
+    public static int ComputeAdaptedBitrate(int packetLossPercent)
+        => packetLossPercent > OpusPacketLossPercent ? OpusElevatedFecBitrate : OpusBitrate;
 
     public static float GetTransmitLimiterGain(float peak)
     {

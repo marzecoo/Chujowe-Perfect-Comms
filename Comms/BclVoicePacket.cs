@@ -180,8 +180,21 @@ internal sealed class BclVoiceJitterBuffer
     public const int DefaultMaxBufferedFrames = 12;
     private const int MaxDrainFramesPerPacket = 8;
 
-    private readonly int _targetDelayFrames;
+    private const int GrowCooldownPackets = 25;
+    private const int AdaptWindowPackets = 100;
+    private const int ShrinkCleanWindows = 3;
+    private const int SnapLossReportCapFrames = 25;
+
+    private int _targetDelayFrames;
+    private readonly int _minTargetDelayFrames;
+    private readonly int _maxTargetDelayFrames;
     private readonly int _maxBufferedFrames;
+    private int _packetsSinceGrow;
+    private int _packetsInAdaptWindow;
+    private bool _windowDisturbed;
+    private int _cleanWindowStreak;
+    private long _cumulativeAcceptedPackets;
+    private long _cumulativeLostFrames;
     private readonly Dictionary<ushort, BclVoicePacket> _packets = new();
     private bool _hasExpected;
     private ushort _expectedSequence;
@@ -217,10 +230,46 @@ internal sealed class BclVoiceJitterBuffer
     private readonly List<BclVoicePlayoutFrame> _enqueueScratch = new(MaxDrainFramesPerPacket);
     private readonly List<BclVoicePlayoutFrame> _drainScratch = new(MaxDrainFramesPerPacket);
 
-    public BclVoiceJitterBuffer(int targetDelayFrames = DefaultTargetDelayFrames, int maxBufferedFrames = DefaultMaxBufferedFrames)
+    public BclVoiceJitterBuffer(int targetDelayFrames = DefaultTargetDelayFrames, int maxBufferedFrames = DefaultMaxBufferedFrames, int? minTargetDelayFrames = null, int? maxTargetDelayFrames = null)
     {
-        _targetDelayFrames = Math.Clamp(targetDelayFrames, 0, maxBufferedFrames);
         _maxBufferedFrames = Math.Max(1, maxBufferedFrames);
+        _targetDelayFrames = Math.Clamp(targetDelayFrames, 0, _maxBufferedFrames);
+        _minTargetDelayFrames = Math.Clamp(minTargetDelayFrames ?? _targetDelayFrames, 0, _targetDelayFrames);
+        _maxTargetDelayFrames = Math.Clamp(maxTargetDelayFrames ?? _targetDelayFrames, _targetDelayFrames, _maxBufferedFrames);
+        _packetsSinceGrow = GrowCooldownPackets;
+    }
+
+    public int CurrentTargetDelayFrames => _targetDelayFrames;
+    public bool HasBufferedPackets => _packets.Count > 0;
+    internal long CumulativeAcceptedPackets => System.Threading.Interlocked.Read(ref _cumulativeAcceptedPackets);
+    internal long CumulativeLostFrames => System.Threading.Interlocked.Read(ref _cumulativeLostFrames);
+
+    // Grow fast on lateness/reorder (cooldown-capped), shrink slow (one frame per ShrinkCleanWindows clean windows).
+    private void NoteDisturbance()
+    {
+        _windowDisturbed = true;
+        _cleanWindowStreak = 0;
+        if (_packetsSinceGrow < GrowCooldownPackets) return;
+        if (_targetDelayFrames >= _maxTargetDelayFrames) return;
+        _targetDelayFrames++;
+        _packetsSinceGrow = 0;
+    }
+
+    private void NoteAcceptedPacketForAdaptation()
+    {
+        if (_packetsSinceGrow < int.MaxValue) _packetsSinceGrow++;
+        if (++_packetsInAdaptWindow < AdaptWindowPackets) return;
+        _packetsInAdaptWindow = 0;
+        if (_windowDisturbed)
+        {
+            _windowDisturbed = false;
+            _cleanWindowStreak = 0;
+            return;
+        }
+        if (++_cleanWindowStreak < ShrinkCleanWindows) return;
+        _cleanWindowStreak = 0;
+        if (_targetDelayFrames > _minTargetDelayFrames)
+            _targetDelayFrames--;
     }
 
     public IReadOnlyList<BclVoicePlayoutFrame> Enqueue(BclVoicePacket packet)
@@ -237,6 +286,7 @@ internal sealed class BclVoiceJitterBuffer
         if (IsBefore(packet.Sequence, _expectedSequence))
         {
             _lateDrops++;
+            NoteDisturbance();
             return frames;
         }
 
@@ -246,9 +296,13 @@ internal sealed class BclVoiceJitterBuffer
         // instead of synthesizing a multi-second PLC concealment catch-up one frame at a time.
         if (Distance(_expectedSequence, packet.Sequence) > _maxBufferedFrames)
         {
+            System.Threading.Interlocked.Add(ref _cumulativeLostFrames,
+                Math.Min(Distance(_expectedSequence, packet.Sequence), SnapLossReportCapFrames));
             _packets.Clear();
             _expectedSequence = packet.Sequence;
             _consecutiveConcealed = 0; // real-frame resume after a discontinuity snap (Fix 2b-2)
+            _windowDisturbed = true;
+            _cleanWindowStreak = 0;
         }
 
         if (_packets.ContainsKey(packet.Sequence))
@@ -287,10 +341,24 @@ internal sealed class BclVoiceJitterBuffer
         }
         if (anyBufferedAfter ||
             (Distance(_expectedSequence, packet.Sequence) > 0 && !_packets.ContainsKey(_expectedSequence)))
+        {
             _reorderedPackets++;
+            // Head-gap-only means plain loss, not reordering: widening the window can't help there.
+            if (anyBufferedAfter)
+            {
+                NoteDisturbance();
+            }
+            else
+            {
+                _windowDisturbed = true;
+                _cleanWindowStreak = 0;
+            }
+        }
 
         _packets[packet.Sequence] = packet;
         _maxDepth = Math.Max(_maxDepth, _packets.Count);
+        System.Threading.Interlocked.Increment(ref _cumulativeAcceptedPackets);
+        NoteAcceptedPacketForAdaptation();
 
         // On overflow drop the newest (furthest-future) frame, not the playout head, to avoid
         // an extra concealment/dropout per overflow.
@@ -353,12 +421,17 @@ internal sealed class BclVoiceJitterBuffer
             // Long real gap: snap forward instead of inventing > ~100 ms of fake audio (Fix 2b-2).
             if (_consecutiveConcealed >= MaxConsecutiveConcealFrames)
             {
+                System.Threading.Interlocked.Add(ref _cumulativeLostFrames,
+                    Math.Min(Distance(_expectedSequence, nextSequence.Value), SnapLossReportCapFrames));
                 _expectedSequence = nextSequence.Value;
                 _consecutiveConcealed = 0;
                 continue;
             }
             _lostFrames++;
             _consecutiveConcealed++;
+            System.Threading.Interlocked.Increment(ref _cumulativeLostFrames);
+            _windowDisturbed = true;
+            _cleanWindowStreak = 0;
             if (next.HasLossResistantFec && Distance(_expectedSequence, nextSequence.Value) == 1)
             {
                 _fecFrames++;
