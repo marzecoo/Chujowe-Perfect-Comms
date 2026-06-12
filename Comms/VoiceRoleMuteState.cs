@@ -25,6 +25,8 @@ internal static partial class VoiceRoleMuteState
     private const string MediatedModifierName = "TownOfUs.Modifiers.Crewmate.MediatedModifier";
     private const float RoleStateRefreshInterval = 0.25f;
     private const float JailVoiceGateLogInterval = 2f;
+    private const float JailVoiceHeartbeatSeconds = 2f;
+    private static float _nextJailVoiceHeartbeatTime;
 
     private static readonly HashSet<byte> JailVoiceAllowed = new();
     private static readonly HashSet<byte> MeetingBlackmailedPlayers = new();
@@ -96,6 +98,7 @@ internal static partial class VoiceRoleMuteState
                 MeetingBlackmailedPlayers.Clear();
 
             PruneJailVoiceAllowed(settings);
+            MaybeResendJailVoiceHeartbeat(settings);
             return;
         }
 
@@ -674,9 +677,12 @@ internal static partial class VoiceRoleMuteState
             return;
         }
 
-        SetJailVoiceAllowed(jailedPlayerId, allowed);
-        VoiceDiagnostics.Log("jailvoice.rpc.apply", $"applied=true jailor={jailorId} jailee={jailedPlayerId}");
-        VoiceChatHudState.ApplyMicState();
+        bool added = JailVoiceAllowed.Add(jailedPlayerId);
+        if (added)
+        {
+            VoiceDiagnostics.Log("jailvoice.rpc.apply", $"applied=true jailor={jailorId} jailee={jailedPlayerId}");
+            VoiceChatHudState.ApplyMicState();
+        }
     }
 
     internal static bool IsJailVoiceAllowed(byte playerId)
@@ -801,6 +807,34 @@ internal static partial class VoiceRoleMuteState
     {
         string? roleName = player?.Data?.Role?.GetType().FullName;
         return roleName == JailorRoleName;
+    }
+
+    // Repairs lost/rejected/pruned applies on any client (one bad frame is otherwise permanent); mirrors radio heartbeat.
+    private static void MaybeResendJailVoiceHeartbeat(VoiceRoomSettingsSnapshot settings)
+    {
+        if (JailVoiceAllowed.Count == 0) return;
+        if (!settings.MuteJailedInMeetings || !settings.JailorCanUnmuteJailed) return;
+        if (Time.time < _nextJailVoiceHeartbeatTime) return;
+        _nextJailVoiceHeartbeatTime = Time.time + JailVoiceHeartbeatSeconds;
+
+        var local = PlayerControl.LocalPlayer;
+        if (local == null || local.Data?.IsDead == true || !IsJailor(local)) return;
+
+        foreach (byte playerId in new List<byte>(JailVoiceAllowed))
+        {
+            var player = FindPlayer(playerId);
+            if (player == null || player.Data?.IsDead == true) continue;
+            if (!TryGetJailorId(player, out byte jailorId) || jailorId != local.PlayerId) continue;
+            try
+            {
+                VoiceChatRoom.SendJailVoicePacket(playerId, true);
+                VoiceDiagnostics.Log("jailvoice.rpc.heartbeat", $"jailee={playerId}");
+            }
+            catch (Exception ex)
+            {
+                VoiceDiagnostics.DebugError($"[VC] Jail voice heartbeat failed: {ex.Message}");
+            }
+        }
     }
 
     private static void PruneJailVoiceAllowed(VoiceRoomSettingsSnapshot settings)
