@@ -3760,7 +3760,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         }
         public void SetVolume(float volume)
         {
-            var clamped = Mathf.Clamp(volume, 0f, 2f);
+            var clamped = Math.Clamp(volume, 0f, 2f);
             _leftRoute.SetVolume(clamped);
             _rightRoute.SetVolume(clamped);
         }
