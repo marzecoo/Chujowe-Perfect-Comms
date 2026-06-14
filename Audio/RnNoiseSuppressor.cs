@@ -22,6 +22,10 @@ internal sealed unsafe class RnNoiseSuppressor : IDisposable
     private readonly int _frameSize;
     private readonly float[] _input;
     private readonly float[] _output;
+    // Guards the native _state handle: TryProcessInPlace dereferences it while Reset/Dispose destroy it. The
+    // outer _captureFrameSync in the backend already serializes callers, so this is uncontended in steady
+    // state; it exists so the native wrapper is self-safe regardless of caller discipline.
+    private readonly object _stateLock = new();
     private IntPtr _state;
     private bool _disposed;
 
@@ -82,53 +86,62 @@ internal sealed unsafe class RnNoiseSuppressor : IDisposable
     {
         processedFrames = 0;
         speechProbabilityMax = 0f;
-        if (_disposed || _state == IntPtr.Zero) return false;
-
-        var count = Math.Min(sampleCount, pcm.Length);
-        var processed = 0;
-        while (processed + _frameSize <= count)
+        lock (_stateLock)
         {
-            for (var i = 0; i < _frameSize; i++)
-                _input[i] = Math.Clamp(pcm[processed + i], -1f, 1f) * short.MaxValue;
+            if (_disposed || _state == IntPtr.Zero) return false;
 
-            fixed (float* input = _input)
-            fixed (float* output = _output)
+            var count = Math.Min(sampleCount, pcm.Length);
+            var processed = 0;
+            while (processed + _frameSize <= count)
             {
-                speechProbabilityMax = Math.Max(speechProbabilityMax, _native.ProcessFrame(_state, output, input));
+                for (var i = 0; i < _frameSize; i++)
+                    _input[i] = Math.Clamp(pcm[processed + i], -1f, 1f) * short.MaxValue;
+
+                fixed (float* input = _input)
+                fixed (float* output = _output)
+                {
+                    speechProbabilityMax = Math.Max(speechProbabilityMax, _native.ProcessFrame(_state, output, input));
+                }
+
+                for (var i = 0; i < _frameSize; i++)
+                    pcm[processed + i] = Math.Clamp(_output[i] / short.MaxValue, -1f, 1f);
+
+                processed += _frameSize;
+                processedFrames++;
             }
 
-            for (var i = 0; i < _frameSize; i++)
-                pcm[processed + i] = Math.Clamp(_output[i] / short.MaxValue, -1f, 1f);
-
-            processed += _frameSize;
-            processedFrames++;
+            return processed > 0;
         }
-
-        return processed > 0;
     }
 
     public void Reset()
     {
-        if (_disposed) return;
+        lock (_stateLock)
+        {
+            if (_disposed) return;
 
-        var replacement = _native.Create(IntPtr.Zero);
-        if (replacement == IntPtr.Zero) return;
+            var replacement = _native.Create(IntPtr.Zero);
+            if (replacement == IntPtr.Zero) return;
 
-        var previous = _state;
-        _state = replacement;
-        if (previous != IntPtr.Zero)
-            _native.Destroy(previous);
+            var previous = _state;
+            _state = replacement;
+            if (previous != IntPtr.Zero)
+                _native.Destroy(previous);
+        }
     }
 
     public void Dispose()
     {
-        if (_disposed) return;
-        _disposed = true;
+        lock (_stateLock)
+        {
+            if (_disposed) return;
+            _disposed = true;
 
-        var state = _state;
-        _state = IntPtr.Zero;
-        if (state != IntPtr.Zero)
-            _native.Destroy(state);
+            var state = _state;
+            _state = IntPtr.Zero;
+            if (state != IntPtr.Zero)
+                _native.Destroy(state);
+        }
     }
 
     private static bool TryLoadNative(out NativeApi native, out string error)

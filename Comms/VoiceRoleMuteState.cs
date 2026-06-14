@@ -44,11 +44,17 @@ internal static partial class VoiceRoleMuteState
     private const string InjectedSlownessModifierName = "TouMegaChujoweExtension.Modifiers.Impostor.InjectedSlownessModifier";
     private const string InjectedVeryLowVisionModifierName = "TouMegaChujoweExtension.Modifiers.Impostor.InjectedVeryLowVisionModifier";
     private const string InjectedWeaknessModifierName = "TouMegaChujoweExtension.Modifiers.Impostor.InjectedWeaknessModifier";
+    private const string TouMceVoodooMutedModifierName = "TouMegaChujoweExtension.Modifiers.Impostor.VoodooMutedModifier";
     private const float RoleStateRefreshInterval = 0.25f;
+    private const float JailVoiceGateLogInterval = 2f;
+    private const float JailVoiceHeartbeatSeconds = 2f;
+    private static float _nextJailVoiceHeartbeatTime;
 
     private static readonly HashSet<byte> JailVoiceAllowed = new();
     private static readonly HashSet<byte> MeetingBlackmailedPlayers = new();
     private static readonly HashSet<byte> PostMeetingBlackmailedPlayers = new();
+    private static readonly HashSet<byte> MeetingVoodooMutedPlayers = new();
+    private static readonly HashSet<byte> PostMeetingVoodooMutedPlayers = new();
     private static readonly Dictionary<byte, CachedRoleState> RoleStateCache = new();
 
     private static Type? _blackmailedModifierType;
@@ -83,11 +89,14 @@ internal static partial class VoiceRoleMuteState
     private static Type? _injectedSlownessModifierType;
     private static Type? _injectedVeryLowVisionModifierType;
     private static Type? _injectedWeaknessModifierType;
+    private static Type? _touMceVoodooMutedModifierType;
     private static bool _supportedModTypesResolved;
     private static int _resolvedGameId = int.MinValue;
     private static VoiceGamePhase _resolvedPhase = VoiceGamePhase.Unknown;
     private static float _nextRoleStateRefreshTime;
     private static bool _wasInMeeting;
+    private static DateTime _nextJailVoiceGateLogUtc = DateTime.MinValue;
+    private static bool _lastJailVoiceUnmuteAvailable;
 
     private readonly record struct CachedRoleState(
         bool IsBlackmailed,
@@ -106,7 +115,9 @@ internal static partial class VoiceRoleMuteState
         bool HasMediumSpirit,
         Vector2 MediumSpiritPosition,
         bool IsMediatedGhost,
-        byte MediatingMediumId);
+        byte MediatingMediumId,
+        bool IsVoodooMuted,
+        bool IsVoodooMutedNextRound);
 
     internal static void Update()
     {
@@ -118,6 +129,8 @@ internal static partial class VoiceRoleMuteState
         {
             PostMeetingBlackmailedPlayers.Clear();
             MeetingBlackmailedPlayers.Clear();
+            PostMeetingVoodooMutedPlayers.Clear();
+            MeetingVoodooMutedPlayers.Clear();
             InvalidateRoleStateCache();
         }
 
@@ -131,7 +144,13 @@ internal static partial class VoiceRoleMuteState
             else
                 MeetingBlackmailedPlayers.Clear();
 
+            if (settings.MuteVoodooInMeetings)
+                TrackMeetingVoodooMutedPlayers();
+            else
+                MeetingVoodooMutedPlayers.Clear();
+
             PruneJailVoiceAllowed(settings);
+            MaybeResendJailVoiceHeartbeat(settings);
             return;
         }
 
@@ -143,6 +162,7 @@ internal static partial class VoiceRoleMuteState
             _wasInMeeting = false;
             JailVoiceAllowed.Clear();
             PostMeetingBlackmailedPlayers.Clear();
+            PostMeetingVoodooMutedPlayers.Clear();
 
             if (settings.MuteBlackmailedInMeetings && settings.MuteBlackmailedNextRound)
             {
@@ -150,13 +170,28 @@ internal static partial class VoiceRoleMuteState
                     PostMeetingBlackmailedPlayers.Add(playerId);
             }
 
+            if (settings.MuteVoodooInMeetings && settings.MuteVoodooNextRound)
+            {
+                foreach (byte playerId in MeetingVoodooMutedPlayers)
+                    PostMeetingVoodooMutedPlayers.Add(playerId);
+            }
+
             MeetingBlackmailedPlayers.Clear();
+            MeetingVoodooMutedPlayers.Clear();
             InvalidateRoleStateCache();
         }
-        else if (!settings.MuteBlackmailedNextRound && PostMeetingBlackmailedPlayers.Count > 0)
+        else
         {
-            PostMeetingBlackmailedPlayers.Clear();
-            InvalidateRoleStateCache();
+            if (!settings.MuteBlackmailedNextRound && PostMeetingBlackmailedPlayers.Count > 0)
+            {
+                PostMeetingBlackmailedPlayers.Clear();
+                InvalidateRoleStateCache();
+            }
+            if (!settings.MuteVoodooNextRound && PostMeetingVoodooMutedPlayers.Count > 0)
+            {
+                PostMeetingVoodooMutedPlayers.Clear();
+                InvalidateRoleStateCache();
+            }
         }
 
         if (VoiceSceneState.IsLobbyVoicePhase(phase))
@@ -166,9 +201,15 @@ internal static partial class VoiceRoleMuteState
                 PostMeetingBlackmailedPlayers.Clear();
                 InvalidateRoleStateCache();
             }
+            if (PostMeetingVoodooMutedPlayers.Count > 0)
+            {
+                PostMeetingVoodooMutedPlayers.Clear();
+                InvalidateRoleStateCache();
+            }
         }
 
         PrunePostMeetingBlackmailedPlayers();
+        PrunePostMeetingVoodooMutedPlayers();
     }
 
     internal static bool IsLocalVoiceBlocked()
@@ -255,6 +296,12 @@ internal static partial class VoiceRoleMuteState
             ? result with { FilterMode = VoiceAudioFilterMode.ListenerMuffle }
             : result;
 
+    internal static bool IsVoiceDead(PlayerControl? player)
+    {
+        var data = player?.Data;
+        return data != null && (data.IsDead || data.Role?.IsDead == true);
+    }
+
     internal static bool TryGetLocalVoiceBlockReason(out string reason)
         => TryGetLocalVoiceBlockReason(VoiceSceneState.ResolvePhase(), out reason);
 
@@ -264,13 +311,14 @@ internal static partial class VoiceRoleMuteState
         Update();
 
         var local = PlayerControl.LocalPlayer;
-        if (local == null || local.Data?.IsDead == true)
+        if (local == null || IsVoiceDead(local))
             return false;
 
         GetPlayerRoleState(local, out bool isBlackmailed, out bool isJailed, out byte jailorId,
             out bool isParasiteControlled, out bool isPuppeteerControlled, out bool isCrewpostor,
             out bool isVampire, out bool isLover, out byte loverPartnerId,
             out bool isBlackmailedNextRound, out bool isSwooped, out bool isGlitchHacked);
+        GetPlayerVoodooMuteState(local, out bool isVoodooMuted, out bool isVoodooMutedNextRound);
 
         var state = new CachedRoleState(
             isBlackmailed,
@@ -289,7 +337,9 @@ internal static partial class VoiceRoleMuteState
             false,
             default,
             false,
-            byte.MaxValue);
+            byte.MaxValue,
+            isVoodooMuted,
+            isVoodooMutedNextRound);
 
         var settings = VoiceRoomSettingsState.Current;
         bool meetingVoicePhase = VoiceSceneState.IsMeetingVoicePhase(phase);
@@ -329,13 +379,14 @@ internal static partial class VoiceRoleMuteState
 
         var local = PlayerControl.LocalPlayer;
         var phase = VoiceSceneState.ResolvePhase();
-        if (local == null || !VoiceSceneState.IsMeetingVoicePhase(phase) || local.Data?.IsDead == true)
+        if (local == null || !VoiceSceneState.IsMeetingVoicePhase(phase) || IsVoiceDead(local))
             return false;
 
         GetPlayerRoleState(local, out bool isBlackmailed, out bool isJailed, out byte jailorId,
             out _, out _, out _, out _, out _, out _, out _, out bool isSwooped, out bool isGlitchHacked);
+        GetPlayerVoodooMuteState(local, out bool isVoodooMuted, out bool isVoodooMutedNextRound);
 
-        var state = new CachedRoleState(isBlackmailed, isJailed, jailorId, false, false, false, false, false, byte.MaxValue, false, isSwooped, isGlitchHacked, false, false, default, false, byte.MaxValue);
+        var state = new CachedRoleState(isBlackmailed, isJailed, jailorId, false, false, false, false, false, byte.MaxValue, false, isSwooped, isGlitchHacked, false, false, default, false, byte.MaxValue, isVoodooMuted, isVoodooMutedNextRound);
         var settings = VoiceRoomSettingsState.Current;
         if (settings.TouMceHackerJamMutesVoice && TouMceVoiceIntegration.IsHackerJammed())
         {
@@ -381,7 +432,9 @@ internal static partial class VoiceRoleMuteState
             player.HasMediumSpirit,
             player.MediumSpiritPosition,
             player.IsMediatedGhost,
-            player.MediatingMediumId);
+            player.MediatingMediumId,
+            player.IsVoodooMuted,
+            player.IsVoodooMutedNextRound);
 
         return IsMeetingVoiceBlocked(player.PlayerId, state, VoiceRoomSettingsState.Current, out _);
     }
@@ -411,7 +464,9 @@ internal static partial class VoiceRoleMuteState
             player.HasMediumSpirit,
             player.MediumSpiritPosition,
             player.IsMediatedGhost,
-            player.MediatingMediumId);
+            player.MediatingMediumId,
+            player.IsVoodooMuted,
+            player.IsVoodooMutedNextRound);
 
         return IsMeetingVoiceBlocked(player.PlayerId, state, VoiceRoomSettingsState.Current, out var reason)
             ? reason
@@ -440,7 +495,9 @@ internal static partial class VoiceRoleMuteState
             player.HasMediumSpirit,
             player.MediumSpiritPosition,
             player.IsMediatedGhost,
-            player.MediatingMediumId);
+            player.MediatingMediumId,
+            player.IsVoodooMuted,
+            player.IsVoodooMutedNextRound);
 
         return IsTaskVoiceBlocked(player.PlayerId, state, VoiceRoomSettingsState.Current, out _);
     }
@@ -464,7 +521,9 @@ internal static partial class VoiceRoleMuteState
             player.HasMediumSpirit,
             player.MediumSpiritPosition,
             player.IsMediatedGhost,
-            player.MediatingMediumId);
+            player.MediatingMediumId,
+            player.IsVoodooMuted,
+            player.IsVoodooMutedNextRound);
 
         return IsTaskVoiceBlocked(player.PlayerId, state, VoiceRoomSettingsState.Current, out var reason)
             ? reason
@@ -592,6 +651,22 @@ internal static partial class VoiceRoleMuteState
         isGlitchHacked = state.IsGlitchHacked;
     }
 
+    internal static void GetPlayerVoodooMuteState(
+        PlayerControl? player,
+        out bool isVoodooMuted,
+        out bool isVoodooMutedNextRound)
+    {
+        isVoodooMuted = false;
+        isVoodooMutedNextRound = false;
+        if (player == null) return;
+
+        RefreshRoleStateCacheIfNeeded();
+        if (!RoleStateCache.TryGetValue(player.PlayerId, out var state)) return;
+
+        isVoodooMuted = state.IsVoodooMuted;
+        isVoodooMutedNextRound = state.IsVoodooMutedNextRound;
+    }
+
     internal static void GetPlayerMediumVoiceState(
         PlayerControl? player,
         out bool isMedium,
@@ -618,6 +693,21 @@ internal static partial class VoiceRoleMuteState
     }
 
     internal static bool CanLocalJailorUnmute(out byte jailedPlayerId)
+    {
+        bool available = CanLocalJailorUnmuteCore(out jailedPlayerId);
+        if (available != _lastJailVoiceUnmuteAvailable)
+        {
+            _lastJailVoiceUnmuteAvailable = available;
+            VoiceDiagnostics.Log("jailvoice.available", $"available={available} jailee={jailedPlayerId}");
+        }
+
+        if (!available)
+            LogJailVoiceGateThrottled();
+
+        return available;
+    }
+
+    private static bool CanLocalJailorUnmuteCore(out byte jailedPlayerId)
     {
         jailedPlayerId = byte.MaxValue;
         Update();
@@ -650,10 +740,60 @@ internal static partial class VoiceRoleMuteState
         return false;
     }
 
+    private static void LogJailVoiceGateThrottled()
+    {
+        if (DateTime.UtcNow < _nextJailVoiceGateLogUtc) return;
+        if (!VoiceDiagnostics.IsEnabled) return;
+
+        _nextJailVoiceGateLogUtc = DateTime.UtcNow.AddSeconds(JailVoiceGateLogInterval);
+
+        var phase = VoiceSceneState.ResolvePhase();
+        if (!VoiceSceneState.IsMeetingVoicePhase(phase)) return;
+
+        int jailedCount = 0;
+        byte jaileeId = byte.MaxValue;
+        byte jaileeJailorId = byte.MaxValue;
+        foreach (var pair in RoleStateCache)
+        {
+            if (!pair.Value.IsJailed) continue;
+            jailedCount++;
+            if (jaileeId == byte.MaxValue)
+            {
+                jaileeId = pair.Key;
+                jaileeJailorId = pair.Value.JailorId;
+            }
+        }
+
+        if (jailedCount == 0) return;
+
+        var settings = VoiceRoomSettingsState.Current;
+        if (!settings.MuteJailedInMeetings || !settings.JailorCanUnmuteJailed)
+        {
+            VoiceDiagnostics.Log("jailvoice.gate", $"gate=settings muteJailed={settings.MuteJailedInMeetings} canUnmute={settings.JailorCanUnmuteJailed}");
+            return;
+        }
+
+        var local = PlayerControl.LocalPlayer;
+        if (local == null || local.Data?.IsDead == true || !IsJailor(local))
+        {
+            VoiceDiagnostics.Log("jailvoice.gate", $"gate=localRole jailor={IsJailor(local)} dead={local?.Data?.IsDead == true} phase={phase}");
+            return;
+        }
+
+        var jailee = FindPlayer(jaileeId);
+        VoiceDiagnostics.Log("jailvoice.gate", $"gate=candidate jailedCount={jailedCount} jailorIdMismatch={jaileeJailorId}vs{local.PlayerId} alreadyAllowed={JailVoiceAllowed.Contains(jaileeId)} jaileeDead={jailee == null || jailee.Data?.IsDead == true}");
+    }
+
     internal static void LocalJailorAllowVoice()
     {
         RefreshRoleStateCacheIfNeeded(force: true);
-        if (!CanLocalJailorUnmute(out byte jailedPlayerId)) return;
+        if (!CanLocalJailorUnmute(out byte jailedPlayerId))
+        {
+            VoiceDiagnostics.Log("jailvoice.local", "rejected=true");
+            return;
+        }
+
+        VoiceDiagnostics.Log("jailvoice.local", $"allowed=true jailee={jailedPlayerId}");
         SetJailVoiceAllowed(jailedPlayerId, true);
         SendJailVoiceAllowed(jailedPlayerId, true);
         VoiceChatHudState.ApplyMicState();
@@ -673,15 +813,33 @@ internal static partial class VoiceRoleMuteState
         RefreshRoleStateCacheIfNeeded(force: true);
         var settings = VoiceRoomSettingsState.Current;
         if (!settings.MuteJailedInMeetings || !settings.JailorCanUnmuteJailed)
+        {
+            VoiceDiagnostics.Log("jailvoice.rpc.apply", $"applied=false reason=settings-off jailor={jailorId} jailee={jailedPlayerId}");
             return;
+        }
 
         var jailed = FindPlayer(jailedPlayerId);
-        if (jailed == null || !TryGetJailorId(jailed, out byte actualJailorId) || actualJailorId != jailorId)
+        if (jailed == null || !TryGetJailorId(jailed, out byte actualJailorId))
+        {
+            VoiceDiagnostics.Log("jailvoice.rpc.apply", $"applied=false reason=no-jailed-player jailor={jailorId} jailee={jailedPlayerId}");
             return;
-        if (!IsJailorValid(jailorId))
-            return;
+        }
 
-        SetJailVoiceAllowed(jailedPlayerId, allowed);
+        if (actualJailorId != jailorId)
+        {
+            VoiceDiagnostics.Log("jailvoice.rpc.apply", $"applied=false reason=jailor-mismatch jailor={jailorId} actualJailor={actualJailorId} jailee={jailedPlayerId}");
+            return;
+        }
+
+        if (!IsJailorValid(jailorId))
+        {
+            VoiceDiagnostics.Log("jailvoice.rpc.apply", $"applied=false reason=jailor-invalid jailor={jailorId} jailee={jailedPlayerId}");
+            return;
+        }
+
+        bool added = JailVoiceAllowed.Add(jailedPlayerId);
+        if (added)
+            VoiceDiagnostics.Log("jailvoice.rpc.apply", $"applied=true jailor={jailorId} jailee={jailedPlayerId}");
         VoiceChatHudState.ApplyMicState();
     }
 
@@ -705,6 +863,12 @@ internal static partial class VoiceRoleMuteState
         if (settings.MuteBlackmailedInMeetings && state.IsBlackmailed)
         {
             reason = VoiceProximityReason.Blackmailed;
+            return true;
+        }
+
+        if (settings.MuteVoodooInMeetings && state.IsVoodooMuted)
+        {
+            reason = VoiceProximityReason.VoodooMuted;
             return true;
         }
 
@@ -741,6 +905,12 @@ internal static partial class VoiceRoleMuteState
             return true;
         }
 
+        if (settings.MuteVoodooNextRound && state.IsVoodooMutedNextRound)
+        {
+            reason = VoiceProximityReason.VoodooMutedNextRound;
+            return true;
+        }
+
         if (settings.MuteParasiteControlled && state.IsParasiteControlled)
         {
             reason = VoiceProximityReason.ParasiteControlled;
@@ -762,6 +932,8 @@ internal static partial class VoiceRoleMuteState
             VoiceProximityReason.MuteAlive => "Alive Player Muted",
             VoiceProximityReason.Blackmailed => "Blackmailed",
             VoiceProximityReason.BlackmailedNextRound => "Blackmailed",
+            VoiceProximityReason.VoodooMuted => "Voodoo Muted",
+            VoiceProximityReason.VoodooMutedNextRound => "Voodoo Muted",
             VoiceProximityReason.Jailed => "Jailed",
             VoiceProximityReason.ParasiteControlled => "Parasite Controlled",
             VoiceProximityReason.PuppeteerControlled => "Puppeteer Controlled",
@@ -791,6 +963,7 @@ internal static partial class VoiceRoleMuteState
         try
         {
             VoiceChatRoom.SendJailVoicePacket(jailedPlayerId, allowed);
+            VoiceDiagnostics.Log("jailvoice.rpc.sent", $"jailee={jailedPlayerId} allowed={allowed}");
         }
         catch (Exception ex)
         {
@@ -808,6 +981,34 @@ internal static partial class VoiceRoleMuteState
     {
         string? roleName = player?.Data?.Role?.GetType().FullName;
         return roleName == JailorRoleName;
+    }
+
+    // Repairs lost/rejected/pruned applies on any client (one bad frame is otherwise permanent); mirrors radio heartbeat.
+    private static void MaybeResendJailVoiceHeartbeat(VoiceRoomSettingsSnapshot settings)
+    {
+        if (JailVoiceAllowed.Count == 0) return;
+        if (!settings.MuteJailedInMeetings || !settings.JailorCanUnmuteJailed) return;
+        if (Time.time < _nextJailVoiceHeartbeatTime) return;
+        _nextJailVoiceHeartbeatTime = Time.time + JailVoiceHeartbeatSeconds;
+
+        var local = PlayerControl.LocalPlayer;
+        if (local == null || local.Data?.IsDead == true || !IsJailor(local)) return;
+
+        foreach (byte playerId in new List<byte>(JailVoiceAllowed))
+        {
+            var player = FindPlayer(playerId);
+            if (player == null || player.Data?.IsDead == true) continue;
+            if (!TryGetJailorId(player, out byte jailorId) || jailorId != local.PlayerId) continue;
+            try
+            {
+                VoiceChatRoom.SendJailVoicePacket(playerId, true);
+                VoiceDiagnostics.Log("jailvoice.rpc.heartbeat", $"jailee={playerId}");
+            }
+            catch (Exception ex)
+            {
+                VoiceDiagnostics.DebugError($"[VC] Jail voice heartbeat failed: {ex.Message}");
+            }
+        }
     }
 
     private static void PruneJailVoiceAllowed(VoiceRoomSettingsSnapshot settings)
@@ -838,6 +1039,34 @@ internal static partial class VoiceRoleMuteState
             if (player == null || player.Data?.IsDead == true || player.Data?.Disconnected == true)
             {
                 PostMeetingBlackmailedPlayers.Remove(playerId);
+                removed = true;
+            }
+        }
+
+        if (removed)
+            InvalidateRoleStateCache();
+    }
+
+    private static void TrackMeetingVoodooMutedPlayers()
+    {
+        foreach (var pair in RoleStateCache)
+        {
+            if (pair.Value.IsVoodooMuted)
+                MeetingVoodooMutedPlayers.Add(pair.Key);
+        }
+    }
+
+    private static void PrunePostMeetingVoodooMutedPlayers()
+    {
+        if (PostMeetingVoodooMutedPlayers.Count == 0) return;
+        bool removed = false;
+
+        foreach (byte playerId in new List<byte>(PostMeetingVoodooMutedPlayers))
+        {
+            var player = FindPlayer(playerId);
+            if (player == null || player.Data?.IsDead == true || player.Data?.Disconnected == true)
+            {
+                PostMeetingVoodooMutedPlayers.Remove(playerId);
                 removed = true;
             }
         }

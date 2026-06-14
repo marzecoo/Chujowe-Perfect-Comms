@@ -39,6 +39,13 @@ internal static class VoiceProximityCalculator
             volume > 0f, VoiceProximityReason.Lobby, 1f);
     }
 
+    // End-game summary screen: the Among Us world (player controls, positions) is gone, so the snapshot has no
+    // players and proximity cannot be computed -- CalculateLobby would mute every peer (Unmapped / NoListener).
+    // EndGame is already a global voice phase, so treat it like a post-game group call: every connected peer is
+    // heard at full volume, centered, letting players react to the result (e.g. a jester win) together.
+    public static VoiceProximityResult CalculateEndGame()
+        => new(0.7f, 0f, 0f, 0f, VoiceAudioFilterMode.None, true, VoiceProximityReason.Lobby, 1f);
+
     public static VoiceProximityResult CalculateMeeting(
         VoicePlayerSnapshot? localPlayer,
         VoicePlayerSnapshot? targetPlayer,
@@ -248,7 +255,7 @@ internal static class VoiceProximityCalculator
                 return VoiceProximityResult.Muted(VoiceProximityReason.OnlyGhostsCanTalk, previousWallCoefficient);
         }
 
-        if (localImp && targetDead && s.ImpostorHearGhosts)
+        if (localImp && targetDead && !target.IsSpectator && s.ImpostorHearGhosts)
         {
             float ghostDist = Distance(targetPos, localListenerPos);
             float ghostVolume = VoiceAudioOcclusion.ApplyFalloff(
@@ -313,12 +320,18 @@ internal static class VoiceProximityCalculator
                     return hardOcclusionVirtualRoute;
                 if (hasCameraProxy)
                     return CalculateCameraProxy(targetPos, cameraPosition, s, previousWallCoefficient);
-                return VoiceProximityResult.Muted(VoiceProximityReason.HardOcclusion, wallCoefficient);
+                // Smooth hard occlusion toward silence instead of an instant cut at every wall edge.
+                wallCoefficient += (0f - wallCoefficient) * Math.Clamp(Time.deltaTime * 8f, 0f, 1f);
+                if (wallCoefficient < 0.02f)
+                    return VoiceProximityResult.Muted(VoiceProximityReason.HardOcclusion, 0f);
+                filterMode = VoiceAudioFilterMode.WallMuffle;
             }
-
-            wallCoefficient += (occlusion.TargetVolumeMultiplier - wallCoefficient) *
-                               Math.Clamp(Time.deltaTime * 4f, 0f, 1f);
-            filterMode = occlusion.FilterMode;
+            else
+            {
+                wallCoefficient += (occlusion.TargetVolumeMultiplier - wallCoefficient) *
+                                   Math.Clamp(Time.deltaTime * 4f, 0f, 1f);
+                filterMode = occlusion.FilterMode;
+            }
         }
         else
         {

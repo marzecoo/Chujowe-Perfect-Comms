@@ -94,6 +94,8 @@ internal static class VoiceRoomSettingsRpc
         writer.Write(settings.MuffleDoctorInjectorNegativeEffects);
         writer.Write(settings.MuffleHerbalistConfuse);
         writer.Write(settings.MuffleEvokerBlinded);
+        writer.Write(settings.MuteVoodooInMeetings);
+        writer.Write(settings.MuteVoodooNextRound);
     }
 
     private static VoiceRoomSettingsSnapshot ReadSettings(MessageReader reader)
@@ -161,6 +163,8 @@ internal static class VoiceRoomSettingsRpc
         bool muffleDoctorInjectorNegativeEffects = reader.BytesRemaining > 0 ? reader.ReadBoolean() : true;
         bool muffleHerbalistConfuse = reader.BytesRemaining > 0 ? reader.ReadBoolean() : true;
         bool muffleEvokerBlinded = reader.BytesRemaining > 0 ? reader.ReadBoolean() : true;
+        bool muteVoodooInMeetings = reader.BytesRemaining > 0 ? reader.ReadBoolean() : true;
+        bool muteVoodooNextRound = reader.BytesRemaining > 0 ? reader.ReadBoolean() : false;
 
         return new VoiceRoomSettingsSnapshot(
             backend,
@@ -207,7 +211,9 @@ internal static class VoiceRoomSettingsRpc
             muffleDoctorInjectorNegativeEffects,
             muffleHerbalistConfuse,
             muffleEvokerBlinded,
-            teamRadioApocalypse).Clamp();
+            teamRadioApocalypse,
+            muteVoodooInMeetings,
+            muteVoodooNextRound).Clamp();
     }
 
     [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.HandleRpc))]

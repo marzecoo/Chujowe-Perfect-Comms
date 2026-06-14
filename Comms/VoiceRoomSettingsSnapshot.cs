@@ -48,14 +48,16 @@ public readonly record struct VoiceRoomSettingsSnapshot(
     bool MuffleDoctorInjectorNegativeEffects,
     bool MuffleHerbalistConfuse,
     bool MuffleEvokerBlinded,
-    bool TeamRadioApocalypse)
+    bool TeamRadioApocalypse,
+    bool MuteVoodooInMeetings,
+    bool MuteVoodooNextRound)
 {
     public const float MinChatDistance = 1.5f;
     public const float MaxChatDistanceLimit = 20f;
 
     public static VoiceRoomSettingsSnapshot Defaults { get; } = new(
-        (int)VoiceTransportBackend.Interstellar,
-        VoiceEndpointSettings.DefaultInterstellarServerUrl,
+        (int)VoiceTransportBackend.BetterCrewLink,
+        VoiceEndpointSettings.DefaultBetterCrewLinkServerUrl,
         6f,
         (int)VoiceFalloffMode.Smooth,
         (int)VoiceOcclusionMode.VisionOnly,
@@ -98,7 +100,9 @@ public readonly record struct VoiceRoomSettingsSnapshot(
         true,
         true,
         true,
-        true);
+        true,
+        true,
+        false);
 
     public static VoiceRoomSettingsSnapshot FromGameOptions()
     {
@@ -155,14 +159,16 @@ public readonly record struct VoiceRoomSettingsSnapshot(
             role.MuffleDoctorInjectorNegativeEffects.Value,
             role.MuffleHerbalistConfuse.Value,
             role.MuffleEvokerBlinded.Value,
-            s.TeamRadioApocalypse.Value).Clamp();
+            s.TeamRadioApocalypse.Value,
+            role.MuteVoodooInMeetings.Value,
+            role.MuteVoodooNextRound.Value).Clamp();
     }
 
     public VoiceRoomSettingsSnapshot Clamp()
     {
         return this with
         {
-            Backend = Enum.IsDefined(typeof(VoiceTransportBackend), Backend) ? Backend : (int)VoiceTransportBackend.Interstellar,
+            Backend = Enum.IsDefined(typeof(VoiceTransportBackend), Backend) ? Backend : (int)VoiceTransportBackend.BetterCrewLink,
             BackendServerUrl = NormalizeBackendServerUrl(Backend, BackendServerUrl),
             MaxChatDistance = Math.Clamp(MaxChatDistance, MinChatDistance, MaxChatDistanceLimit),
             FalloffMode = Enum.IsDefined(typeof(VoiceFalloffMode), FalloffMode) ? FalloffMode : (int)VoiceFalloffMode.Smooth,

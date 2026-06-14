@@ -9,6 +9,7 @@ using NAudio.Wave;
 using Interstellar.Routing;
 using Interstellar.Routing.Router;
 using Interstellar.VoiceChat;
+using MiraAPI.LocalSettings;
 using UnityEngine;
 
 namespace VoiceChatPlugin.VoiceChat;
@@ -33,8 +34,8 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
     private const float RadioDistortionThreshold = 0.97f;
     private const double SyntheticToneFrequency = 220.0;
     private const float SyntheticToneAmplitude = 0.012f;
-    private const int InterstellarReceiveBufferSamples = 2048;
-    private const int InterstellarReceiveBufferAdditionalSamples = 2048;
+    private const int InterstellarReceiveBufferSamples = 4800;
+    private const int InterstellarReceiveBufferAdditionalSamples = 9600;
     private const string DiagnosticsVersion = "interstellar-fang-switch-full-reconnect-20260522";
 
     private readonly LevelMeterRouter _levelMeter;
@@ -49,6 +50,27 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
     private int _customRx;
     private int _customSkipped;
 #if WINDOWS
+    private static readonly TimeSpan SpeakerTopologyPollInterval = TimeSpan.FromSeconds(3);
+    private static readonly TimeSpan SpeakerTopologyFastPollInterval = TimeSpan.FromSeconds(1);
+    private static readonly TimeSpan SpeakerTopologyFastWindow = TimeSpan.FromSeconds(12);
+    private static readonly TimeSpan SpeakerRetryInterval = TimeSpan.FromSeconds(5);
+    private string _lastSpeakerDeviceName = string.Empty;
+    private bool _speakerRequested;
+    private string _speakerTopologySignature = string.Empty;
+    private DateTime _speakerTopologyLastPollUtc = DateTime.MinValue;
+    private DateTime _lastSpeakerRetryUtc = DateTime.MinValue;
+    private long _speakerTopologyFastUntilTicks;
+    private int _speakerReopenRequestedFlag;
+    private DateTime _lastFlagReopenUtc = DateTime.MinValue;
+    private readonly Audio.MicPreprocessor _micPreprocessor = new();
+    private readonly object _micProcessSync = new();
+    private int _openedSpeakerDeviceNumber = int.MinValue;
+    private string _openedSpeakerProductName = string.Empty;
+    private bool _autoMicGain = true;
+    private float _transmitLimiterGain = 1f;
+    private int _latchedMicChannel;
+    private int _micChannelSwitchStreak;
+    private double[] _micChannelEnergyScratch = Array.Empty<double>();
     private IWaveIn? _windowsMicrophoneCapture;
     private ManualMicrophone? _windowsMicrophone;
     private IWavePlayer? _windowsSpeakerOutput;
@@ -136,6 +158,14 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
         }
         return count;
     }
+
+    // Interstellar has no per-peer RTCDataChannel; relay-stream health is not observable at this layer, so a
+    // mapped peer is the best available "open" signal. (BCL distinguishes mapped-but-unopened; Interstellar cannot.)
+    public int CountPeersWithOpenChannel(VoiceGameStateSnapshot snapshot)
+        => CountMappedRemotePeers(snapshot);
+
+    // No observable per-peer data channel; the connected peer count is the best "physically alive" signal.
+    public int CountOpenDataChannels() => _peers.Count;
 
     public bool TrySetRemoteVolume(byte playerId, string playerName, float volume)
     {
@@ -292,10 +322,36 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
     {
         var restartCapture = _captureOptions.SyntheticMicToneEnabled != options.SyntheticMicToneEnabled;
         _captureOptions = options;
+#if WINDOWS
+        _autoMicGain = ReadAutoMicGainSetting();
+        try
+        {
+            lock (_micProcessSync)
+                _micPreprocessor.SetNoiseSuppressionEnabled(options.NoiseSuppressionEnabled);
+        }
+        catch (Exception ex)
+        {
+            VoiceDiagnostics.Log("interstellar.mic", $"noiseSuppression=error error=\"{ex.Message}\"");
+        }
+#endif
         if (restartCapture && _microphoneReady && !Mute)
             SetMicrophone(_lastMicDeviceName, _lastMicVolume);
-        VoiceDiagnostics.Log("interstellar.capture-options", $"syntheticTone={options.SyntheticMicToneEnabled}");
+        VoiceDiagnostics.Log("interstellar.capture-options", $"syntheticTone={options.SyntheticMicToneEnabled} noiseSuppression={options.NoiseSuppressionEnabled}");
     }
+
+#if WINDOWS
+    private static bool ReadAutoMicGainSetting()
+    {
+        try
+        {
+            return LocalSettingsTabSingleton<VoiceChatLocalSettings>.Instance?.AutoMicGain.Value ?? true;
+        }
+        catch
+        {
+            return true;
+        }
+    }
+#endif
 
     private float ResolveSpeakingThreshold()
     {
@@ -319,6 +375,8 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
             StopSyntheticMicTone();
 #if WINDOWS
             StopWindowsMicrophoneCapture();
+            _latchedMicChannel = 0;
+            _micChannelSwitchStreak = 0;
 #endif
             if (_captureOptions.SyntheticMicToneEnabled)
             {
@@ -361,6 +419,67 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
     }
 
 #if WINDOWS
+    private void OnWindowsPlaybackStopped(object? sender, NAudio.Wave.StoppedEventArgs e)
+    {
+        if (!ReferenceEquals(sender, _windowsSpeakerOutput)) return;
+        _speakerReady = false;
+        if (e.Exception == null) return;
+        VoiceDiagnostics.Log("interstellar.speaker", $"ready=false reason=playback-stopped error=\"{e.Exception.Message}\"");
+        Interlocked.Exchange(ref _speakerReopenRequestedFlag, 1);
+    }
+
+    private void MaybeFollowSpeakerTopology()
+    {
+        if (!_speakerRequested) return;
+        if (Volatile.Read(ref _speakerReopenRequestedFlag) == 1)
+        {
+            var reopenNow = DateTime.UtcNow;
+            if (reopenNow - _lastFlagReopenUtc >= TimeSpan.FromSeconds(1))
+            {
+                Interlocked.Exchange(ref _speakerReopenRequestedFlag, 0);
+                _lastFlagReopenUtc = reopenNow;
+                VoiceDiagnostics.Log("interstellar.speaker", "reason=playback-stopped-reopen");
+                SetSpeaker(_lastSpeakerDeviceName);
+                return;
+            }
+        }
+
+        var now = DateTime.UtcNow;
+        bool fastWindow = now.Ticks < Interlocked.Read(ref _speakerTopologyFastUntilTicks);
+        var interval = fastWindow ? SpeakerTopologyFastPollInterval : SpeakerTopologyPollInterval;
+        if (now - _speakerTopologyLastPollUtc < interval) return;
+        _speakerTopologyLastPollUtc = now;
+
+        string signature;
+        try { signature = DescribeWindowsWaveOutDevices(); }
+        catch { return; }
+
+        if (signature == _speakerTopologySignature)
+        {
+            if (_speakerReady) return;
+            if (now - _lastSpeakerRetryUtc < SpeakerRetryInterval) return;
+            _lastSpeakerRetryUtc = now;
+            VoiceDiagnostics.Log("interstellar.speaker", $"ready=false reason=retry devices=\"{signature}\"");
+            SetSpeaker(_lastSpeakerDeviceName);
+            return;
+        }
+
+        bool pinned = !string.IsNullOrWhiteSpace(_lastSpeakerDeviceName);
+        if (pinned && _speakerReady)
+        {
+            var resolved = ResolveWindowsWaveOutDevice(_lastSpeakerDeviceName);
+            if (resolved == _openedSpeakerDeviceNumber
+                && string.Equals(DescribeWindowsWaveOutDevice(resolved), _openedSpeakerProductName, StringComparison.Ordinal))
+            {
+                _speakerTopologySignature = signature;
+                return;
+            }
+        }
+
+        VoiceDiagnostics.Log("interstellar.speaker", $"ready={_speakerReady} reason={(pinned ? "pinned-follow" : "default-follow")} oldDevices=\"{_speakerTopologySignature}\" newDevices=\"{signature}\"");
+        SetSpeaker(_lastSpeakerDeviceName);
+    }
+
     private void StartWindowsMicrophone(string deviceName)
     {
         StopWindowsMicrophoneCapture();
@@ -381,6 +500,7 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
         _windowsMicrophoneCapture = capture;
         capture.DataAvailable += OnWindowsMicrophoneData;
         capture.StartRecording();
+        Interlocked.Exchange(ref _speakerTopologyFastUntilTicks, (DateTime.UtcNow + SpeakerTopologyFastWindow).Ticks);
         VoiceDiagnostics.Log("interstellar.mic", $"capture=wavein-only captureDevice=\"{captureDevice}\" captureFormat=\"{DescribeWaveFormat(capture.WaveFormat)}\" waveInDevice={waveInDevice} defaultWaveIn=\"{DescribeDefaultWindowsWaveInDevice()}\"");
     }
 
@@ -393,6 +513,7 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
         try { capture.DataAvailable -= OnWindowsMicrophoneData; } catch { }
         try { capture.StopRecording(); } catch { }
         try { capture.Dispose(); } catch { }
+        Interlocked.Exchange(ref _speakerTopologyFastUntilTicks, (DateTime.UtcNow + SpeakerTopologyFastWindow).Ticks);
     }
 
     private void OnWindowsMicrophoneData(object? sender, WaveInEventArgs e)
@@ -428,13 +549,28 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
         {
             Interlocked.Add(ref _windowsMicSamples, samples);
             Volatile.Write(ref _windowsMicLastSamples, samples);
+            try
+            {
+                lock (_micProcessSync)
+                {
+                    _micPreprocessor.ApplyHighPass(floatPcm, samples);
+                    _micPreprocessor.ApplyAutoGain(floatPcm, samples, _autoMicGain, out _);
+                    if (_captureOptions.NoiseSuppressionEnabled)
+                        _micPreprocessor.TryApplyNoiseSuppression(floatPcm, samples);
+                }
+            }
+            catch (Exception ex)
+            {
+                VoiceDiagnostics.Log("interstellar.mic.capture_error", $"stage=preprocess error=\"{ex.Message}\"");
+            }
             var peak = Audio.AudioHelpers.MeasurePeak(floatPcm, samples);
             if (peak <= 0.001f)
                 Interlocked.Increment(ref _windowsMicSilentCallbacks);
             var peakMilli = ToMilli(peak);
             Volatile.Write(ref _windowsMicLastPeakMilli, peakMilli);
             UpdateMax(ref _windowsMicPeakMilli, peakMilli);
-            var transmitGain = Audio.AudioHelpers.GetTransmitLimiterGain(peak);
+            var transmitGain = Audio.AudioHelpers.GetSmoothedTransmitLimiterGain(_transmitLimiterGain, peak);
+            _transmitLimiterGain = transmitGain;
             Volatile.Write(ref _windowsMicLastGainMilli, ToMilli(transmitGain));
             Audio.AudioHelpers.ApplyGain(floatPcm, samples, transmitGain);
             Interlocked.Increment(ref _windowsMicPushedFrames);
@@ -476,7 +612,7 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
         while (Interlocked.CompareExchange(ref target, value, current) != current);
     }
 
-    private static int ConvertWindowsFloat32ToMono(byte[] buffer, int recordedBytes, int channels, out float[] floatPcm)
+    private int ConvertWindowsFloat32ToMono(byte[] buffer, int recordedBytes, int channels, out float[] floatPcm)
     {
         var frames = recordedBytes / (sizeof(float) * channels);
         floatPcm = new float[frames];
@@ -489,7 +625,7 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
         return frames;
     }
 
-    private static int ConvertWindowsPcm16ToMono(byte[] buffer, int recordedBytes, int channels, out float[] floatPcm)
+    private int ConvertWindowsPcm16ToMono(byte[] buffer, int recordedBytes, int channels, out float[] floatPcm)
     {
         var frames = recordedBytes / (sizeof(short) * channels);
         floatPcm = new float[frames];
@@ -502,11 +638,63 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
         return frames;
     }
 
-    private static int SelectDominantWindowsFloat32Channel(byte[] buffer, int frames, int channels)
+    private const double MicChannelSwitchEnergyRatio = 2.0;
+    private const int MicChannelSwitchStreakCallbacks = 25;
+
+    private double[] EnsureMicChannelEnergyCapacity(int channels)
     {
-        if (channels <= 1) return 0;
+        if (_micChannelEnergyScratch is null || _micChannelEnergyScratch.Length < channels)
+            _micChannelEnergyScratch = new double[channels];
+        return _micChannelEnergyScratch;
+    }
+
+    private int LatchDominantChannel(double[] energies, int channels)
+    {
+        if (_latchedMicChannel >= channels)
+        {
+            _latchedMicChannel = 0;
+            _micChannelSwitchStreak = 0;
+        }
+
         var bestChannel = 0;
         var bestEnergy = 0.0;
+        for (var channel = 0; channel < channels; channel++)
+        {
+            if (energies[channel] > bestEnergy)
+            {
+                bestEnergy = energies[channel];
+                bestChannel = channel;
+            }
+        }
+
+        if (bestChannel == _latchedMicChannel)
+        {
+            _micChannelSwitchStreak = 0;
+            return _latchedMicChannel;
+        }
+
+        if (bestEnergy > energies[_latchedMicChannel] * MicChannelSwitchEnergyRatio)
+        {
+            if (++_micChannelSwitchStreak >= MicChannelSwitchStreakCallbacks)
+            {
+                VoiceDiagnostics.Log("interstellar.mic.channel-latch",
+                    $"from={_latchedMicChannel} to={bestChannel} energy={bestEnergy:0.000000} latchedEnergy={energies[_latchedMicChannel]:0.000000}");
+                _latchedMicChannel = bestChannel;
+                _micChannelSwitchStreak = 0;
+            }
+        }
+        else
+        {
+            _micChannelSwitchStreak = 0;
+        }
+
+        return _latchedMicChannel;
+    }
+
+    private int SelectDominantWindowsFloat32Channel(byte[] buffer, int frames, int channels)
+    {
+        if (channels <= 1) return 0;
+        var energies = EnsureMicChannelEnergyCapacity(channels);
         for (var channel = 0; channel < channels; channel++)
         {
             var energy = 0.0;
@@ -516,20 +704,15 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
                 var sample = ReadWindowsFloat32Sample(buffer, offset);
                 energy += (double)sample * sample;
             }
-            if (energy > bestEnergy)
-            {
-                bestEnergy = energy;
-                bestChannel = channel;
-            }
+            energies[channel] = energy;
         }
-        return bestChannel;
+        return LatchDominantChannel(energies, channels);
     }
 
-    private static int SelectDominantWindowsPcm16Channel(byte[] buffer, int frames, int channels)
+    private int SelectDominantWindowsPcm16Channel(byte[] buffer, int frames, int channels)
     {
         if (channels <= 1) return 0;
-        var bestChannel = 0;
-        var bestEnergy = 0.0;
+        var energies = EnsureMicChannelEnergyCapacity(channels);
         for (var channel = 0; channel < channels; channel++)
         {
             var energy = 0.0;
@@ -539,13 +722,9 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
                 var sample = BitConverter.ToInt16(buffer, offset) / (float)short.MaxValue;
                 energy += (double)sample * sample;
             }
-            if (energy > bestEnergy)
-            {
-                bestEnergy = energy;
-                bestChannel = channel;
-            }
+            energies[channel] = energy;
         }
-        return bestChannel;
+        return LatchDominantChannel(energies, channels);
     }
 
     private static float ReadWindowsFloat32Sample(byte[] buffer, int offset)
@@ -678,6 +857,9 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
         {
 #if WINDOWS
             StopWindowsSpeaker();
+            _lastSpeakerDeviceName = deviceName ?? string.Empty;
+            _speakerRequested = true;
+            _speakerTopologySignature = DescribeWindowsWaveOutDevices();
             var manualSpeaker = new ManualSpeaker(StopWindowsSpeaker);
             _room.Speaker = manualSpeaker;
             _windowsSpeaker = manualSpeaker;
@@ -691,9 +873,12 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
                 DesiredLatency = 60,
                 NumberOfBuffers = 3,
             };
+            _windowsSpeakerOutput.PlaybackStopped += OnWindowsPlaybackStopped;
             _windowsSpeakerOutput.Init(provider.ToWaveProvider());
             _windowsSpeakerOutput.Play();
             _speakerReady = _windowsSpeakerOutput.PlaybackState == PlaybackState.Playing;
+            _openedSpeakerDeviceNumber = outputDevice;
+            _openedSpeakerProductName = DescribeWindowsWaveOutDevice(outputDevice);
             VoiceDiagnostics.Log("interstellar.speaker", $"ready={_speakerReady} device=\"{deviceName}\" outputDevice=\"{DescribeWindowsWaveOutDevice(outputDevice)}\" outputDeviceNumber={outputDevice} sourceFormat=\"{provider.WaveFormat}\" graphFormat=\"{provider.WaveFormat}\" outputDevices=\"{DescribeWindowsWaveOutDevices()}\" latencyMs=60 manualSpeaker=true");
 #else
             try { _room.Speaker = null; } catch { }
@@ -796,6 +981,11 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
         bool localInVent,
         bool commsSabActive)
     {
+#if ANDROID
+        _androidMicrophone?.Tick();
+#elif WINDOWS
+        MaybeFollowSpeakerTopology();
+#endif
         if (snapshot == null)
         {
             // Iterate the ConcurrentDictionary directly; _peers.Values allocates a snapshot List every call.
@@ -825,7 +1015,9 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
                 ApplySavedVolume(peer);
 
             VoiceProximityResult result;
-            if (VoiceSceneState.IsLobbyVoicePhase(snapshot.Phase))
+            if (snapshot.Phase == VoiceGamePhase.EndGame)
+                result = VoiceProximityCalculator.CalculateEndGame();
+            else if (VoiceSceneState.IsLobbyVoicePhase(snapshot.Phase))
                 result = VoiceProximityCalculator.CalculateLobby(target, listenerPos);
             else if (VoiceSceneState.IsMeetingVoicePhase(snapshot.Phase))
                 result = VoiceProximityCalculator.CalculateMeeting(localPlayer, target, peer.RadioActive, snapshot.Phase, peer.RadioChannel);
@@ -889,7 +1081,14 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
         StopMicrophone("dispose");
         try { _room.Disconnect(); } catch { }
         _peers.Clear();
+        _speakerRequested = false;
 #if WINDOWS
+        try { lock (_micProcessSync) _micPreprocessor.Dispose(); } catch { }
+#endif
+#if ANDROID
+        _androidSpeaker?.Dispose();
+        _androidSpeaker = null;
+#elif WINDOWS
         StopWindowsSpeaker();
 #endif
         try { _room.Microphone = null; } catch { }
@@ -903,7 +1102,9 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
         _windowsSpeakerOutput = null;
         _windowsSpeaker = null;
         _windowsSpeakerProvider = null;
+        _speakerReady = false;
         if (speaker == null) return;
+        try { speaker.PlaybackStopped -= OnWindowsPlaybackStopped; } catch { }
         try { speaker.Stop(); } catch { }
         try { speaker.Dispose(); } catch { }
     }
@@ -1056,11 +1257,15 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
 
     private static VoicePlayerSnapshot? FindTarget(VoiceGameStateSnapshot snapshot, Peer peer)
     {
-        if (peer.PlayerId != byte.MaxValue && snapshot.TryGetPlayer(peer.PlayerId, out var byPlayer))
-            return byPlayer;
-
-        if (snapshot.TryGetClient(peer.ClientId, out var byClient))
+        int clientId = peer.ClientId;
+        byte playerId = peer.PlayerId;
+        if (clientId >= 0 && snapshot.TryGetClient(clientId, out var byClient))
             return byClient;
+
+        if (playerId != byte.MaxValue
+            && snapshot.TryGetPlayer(playerId, out var byPlayer)
+            && byPlayer.ClientId == clientId)
+            return byPlayer;
 
         return null;
     }

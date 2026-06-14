@@ -64,6 +64,10 @@ internal static class VoiceSnapshotBuilder
                 out bool isBlackmailedNextRound,
                 out bool isSwooped,
                 out _);
+            VoiceRoleMuteState.GetPlayerVoodooMuteState(
+                player,
+                out bool isVoodooMuted,
+                out bool isVoodooMutedNextRound);
             VoiceRoleMuteState.GetPlayerMediumVoiceState(
                 player,
                 out bool isMedium,
@@ -85,13 +89,16 @@ internal static class VoiceSnapshotBuilder
 
             bool isTouMceApocalypse = TouMceVoiceIntegration.HasApocalypseVoiceChannel(player);
 
+            bool dataDead = data?.IsDead == true;
+            bool roleOnlyDead = !dataDead && data?.Role?.IsDead == true;
             players.Add(new VoicePlayerSnapshot(
                 player.PlayerId,
                 clientId,
                 name,
                 (Vector2)player.transform.position,
                 player.PlayerId == localPlayerId,
-                data?.IsDead == true,
+                dataDead || roleOnlyDead,
+                roleOnlyDead,
                 VoiceRoleMuteState.IsVoiceImpostor(player),
                 isVampire,
                 isLover,
@@ -124,7 +131,9 @@ internal static class VoiceSnapshotBuilder
                 isTouMceApocalypse,
                 player.PlayerId == localPlayerId ? localControlMode : VoiceControlHearingMode.None,
                 player.PlayerId == localPlayerId ? localControlledVictimPos : default,
-                player.PlayerId == localPlayerId ? localControlledVictimLight : -1f));
+                player.PlayerId == localPlayerId ? localControlledVictimLight : -1f,
+                isVoodooMuted,
+                isVoodooMutedNextRound));
         }
         }
         catch

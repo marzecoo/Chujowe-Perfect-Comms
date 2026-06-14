@@ -33,6 +33,36 @@ internal static class CrewmateAvatarRenderer
     private static readonly Color32 ConcealedColor = new(0x7f, 0x7f, 0x7f, 0xff);
     private static readonly Color32 ConcealedShadowColor = new(0x4a, 0x4a, 0x4a, 0xff);
 
+    // End-game avatar cache: the results screen has no live PlayerControls, so we snapshot each speaker's
+    // resolved outfit (body color + the actual cosmetic sprites/materials, which are addressable assets that
+    // survive the scene change) while in-game and rebuild the avatar from it on the end-game screen.
+    internal readonly struct CachedCosmeticLayer
+    {
+        public readonly string Name;
+        public readonly Sprite Sprite;
+        public readonly Color Color;
+        public readonly bool FlipY;
+        public readonly Material? Material;
+        public readonly Vector3 LocalPos;
+        public readonly int Order;
+        public CachedCosmeticLayer(string name, Sprite sprite, Color color, bool flipY, Material? material, Vector3 localPos, int order)
+        {
+            Name = name; Sprite = sprite; Color = color; FlipY = flipY; Material = material; LocalPos = localPos; Order = order;
+        }
+    }
+    private sealed class CachedOutfit
+    {
+        public readonly int ColorId;
+        public readonly bool IsRainbow;
+        public readonly bool Concealed;
+        public readonly List<CachedCosmeticLayer> Layers;
+        public CachedOutfit(int colorId, bool isRainbow, bool concealed, List<CachedCosmeticLayer> layers)
+        {
+            ColorId = colorId; IsRainbow = isRainbow; Concealed = concealed; Layers = layers;
+        }
+    }
+    private static readonly Dictionary<byte, CachedOutfit> OutfitCache = new();
+
     public static bool TryCreate(byte playerId, PlayerControl pc, Transform parent, out GameObject? iconGO)
     {
         iconGO = null;
@@ -56,8 +86,47 @@ internal static class CrewmateAvatarRenderer
         if (isRainbow) AddRainbowBodyAnimator(bodyRenderer);
         // Cosmetics are built straight from the player's live outfit (hat/skin/visor), so they render
         // immediately and reliably — no idle-pose capture, GameObject-name matching, or fingerprint gate.
+        var capturedLayers = new List<CachedCosmeticLayer>();
         if (!concealed)
-            TryAddOutfitCosmetics(root.transform, pc);
+            TryAddOutfitCosmetics(root.transform, pc, capturedLayers);
+        CacheOutfit(playerId, pc, capturedLayers);
+        ApplySorting(root);
+        VCOverlayCamera.EnsureOnTop(root);
+        iconGO = root;
+        return true;
+    }
+
+    // Rebuilds a speaker's avatar from the outfit captured while in-game. Used on the end-game results screen,
+    // where there is no live PlayerControl to read cosmetics from. Returns false if the player was never cached
+    // (e.g. never spoke during the game) — the caller then falls back to a ring + name slot.
+    internal static bool TryCreateFromCache(byte playerId, Transform parent, out GameObject? iconGO)
+    {
+        iconGO = null;
+        if (parent == null || !OutfitCache.TryGetValue(playerId, out var outfit)) return false;
+
+        var baseSprite = outfit.Concealed
+            ? GetConcealedBaseSprite()
+            : outfit.IsRainbow ? GetRainbowBaseSprite(0) : GetBaseSprite(outfit.ColorId);
+        if (baseSprite == null) return false;
+
+        var root = new GameObject($"VC_SpriteIcon_{playerId}");
+        root.transform.SetParent(parent, false);
+        root.transform.localScale = Vector3.one * RootScale;
+        root.transform.localPosition = Vector3.zero;
+
+        var bodyRenderer = AddSprite(root.transform, "VC_Body_Base", baseSprite, Vector3.zero, Quaternion.identity, Vector3.one * BodyScale, Color.white, BodyOrder);
+        if (outfit.IsRainbow) AddRainbowBodyAnimator(bodyRenderer);
+        if (!outfit.Concealed)
+        {
+            foreach (var layer in outfit.Layers)
+            {
+                if (layer.Sprite == null) continue; // cached asset was unloaded; skip just this layer
+                var sr = AddSprite(root.transform, layer.Name, layer.Sprite, layer.LocalPos, Quaternion.identity, CosmeticScale, layer.Color, layer.Order);
+                sr.flipX = false;
+                sr.flipY = layer.FlipY;
+                if (layer.Material != null) sr.sharedMaterial = layer.Material;
+            }
+        }
         ApplySorting(root);
         VCOverlayCamera.EnsureOnTop(root);
         iconGO = root;
@@ -148,7 +217,7 @@ internal static class CrewmateAvatarRenderer
 
     // Copies hat (back + front) / skin / visor from the player's live cosmetics onto the icon at FIXED offsets,
     // preserving each cosmetic's real sprite + material + color so Adaptive (color-matched) cosmetics stay correct.
-    internal static void TryAddOutfitCosmetics(Transform root, PlayerControl pc)
+    internal static void TryAddOutfitCosmetics(Transform root, PlayerControl pc, List<CachedCosmeticLayer>? capture = null)
     {
         try
         {
@@ -159,13 +228,13 @@ internal static class CrewmateAvatarRenderer
             // Only copy a cosmetic once its CURRENT sprite has finished loading, so a stale one is never baked in.
             bool hatReady = !IsEmptyCosmeticId(outfit.HatId) && HatLoaded(c);
             if (hatReady)
-                AddCosmeticLayer(root, "VC_HatBack", HatBackRenderer(c), HatVisorAnchor, BackCosmeticOrder, HatBackIdleSprite(c));
+                AddCosmeticLayer(root, "VC_HatBack", HatBackRenderer(c), HatVisorAnchor, BackCosmeticOrder, HatBackIdleSprite(c), capture);
             if (!IsEmptyCosmeticId(outfit.SkinId) && SkinLoaded(c))
-                AddCosmeticLayer(root, "VC_Skin", SkinRenderer(c), SkinAnchor, CosmeticOrder, SkinIdleSprite(c));
+                AddCosmeticLayer(root, "VC_Skin", SkinRenderer(c), SkinAnchor, CosmeticOrder, SkinIdleSprite(c), capture);
             if (hatReady)
-                AddCosmeticLayer(root, "VC_HatFront", HatFrontRenderer(c), HatVisorAnchor, FrontCosmeticOrder, HatFrontIdleSprite(c));
+                AddCosmeticLayer(root, "VC_HatFront", HatFrontRenderer(c), HatVisorAnchor, FrontCosmeticOrder, HatFrontIdleSprite(c), capture);
             if (!IsEmptyCosmeticId(outfit.VisorId) && VisorLoaded(c))
-                AddCosmeticLayer(root, "VC_Visor", VisorRenderer(c), HatVisorAnchor, VisorOrder(outfit.VisorId), VisorIdleSprite(c));
+                AddCosmeticLayer(root, "VC_Visor", VisorRenderer(c), HatVisorAnchor, VisorOrder(outfit.VisorId), VisorIdleSprite(c), capture);
         }
         catch
         {
@@ -188,7 +257,7 @@ internal static class CrewmateAvatarRenderer
     // Drops one live cosmetic sprite onto the icon at a FIXED local offset (never the live walk-animated transform,
     // so the icon can't morph as the player moves). Reads the live sprite/material/color so modded/Adaptive
     // cosmetics show. Forces upright + canonical right-facing. Skips disabled renderers (stale hidden BackLayer).
-    private static void AddCosmeticLayer(Transform root, string name, SpriteRenderer? src, Vector3 localPos, int order, Sprite? spriteOverride = null)
+    private static void AddCosmeticLayer(Transform root, string name, SpriteRenderer? src, Vector3 localPos, int order, Sprite? spriteOverride = null, List<CachedCosmeticLayer>? capture = null)
     {
         try
         {
@@ -201,6 +270,9 @@ internal static class CrewmateAvatarRenderer
             layer.flipX = false;                   // canonical right-facing icon body
             layer.flipY = src.flipY;               // preserve the cosmetic's intrinsic vertical orientation
             if (src.sharedMaterial != null) layer.sharedMaterial = src.sharedMaterial;
+            // Record the resolved layer so the end-game screen (no live PlayerControl) can rebuild this avatar
+            // from cached sprites/materials, which survive the scene change.
+            capture?.Add(new CachedCosmeticLayer(name, sprite, src.color, src.flipY, src.sharedMaterial, localPos, order));
         }
         catch
         {
@@ -209,14 +281,31 @@ internal static class CrewmateAvatarRenderer
     }
 
     // Rebuilds the cosmetic layers in place on an existing icon (no body destroy/recreate). Concealed -> none.
-    internal static void TryRefreshOutfitCosmetics(GameObject? iconRoot, PlayerControl? pc)
+    internal static void TryRefreshOutfitCosmetics(GameObject? iconRoot, PlayerControl? pc, byte playerId)
     {
         if (iconRoot == null || pc?.Data == null) return;
         RemoveCosmeticLayers(iconRoot);
+        var capturedLayers = new List<CachedCosmeticLayer>();
         if (!IsConcealed(pc))
-            TryAddOutfitCosmetics(iconRoot.transform, pc);
+            TryAddOutfitCosmetics(iconRoot.transform, pc, capturedLayers);
+        CacheOutfit(playerId, pc, capturedLayers);
         ApplySorting(iconRoot);
         VCOverlayCamera.EnsureOnTop(iconRoot);
+    }
+
+    // Stores the just-built outfit (body color + resolved cosmetic layers) so the end-game screen can rebuild
+    // this avatar without a live PlayerControl. Concealed speakers cache as a grey, cosmetic-less body so the
+    // end-game screen never leaks a hidden identity. Called only from the avatar (re)build path, so it runs at
+    // most once per speaker per outfit change -- never per frame.
+    private static void CacheOutfit(byte playerId, PlayerControl pc, List<CachedCosmeticLayer> layers)
+    {
+        bool concealed = IsConcealed(pc);
+        int colorId = GetPlayerColorId(pc);
+        OutfitCache[playerId] = new CachedOutfit(
+            colorId,
+            !concealed && IsRainbowColorId(colorId),
+            concealed,
+            concealed ? new List<CachedCosmeticLayer>() : layers);
     }
 
     private static readonly List<GameObject> _cosmeticRemovalScratch = new();
@@ -239,7 +328,7 @@ internal static class CrewmateAvatarRenderer
     // Lifecycle reset hook (called at HudManager.Start). Cosmetics are placed at fixed offsets from the live outfit,
     // so there is nothing there to clear; we only drop the rainbow color-id memo so a result that happened to resolve
     // before Town of Us finished registering its colors can never stay stale into the next game.
-    internal static void ClearCache() { RainbowColorIdCache.Clear(); }
+    internal static void ClearCache() { RainbowColorIdCache.Clear(); OutfitCache.Clear(); }
 
     public static bool IsCustomIcon(GameObject go)
         => go != null && go.name.StartsWith("VC_SpriteIcon_");
@@ -255,6 +344,14 @@ internal static class CrewmateAvatarRenderer
         if (IsRainbowPlayer(pc)) return (Color)RainbowBodyColor(GetRainbowFrameIndex(Time.time));
         // Clamp via the same index the body uses so ring/glow never disagrees with the body.
         return (Color)Palette.PlayerColors[ClampColorId(GetPlayerColorId(pc))];
+    }
+
+    internal static Sprite? GetBodySpriteFor(PlayerControl? pc)
+    {
+        if (pc?.Data == null) return null;
+        if (IsConcealed(pc)) return GetConcealedBaseSprite();
+        int colorId = ClampColorId(GetPlayerColorId(pc));
+        return IsRainbowColorIdCached(colorId) ? GetRainbowBaseSprite(0) : GetBaseSprite(colorId);
     }
 
     // True when this speaker picked the animated "Rainbow" color and is NOT concealed — i.e. GetPaletteColor returns

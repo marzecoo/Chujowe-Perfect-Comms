@@ -61,6 +61,14 @@ public static class VoiceChatHudState
     private static Renderer[]?    _spkTooltipRenderers;
     private static TextMeshPro[]? _micTooltipTmps;
     private static TextMeshPro[]? _spkTooltipTmps;
+    private static GameObject?    _toastObj;
+    private static TextMeshPro?   _toastTmp;
+    private static Renderer[]?    _toastRenderers;
+    private static TextMeshPro[]? _toastTmps;
+    private static string _toastMessage = "";
+    private static float _toastExpiry;
+    private const float ToastDurationSeconds = 4f;
+    private const float ToastViewportY = 0.84f;
     private static bool _micMuted;
     private static bool _teamRadioHeld;
     private static VoiceTeamRadioChannel _teamRadioChannel = VoiceTeamRadioChannel.None;
@@ -74,6 +82,13 @@ public static class VoiceChatHudState
     public static bool IsImpostorRadio => IsTeamRadio;
     public static bool IsSpeakerMuted => _speakerMuted;
     internal static bool IsLocalTransmitBlocked => TryGetLocalTransmitBlockReason(out _);
+
+    internal static void ShowToast(string message)
+    {
+        _toastMessage = message ?? "";
+        _toastExpiry = Time.time + ToastDurationSeconds;
+    }
+
     internal static void Init()
     {
         if (_initialized) return;
@@ -84,6 +99,7 @@ public static class VoiceChatHudState
             {
                 DestroyButtons();
                 DestroyTooltips();
+                DestroyToast();
             });
 
         var settings = LocalSettingsTabSingleton<VoiceChatLocalSettings>.Instance;
@@ -260,6 +276,7 @@ public static class VoiceChatHudState
     {
         var hud = HudManager.Instance;
         if (hud == null) return;
+        if (PlayerControl.LocalPlayer == null) return;
 
         long bTicks = VoiceFrameProfiler.Begin();
         EnsureHudButtons(hud);
@@ -274,6 +291,7 @@ public static class VoiceChatHudState
         long vTicks = VoiceFrameProfiler.Begin();
         RefreshButtonVisuals();
         VoiceFrameProfiler.End("hud.visuals", vTicks);
+        UpdateToast(hud);
     }
 
     private static void EnsureHudButtons(HudManager hud)
@@ -528,6 +546,17 @@ public static class VoiceChatHudState
     internal static bool IsPushToTalkMode()
         => LocalSettingsTabSingleton<VoiceChatLocalSettings>.Instance?.MicMode.Value == VoiceMicMode.PushToTalk;
 
+    internal static void ToggleMicMode()
+    {
+        var settings = LocalSettingsTabSingleton<VoiceChatLocalSettings>.Instance;
+        if (settings == null) return;
+        var next = settings.MicMode.Value == VoiceMicMode.PushToTalk ? VoiceMicMode.OpenMic : VoiceMicMode.PushToTalk;
+        settings.MicMode.Value = next;
+        ApplyMicState();
+        RefreshButtonVisuals();
+        ShowToast(next == VoiceMicMode.PushToTalk ? "Push To Talk" : "Open Mic");
+    }
+
     private static bool IsManualMuteActive()
         => _micMuted && !IsPushToTalkMode();
 
@@ -668,6 +697,71 @@ public static class VoiceChatHudState
         _micTooltipRenderers = null; _spkTooltipRenderers = null;
         _micTooltipTmps = null; _spkTooltipTmps = null;
     }
+
+    // Transient on-screen banner shown on the VC overlay layer (same surface as the mic/speaker
+    // icons), so it stays visible above the meeting HUD. Lazily created in the per-frame UpdateHud
+    // path, mirroring EnsureHudButtons/EnsureTooltips.
+    private static void UpdateToast(HudManager hud)
+    {
+        bool active = !string.IsNullOrEmpty(_toastMessage) && Time.time < _toastExpiry;
+        if (!active)
+        {
+            if (_toastObj != null && _toastObj.activeSelf) _toastObj.SetActive(false);
+            return;
+        }
+
+        var root = ResolveHudRoot(hud);
+        if (_toastObj == null)
+            _toastObj = CreateToastObject(root, out _toastTmp);
+        ReparentToRoot(_toastObj, root);
+
+        if (_toastTmp != null && _toastTmp.text != _toastMessage)
+            _toastTmp.text = _toastMessage;
+
+        PositionToast();
+        KeepTooltipOnTop(_toastObj, ref _toastRenderers, ref _toastTmps);
+        if (!_toastObj.activeSelf) _toastObj.SetActive(true);
+    }
+
+    private static void PositionToast()
+    {
+        if (_toastObj == null) return;
+        var cam = Camera.main;
+        if (cam == null) return;
+        var world = cam.ViewportToWorldPoint(new Vector3(0.5f, ToastViewportY, ButtonViewportDepth));
+        _toastObj.transform.position = new Vector3(world.x, world.y, world.z - 1f);
+    }
+
+    private static GameObject CreateToastObject(Transform root, out TextMeshPro tmp)
+    {
+        var go = new GameObject("VC_Toast");
+        go.transform.SetParent(root, false);
+        go.transform.localPosition = new Vector3(0f, 0f, -80f);
+
+        var textGo = new GameObject("Text");
+        textGo.transform.SetParent(go.transform, false);
+        textGo.transform.localPosition = Vector3.zero;
+        tmp = textGo.AddComponent<TextMeshPro>();
+        tmp.fontSize = 2.2f;
+        tmp.fontStyle = FontStyles.Bold;
+        tmp.color = new Color(1f, 0.85f, 0.4f);
+        tmp.alignment = TextAlignmentOptions.Center;
+        tmp.enableWordWrapping = false;
+        tmp.sortingLayerID = SortingLayer.NameToID(VCSorting.Layer);
+        tmp.sortingOrder = TooltipSortOrder;
+        tmp.rectTransform.sizeDelta = new Vector2(10f, 1.6f);
+        go.SetActive(false);
+        return go;
+    }
+
+    private static void DestroyToast()
+    {
+        if (_toastObj != null) { Object.Destroy(_toastObj); _toastObj = null; }
+        _toastTmp = null;
+        _toastRenderers = null;
+        _toastTmps = null;
+    }
+
     private static GameObject CreateTooltipObject(Transform root, out TextMeshPro tmp)
     {
         var go = new GameObject("VC_Tooltip");
@@ -819,7 +913,8 @@ public static class VoiceChatHudState
 
     private static bool CanUseTeamRadio()
         => PlayerControl.LocalPlayer != null
-        && PlayerControl.LocalPlayer.Data?.IsDead == false
+        && PlayerControl.LocalPlayer.Data != null
+        && !VoiceRoleMuteState.IsVoiceDead(PlayerControl.LocalPlayer)
         && VoiceRoleMuteState.CanUseTeamRadio(PlayerControl.LocalPlayer);
 
     private static bool CanUseImpostorRadio()
@@ -844,7 +939,7 @@ public static class VoiceChatHudState
     internal static bool IsLocalRoomPolicyVoiceBlocked(VoiceGamePhase phase)
     {
         var local = PlayerControl.LocalPlayer;
-        return IsLocalRoomPolicyVoiceBlocked(phase, local?.Data?.IsDead == true, out _);
+        return IsLocalRoomPolicyVoiceBlocked(phase, VoiceRoleMuteState.IsVoiceDead(local), out _);
     }
 
     internal static bool IsLocalRoomPolicyVoiceBlocked(VoiceGamePhase phase, bool localDead)
@@ -853,7 +948,7 @@ public static class VoiceChatHudState
     private static bool IsLocalRoomPolicyVoiceBlocked(VoiceGamePhase phase, out string reason)
     {
         var local = PlayerControl.LocalPlayer;
-        return IsLocalRoomPolicyVoiceBlocked(phase, local?.Data?.IsDead == true, out reason);
+        return IsLocalRoomPolicyVoiceBlocked(phase, VoiceRoleMuteState.IsVoiceDead(local), out reason);
     }
 
     private static bool IsLocalRoomPolicyVoiceBlocked(VoiceGamePhase phase, bool localDead, out string reason)
@@ -882,8 +977,11 @@ public static class VoiceChatHudState
 
     private static void ClearButtonBG(GameObject obj)
     {
-        foreach (var sr in obj.GetComponentsInChildren<SpriteRenderer>())
+        foreach (var sr in obj.GetComponentsInChildren<SpriteRenderer>(true))
+        {
+            sr.sprite = null;
             sr.color = Color.clear;
+        }
     }
 
     private static SpriteRenderer CreateIconChild(GameObject parent, string resource)

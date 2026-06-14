@@ -5,6 +5,7 @@ using HarmonyLib;
 using MiraAPI.LocalSettings;
 using MiraAPI.LocalSettings.Attributes;
 using MiraAPI.Utilities.Assets;
+using UnityEngine;
 #if WINDOWS
 using NAudio.Wave;
 using VoiceChatPlugin.Audio;
@@ -79,7 +80,18 @@ public class VoiceChatLocalSettings : LocalSettingsTab
     public override string TabName => Censor("Mega Chujowe Perfect Comms");
     public override LocalSettingTabAppearance TabAppearance => new()
     {
-        TabIcon = MicIcon
+        TabIcon              = MicIcon,
+        ToggleActiveColor    = new Color(0.40f, 0.78f, 0.56f),
+        ToggleInactiveColor  = new Color(0.74f, 0.40f, 0.42f),
+        ToggleHoverColor     = new Color(0.56f, 0.88f, 0.70f),
+        SliderColor          = new Color(0.46f, 0.74f, 0.92f),
+        SliderHoverColor     = new Color(0.64f, 0.86f, 0.98f),
+        EnumColor            = new Color(0.82f, 0.85f, 0.90f),
+        EnumHoverColor       = new Color(0.64f, 0.86f, 0.98f),
+        NumberColor          = new Color(0.82f, 0.85f, 0.90f),
+        NumberHoverColor     = new Color(0.64f, 0.86f, 0.98f),
+        TabButtonActiveColor = new Color(0.46f, 0.74f, 0.92f),
+        TabButtonHoverColor  = new Color(0.64f, 0.86f, 0.98f),
     };
 
     public static bool IsCensored
@@ -134,7 +146,7 @@ public class VoiceChatLocalSettings : LocalSettingsTab
         displayValue: true, formatString: "0.00")]
     public ConfigEntry<float> MasterVolume { get; }
 
-    [LocalSliderSetting("Voice Falloff Softness", min: 0f, max: 1f,
+    [LocalSliderSetting("Voice Falloff", min: 0f, max: 1f,
         displayValue: true, formatString: "0%")]
     public ConfigEntry<float> VoiceFalloffSoftness { get; }
 
@@ -149,6 +161,12 @@ public class VoiceChatLocalSettings : LocalSettingsTab
         displayValue: true, formatString: "0.0000")]
     public ConfigEntry<float> VadThreshold { get; }
 
+    [LocalToggleSetting("Noise Suppression")]
+    public ConfigEntry<bool> NoiseSuppressionEnabled { get; }
+
+    [LocalToggleSetting("Auto Mic Gain")]
+    public ConfigEntry<bool> AutoMicGain { get; }
+
     [LocalToggleSetting("Mute Alive (Hear Ghosts Only)")]
     public ConfigEntry<bool> MuteAlivePlayers { get; }
 
@@ -161,19 +179,7 @@ public class VoiceChatLocalSettings : LocalSettingsTab
     [LocalToggleSetting("Start Deafened")]
     public ConfigEntry<bool> StartDeafened { get; }
 
-    [LocalEnumSetting("Mute Mouse Bind")]
-    public ConfigEntry<VoiceMouseBind> MuteMouseBind { get; }
-
-    [LocalEnumSetting("Speaker Mouse Bind")]
-    public ConfigEntry<VoiceMouseBind> SpeakerMouseBind { get; }
-
-    [LocalEnumSetting("Push To Talk Mouse Bind")]
-    public ConfigEntry<VoiceMouseBind> PushToTalkMouseBind { get; }
-
-    [LocalEnumSetting("Team Radio Mouse Bind")]
-    public ConfigEntry<VoiceMouseBind> ImpostorRadioMouseBind { get; }
-
-    [LocalEnumSetting("Microphone Device")]
+    [LocalEnumSetting("Mic Device")]
     public ConfigEntry<MicDeviceEnum> MicrophoneDeviceIndex { get; }
 
 #if WINDOWS
@@ -181,49 +187,61 @@ public class VoiceChatLocalSettings : LocalSettingsTab
     public ConfigEntry<SpkDeviceEnum> SpeakerDeviceIndex { get; }
 #endif
 
-    [LocalSliderSetting("Voice Controls X", min: 0f, max: 1f,
+    [LocalEnumSetting("Mute Bind")]
+    public ConfigEntry<VoiceMouseBind> MuteMouseBind { get; }
+
+    [LocalEnumSetting("Speaker Bind")]
+    public ConfigEntry<VoiceMouseBind> SpeakerMouseBind { get; }
+
+    [LocalEnumSetting("Push-To-Talk")]
+    public ConfigEntry<VoiceMouseBind> PushToTalkMouseBind { get; }
+
+    [LocalEnumSetting("Team Radio")]
+    public ConfigEntry<VoiceMouseBind> ImpostorRadioMouseBind { get; }
+
+    [LocalSliderSetting("Controls X", min: 0f, max: 1f,
         displayValue: true, formatString: "0.00")]
     public ConfigEntry<float> ButtonPositionX { get; }
 
-    [LocalSliderSetting("Voice Controls Y", min: 0f, max: 1f,
+    [LocalSliderSetting("Controls Y", min: 0f, max: 1f,
         displayValue: true, formatString: "0.00")]
     public ConfigEntry<float> ButtonPositionY { get; }
 
-    [LocalEnumSetting("Voice Controls Layout")]
+    [LocalEnumSetting("Controls Layout")]
     public ConfigEntry<VoiceControlsLayout> VoiceControlsLayout { get; }
 
-    [LocalEnumSetting("Speaking Bar Position")]
+    [LocalEnumSetting("Bar Position")]
     public ConfigEntry<SpeakingBarPosition> SpeakingBarPosition { get; }
 
-    [LocalToggleSetting("Manual Speaking Bar Layout")]
+    [LocalEnumSetting("Bar Layout")]
+    public ConfigEntry<VoiceControlsLayout> SpeakingBarLayout { get; }
+
+    [LocalEnumSetting("Bar Name Pos")]
+    public ConfigEntry<SpeakingBarNamePosition> SpeakingBarNamePosition { get; }
+
+    [LocalToggleSetting("Manual Bar")]
     public ConfigEntry<bool> SpeakingBarManualLayout { get; }
 
-    [LocalSliderSetting("Speaking Bar X", min: 0f, max: 1f,
+    [LocalToggleSetting("Bar Backdrop")]
+    public ConfigEntry<bool> SpeakingBarBackdrop { get; }
+
+    [LocalToggleSetting("Meeting Overlay")]
+    public ConfigEntry<bool> MeetingSpeakingOverlay { get; }
+
+    [LocalEnumSetting("Jail Unmute")]
+    public ConfigEntry<JailUnmuteButtonPlacement> JailUnmuteButtonPlacement { get; }
+
+    [LocalSliderSetting("Bar X", min: 0f, max: 1f,
         displayValue: true, formatString: "0.00")]
     public ConfigEntry<float> SpeakingBarX { get; }
 
-    [LocalSliderSetting("Speaking Bar Y", min: 0f, max: 1f,
+    [LocalSliderSetting("Bar Y", min: 0f, max: 1f,
         displayValue: true, formatString: "0.00")]
     public ConfigEntry<float> SpeakingBarY { get; }
-
-    [LocalEnumSetting("Speaking Bar Layout")]
-    public ConfigEntry<VoiceControlsLayout> SpeakingBarLayout { get; }
-
-    [LocalEnumSetting("Speaking Bar Name Position")]
-    public ConfigEntry<SpeakingBarNamePosition> SpeakingBarNamePosition { get; }
-
-    [LocalEnumSetting("Jail Unmute Button")]
-    public ConfigEntry<JailUnmuteButtonPlacement> JailUnmuteButtonPlacement { get; }
-
-    [LocalToggleSetting("Meeting Speaking Overlay")]
-    public ConfigEntry<bool> MeetingSpeakingOverlay { get; }
 
     [LocalSliderSetting("Overlay Scale", min: 0.75f, max: 3.00f,
         displayValue: true, formatString: "0.00")]
     public ConfigEntry<float> OverlayScale { get; }
-
-    [LocalToggleSetting("Noise Suppression")]
-    public ConfigEntry<bool> NoiseSuppressionEnabled { get; }
 
     // User-facing toggle (default on). When on, the BetterCrewLink backend offers a TURN relay alongside
     // STUN so peers that can't establish a direct connection (strict/symmetric NAT, firewalls) still get
@@ -234,9 +252,10 @@ public class VoiceChatLocalSettings : LocalSettingsTab
     [LocalToggleSetting("Debug Voice Stats")]
     public ConfigEntry<bool> DebugVoiceStats { get; }
 
-    public ConfigEntry<bool> SyntheticMicTone { get; }
     [LocalToggleSetting("Mic Calibration Logs")]
     public ConfigEntry<bool> MicCalibrationDiagnostics { get; }
+
+    public ConfigEntry<bool> SyntheticMicTone { get; }
 
     public ConfigEntry<string> PerPlayerVolumes { get; }
     public ConfigEntry<string> LobbyBrowserTitle { get; }
@@ -436,6 +455,9 @@ public class VoiceChatLocalSettings : LocalSettingsTab
             VoiceChatPlugin.VoiceChat.SpeakingBarNamePosition.Bottom,
             new ConfigDescription("Where the player name sits relative to its speaking-bar icon."));
 
+        SpeakingBarBackdrop = config.Bind("UI", "SpeakingBarBackdrop", false,
+            new ConfigDescription("Show a translucent dark backdrop behind the speaking bar."));
+
         JailUnmuteButtonPlacement = config.Bind("UI", "JailUnmuteButtonPlacement",
             VoiceChatPlugin.VoiceChat.JailUnmuteButtonPlacement.MeetingCard,
             new ConfigDescription("Jailor unmute button: Voice HUD or the jailee's meeting card."));
@@ -451,6 +473,9 @@ public class VoiceChatLocalSettings : LocalSettingsTab
 
         NoiseSuppressionEnabled = config.Bind("Audio", "NoiseSuppressionEnabled", true,
             new ConfigDescription("Use RNNoise to suppress outgoing microphone background noise."));
+
+        AutoMicGain = config.Bind("Audio", "AutoMicGain", true,
+            new ConfigDescription("Automatically boost quiet microphones toward a consistent speech level before noise suppression and the noise gate."));
 
         DebugVoiceStats = config.Bind("Debug", "DebugVoiceStats", false,
             new ConfigDescription("Enable Mega Chujowe Perfect Comms diagnostic files and debug log output."));
@@ -608,7 +633,7 @@ public class VoiceChatLocalSettings : LocalSettingsTab
             VoiceChatRoom.Current?.RefreshLocalAudioSettings();
         }
         else if (configEntry == NoiseGateThreshold || configEntry == VadThreshold ||
-                 configEntry == NoiseSuppressionEnabled ||
+                 configEntry == NoiseSuppressionEnabled || configEntry == AutoMicGain ||
                  configEntry == SyntheticMicTone ||
                  configEntry == MicCalibrationDiagnostics)
         {
@@ -638,7 +663,7 @@ public class VoiceChatLocalSettings : LocalSettingsTab
         }
         else if (configEntry == SpeakingBarManualLayout || configEntry == SpeakingBarX ||
                  configEntry == SpeakingBarY || configEntry == SpeakingBarLayout ||
-                 configEntry == SpeakingBarNamePosition)
+                 configEntry == SpeakingBarNamePosition || configEntry == SpeakingBarBackdrop)
         {
             PingTrackerPatch.ApplySpeakingBarLayoutSettings();
         }
@@ -808,17 +833,19 @@ public static class DeviceLabelPatch
             if (isMic)
             {
                 var names = VoiceChatLocalSettings.MicDeviceNames;
-                __result = idx == 0 ? "Default"
-                         : idx < names.Length ? names[idx]
-                         : "Default";
+                var dev = idx == 0           ? "Default"
+                        : idx < names.Length ? names[idx]
+                        : "Default";
+                __result = $"<font=\"LiberationSans SDF\" material=\"LiberationSans SDF - Chat Message Masked\">Mic Device: <b>{dev}</font></b>";
             }
 #if WINDOWS
             else if (isSpk)
             {
                 var names = VoiceChatLocalSettings.SpkDeviceNames;
-                __result = idx == 0 ? "Default"
-                         : idx < names.Length ? names[idx]
-                         : "Default";
+                var dev = idx == 0           ? "Default"
+                        : idx < names.Length ? names[idx]
+                        : "Default";
+                __result = $"<font=\"LiberationSans SDF\" material=\"LiberationSans SDF - Chat Message Masked\">Speaker Device: <b>{dev}</font></b>";
             }
 #endif
         }

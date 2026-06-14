@@ -42,7 +42,9 @@ internal static partial class VoiceRoleMuteState
             _injectedSlownessModifierType == null &&
             _injectedVeryLowVisionModifierType == null &&
             _injectedWeaknessModifierType == null &&
-            PostMeetingBlackmailedPlayers.Count == 0)
+            _touMceVoodooMutedModifierType == null &&
+            PostMeetingBlackmailedPlayers.Count == 0 &&
+            PostMeetingVoodooMutedPlayers.Count == 0)
         {
             RoleStateCache.Clear();
             return;
@@ -94,6 +96,9 @@ internal static partial class VoiceRoleMuteState
         bool isMediatedGhost = mediatedModifier != null && player.Data?.IsDead == true;
         byte mediatingMediumId = isMediatedGhost ? GetMediatingMediumId(mediatedModifier) : byte.MaxValue;
         bool isBlackmailedNextRound = PostMeetingBlackmailedPlayers.Contains(player.PlayerId);
+        bool isVoodooMuted = GetModifier(player, _touMceVoodooMutedModifierType) != null ||
+                             MeetingVoodooMutedPlayers.Contains(player.PlayerId);
+        bool isVoodooMutedNextRound = PostMeetingVoodooMutedPlayers.Contains(player.PlayerId);
         byte jailorId = byte.MaxValue;
         bool isJailed = false;
 
@@ -132,7 +137,9 @@ internal static partial class VoiceRoleMuteState
             hasMediumSpirit,
             mediumSpiritPosition,
             isMediatedGhost,
-            mediatingMediumId);
+            mediatingMediumId,
+            isVoodooMuted,
+            isVoodooMutedNextRound);
     }
 
     private static BaseModifier? GetModifier(PlayerControl player, Type? type)
@@ -229,6 +236,7 @@ internal static partial class VoiceRoleMuteState
         _injectedSlownessModifierType = ResolveType(InjectedSlownessModifierName);
         _injectedVeryLowVisionModifierType = ResolveType(InjectedVeryLowVisionModifierName);
         _injectedWeaknessModifierType = ResolveType(InjectedWeaknessModifierName);
+        _touMceVoodooMutedModifierType = ResolveType(TouMceVoodooMutedModifierName);
         _supportedModTypesResolved = true;
         InvalidateRoleStateCache();
     }

@@ -1,6 +1,90 @@
 # Changelog
 
-## Mega Chujowe Perfect Comms v1.0.4
+## Mega Chujowe Perfect Comms v1.0.6
+- Merged with upstream Perfect Comms v2.1.7.
+- Implemented Voodoo role voice mechanics (hidden muting, next-round persistence toggle, mute-in-meeting toggle).
+- Maintained local optimizations (300% max volume, custom names/branding).
+
+This Perfect Comms release is a big audio-quality pass: smoother voice with no clicks or pops, lower delay that adapts to each player's connection, fixed Bluetooth headsets going silent, better quiet-mic handling, and a Jailor unmute that always sticks.
+
+### What's Changed
+
+- **Voice is much smoother all around.**
+  > <sub>Moving around, crossing walls, muting, and range edges no longer click or cut hard. Volume and stereo position glide instead of stepping.</sub>
+
+- **Fixed short stutter/echo bursts during packet loss.**
+  > <sub>A bug repeated the same split-second of audio when several packets were lost in a row.</sub>
+
+- **Lower voice delay that adapts per player.**
+  > <sub>Stable connections get snappier voice, laggy players automatically get more cushion, and their late-arriving audio is played instead of dropped.</sub>
+
+- **Voice quality adapts to real packet loss.**
+  > <sub>Loss protection is dialed up only for players who need it, instead of a fixed setting for everyone.</sub>
+
+- **Bluetooth headsets no longer go deaf.**
+  > <sub>Using one headset (e.g. AirPods) for mic and speaker could leave you unable to hear; the mod now recovers automatically, and switches back to full listening quality while you're muted.</sub>
+
+- **Quiet microphones sound better.**
+  > <sub>Mic boost survives mute cycles, rumble no longer trips the voice gate, and unmuting is instant.</sub>
+
+- **The Jailor's unmute always sticks now.**
+  > <sub>It re-confirms itself automatically so a missed unmute can't leave the jailee silent.</sub>
+
+- **Speaking-bar names match in-game names.**
+  > <sub>Same font and outline as player nameplates, readable over any background.</sub>
+
+- **More self-healing playback.**
+  > <sub>A stalled or erroring output device restarts itself instead of staying silent until you switch devices.</sub>
+
+See `docs/release-notes-v2.1.7.md` for the full release notes.
+
+## Perfect Comms v2.1.6
+
+This Perfect Comms release reworks the per-player volume menu into a live mixer, adds an optional backdrop and steadier animation to the speaking bar, lets you switch between Open Mic and Push-to-Talk with a hotkey, fixes the volume menu hiding in the dark, and routes role-based spectators as voice ghosts.
+
+### What's Changed
+
+- **A live per-player volume mixer.** The volume menu now shows each player's avatar and a live voice meter that moves as they talk, you can scroll the list with the mouse wheel, and the roster refreshes as players join or leave — so it's much easier to find and set the right person's level.
+- **The volume menu no longer hides in the dark.** During blackouts and low-vision moments the menu's rows could vanish; they now stay fully visible regardless of in-game vision.
+- **Optional speaking-bar backdrop, steadier bar.** You can switch on a subtle backdrop behind the speaking bar for readability over busy scenes, the talking icons now hold a stable order instead of jumping around, and their level animation is smoothed.
+- **Switch Open Mic ↔ Push-to-Talk on the fly.** A new keybind flips your microphone between Open Mic and Push-to-Talk and shows a quick confirmation. It's unbound by default — assign a key to it in the keybind settings to use it.
+- **Spectators are handled as ghosts for voice.** Players the game marks dead through a role (e.g. Town of Us Spectator) are now routed like ghosts, so they hear and are heard the same as other dead players.
+- **No more stray hover highlight on the voice buttons.** The mic/speaker buttons (cloned from the in-game map button) no longer show a leftover hover sprite.
+
+See `docs/release-notes-v2.1.6.md` for the full release notes.
+
+## Perfect Comms v2.1.5
+
+This Perfect Comms release fixes the speaking bar showing the wrong player and voice being heard across the whole map, clears an end-game crash that could disconnect you, tones down the end-game group call so it isn't ear-splitting, and trims a few more audio drop-outs.
+
+### What's Changed
+
+- **The speaking bar shows the right person again.** Fixed a bug where the talking indicator — in meetings and on the in-game bar — could light up the wrong player, or two players' voices could collapse onto a single name, especially after rounds where player slots got reshuffled. Each voice now reliably follows its own player.
+- **No more being heard from across the map.** Caused by the same mix-up: a player's voice could ignore distance and come through from anywhere (and, the flip side, a player who was actually nearby could go unheard). Voice now tracks each player's real position again, so proximity works as intended.
+- **Fixed a crash/kick around the end-game screen.** Dropping to the end-game results and rejoining the lobby could spam errors and get you disconnected. The voice HUD now steps aside cleanly during that transition, so the freeze-and-kick is gone.
+- **The end-game group call is no longer ear-splitting.** On the results screen everyone was played back at full blast; levels are now dialed to a comfortable volume while staying clearly audible.
+- **Fewer audio drop-outs and a little less stutter.** Tiny/odd audio frames are now handled cleanly instead of being dropped, and the playback buffer carries a touch more cushion so brief network hiccups don't turn into gaps.
+
+See `docs/release-notes-v2.1.5.md` for the full release notes.
+
+## Perfect Comms v2.1.4
+
+This Perfect Comms release gives the voice settings menu a cleaner, easier-to-read makeover, keeps voice and avatars from dropping out on the end-game screen, and rounds out another batch of fixes for one-way and patchy voice.
+
+### What's Changed
+
+- **A cleaner voice settings menu.** The settings page has a tidier two-column layout, easier-on-the-eyes colors, and shorter labels that no longer wrap onto two lines. The microphone and speaker pickers now clearly show which is which, instead of both just reading "Default".
+- **Voice now stays put through the end-game screen.** Voice keeps working through the end screen and between rounds, and player voice and speaker icons no longer vanish the moment a game ends.
+- **A heads-up when you refresh voice.** Pressing a voice-refresh key now shows a quick on-screen message so you know it worked. Refreshing as the host lets everyone know; refreshing just for yourself shows only to you.
+- **No more freeze when switching microphone or speaker mid-game.** Changing your mic or speaker quickly no longer risks a crash, and leaving the speaker on "Default" now follows whatever your computer's current default speaker is.
+- **Fixed some players' audio going flat (pure mono, non-directional).** In some cases a player's voice lost its proximity and direction and came through evenly no matter where they were on the map. Their audio now plays back with the correct distance and direction again.
+- **More "I can hear you but you can't hear me" fixes.** Several cases where a voice link got stuck on one side — so one player could be heard but couldn't hear back, or a connected player made no sound at all — now sort themselves out automatically instead of needing a rejoin.
+- **Voice is a touch smoother still.** Continued behind-the-scenes tuning keeps speech steady through uneven connections, with a little less stutter.
+
+See `docs/release-notes-v2.1.4.md` for the full release notes.
+
+## Perfect Comms v2.1.3
+>>>>>>> upstream/main
 
 Fork release for [Town Of Us Mega Chujowe Extension](https://github.com/HekerB/TownOfUsMegaChujoweExtension).
 

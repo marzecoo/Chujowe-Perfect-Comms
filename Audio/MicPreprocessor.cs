@@ -29,9 +29,24 @@ internal sealed class MicPreprocessor : IDisposable
 {
     private const int HangoverFrames = 8;
     private const float MinimumTransmitGate = 0.0005f;
+    private const float AgcTargetPeak = 0.30f;
+    private const float AgcMaxGain = 16f;
+    private const float AgcSpeechFloor = 0.002f;
+    private const float AgcPeakCeiling = 0.9f;
+    private const float AgcGainRisePerFrame = 1.02f;
+    private const float AgcSpeechPeakDecay = 0.995f;
+    private const float AgcSpeechPeakRisePerFrame = 1.10f;
+    private const float HighPassCoefficient = 0.98953f;
+
+    public float AutoGainSeedFloor { get; set; } = 0.003f;
 
     private readonly object _noiseSuppressionStatsLock = new();
     private int _hangoverFramesRemaining;
+    private float _agcGain = 1f;
+    private float _agcLastAppliedGain = 1f;
+    private float _agcRecentSpeechPeak;
+    private float _hpfLastInput;
+    private float _hpfLastOutput;
     private RnNoiseSuppressor? _noiseSuppressor;
     private string _noiseSuppressionState = "disabled";
     private string _noiseSuppressionLastError = "none";
@@ -47,13 +62,112 @@ internal sealed class MicPreprocessor : IDisposable
     private double _noiseSuppressionOutputSquareSumSinceStats;
     private float _noiseSuppressionSpeechProbabilityMaxSinceStats;
 
-    public void Reset()
+    public void Reset(bool preserveAutoGain = false)
     {
         _hangoverFramesRemaining = 0;
+        if (!preserveAutoGain)
+            ResetAutoGain();
+        _hpfLastInput = 0f;
+        _hpfLastOutput = 0f;
         _noiseSuppressor?.Reset();
     }
 
+    public void ResetAutoGain()
+    {
+        _agcGain = 1f;
+        _agcLastAppliedGain = 1f;
+        _agcRecentSpeechPeak = 0f;
+    }
+
+    public void ApplyHighPass(float[] pcm, int sampleCount)
+    {
+        int count = Math.Min(sampleCount, pcm.Length);
+        float lastIn = _hpfLastInput;
+        float lastOut = _hpfLastOutput;
+        for (int i = 0; i < count; i++)
+        {
+            float input = pcm[i];
+            if (!float.IsFinite(input)) input = 0f;
+            lastOut = HighPassCoefficient * (lastOut + input - lastIn);
+            lastIn = input;
+            pcm[i] = lastOut;
+        }
+        _hpfLastInput = lastIn;
+        _hpfLastOutput = lastOut;
+    }
+
     public float ProcessCaptureSample(float sample, float gain) => sample;
+
+    public float ApplyAutoGain(float[] pcm, int sampleCount, bool enabled, out float postGainPeak)
+    {
+        int count = Math.Min(sampleCount, pcm.Length);
+        float peak = 0f;
+        for (int i = 0; i < count; i++)
+        {
+            float sample = pcm[i];
+            if (!float.IsFinite(sample))
+                continue;
+
+            float abs = sample < 0f ? -sample : sample;
+            if (abs > peak) peak = abs;
+        }
+
+        if (!enabled || count <= 0)
+        {
+            float previousDisabledGain = _agcLastAppliedGain;
+            _agcGain = 1f;
+            _agcLastAppliedGain = 1f;
+            _agcRecentSpeechPeak = 0f;
+            postGainPeak = peak * Math.Max(previousDisabledGain, 1f);
+            if (count > 0 && Math.Abs(previousDisabledGain - 1f) > 0.0001f)
+            {
+                float step = (1f - previousDisabledGain) / count;
+                float rampGain = previousDisabledGain;
+                for (int i = 0; i < count; i++)
+                {
+                    rampGain += step;
+                    pcm[i] *= rampGain;
+                }
+            }
+            return 1f;
+        }
+
+        float seedFloor = Math.Max(AutoGainSeedFloor, AgcSpeechFloor);
+        if (peak >= seedFloor)
+        {
+            float risenPeak = Math.Min(peak, Math.Max(_agcRecentSpeechPeak * AgcSpeechPeakRisePerFrame, seedFloor));
+            _agcRecentSpeechPeak = Math.Max(risenPeak, _agcRecentSpeechPeak * AgcSpeechPeakDecay);
+        }
+
+        float gain = 1f;
+        if (_agcRecentSpeechPeak >= AgcSpeechFloor)
+        {
+            gain = Math.Clamp(AgcTargetPeak / _agcRecentSpeechPeak, 1f, AgcMaxGain);
+            if (gain > _agcGain)
+                gain = Math.Min(gain, _agcGain * AgcGainRisePerFrame);
+        }
+
+        if (peak * gain > AgcPeakCeiling)
+            gain = AgcPeakCeiling / peak;
+
+        // Ceiling ducking is transient: never let it drag the rise-cap baseline below unity for ~0.5s.
+        _agcGain = Math.Max(1f, gain);
+        float previousGain = _agcLastAppliedGain;
+        _agcLastAppliedGain = gain;
+        postGainPeak = peak * Math.Max(previousGain, gain);
+        if (gain == 1f && previousGain == 1f)
+            return 1f;
+
+        float rampStep = (gain - previousGain) / count;
+        float applied = previousGain;
+        for (int i = 0; i < count; i++)
+        {
+            applied += rampStep;
+            pcm[i] *= applied;
+        }
+
+        return gain;
+    }
 
     public void SetNoiseSuppressionEnabled(bool enabled)
     {
@@ -191,7 +305,8 @@ internal sealed class MicPreprocessor : IDisposable
         float[] pcm,
         int sampleCount,
         float manualGateThreshold,
-        float vadThreshold)
+        float vadThreshold,
+        float preSuppressionPeak)
     {
         int count = Math.Min(sampleCount, pcm.Length);
         if (count <= 0)
@@ -199,6 +314,7 @@ internal sealed class MicPreprocessor : IDisposable
 
         // VAD and gate state are diagnostics/speaking inputs; OpenMic transport stays continuous.
         _ = vadThreshold;
+        _ = preSuppressionPeak;
         float peak = 0f;
         double sumSquares = 0.0;
         for (int i = 0; i < count; i++)

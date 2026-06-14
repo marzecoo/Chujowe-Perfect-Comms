@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.IO;
 using System.Threading;
@@ -9,12 +10,14 @@ namespace VoiceChatPlugin.VoiceChat;
 
 internal static class VoiceDiagnostics
 {
-    private const double FlushIntervalSeconds = 30.0;
+
     private static readonly object Lock = new();
     private static readonly DateTime StartedUtc = DateTime.UtcNow;
+    private static readonly ConcurrentQueue<string> Pending = new();
+    private static readonly AutoResetEvent PendingSignal = new(false);
+    private static int _writerThreadStarted;
     private static StreamWriter? _writer;
     private static string _path = "";
-    private static DateTime _lastFlushUtc = StartedUtc;
     private static int _mainThreadId = -1;
     private static int _lastFrame = -1;
     private static int _enabled;
@@ -25,6 +28,8 @@ internal static class VoiceDiagnostics
 
     public static void Init()
     {
+        if (_mainThreadId == -1)
+            _mainThreadId = Environment.CurrentManagedThreadId;
         if (!IsEnabled) return;
 
         lock (Lock)
@@ -33,6 +38,8 @@ internal static class VoiceDiagnostics
 
     public static void SetEnabled(bool enabled)
     {
+        if (_mainThreadId == -1)
+            _mainThreadId = Environment.CurrentManagedThreadId;
         Volatile.Write(ref _enabled, enabled ? 1 : 0);
         lock (Lock)
         {
@@ -61,15 +68,61 @@ internal static class VoiceDiagnostics
             VoiceChatPluginMain.Logger.LogError(message);
     }
 
+    // Enqueue-only: callers (including the NAudio pull and decode threads) never touch the file or its lock;
+    // a dedicated background thread drains and flushes.
     public static void Log(string category, string message)
     {
         if (!IsEnabled) return;
 
-        lock (Lock)
+        if (IsMainThread())
+            RefreshMainThreadContext();
+        double elapsed = (DateTime.UtcNow - StartedUtc).TotalSeconds;
+        Pending.Enqueue($"{DateTime.UtcNow:o} +{elapsed:0.000}s frame={_lastFrame} {_lastIdentity} {category} {message}");
+        EnsureWriterThread();
+        PendingSignal.Set();
+    }
+
+    private static void EnsureWriterThread()
+    {
+        if (Interlocked.CompareExchange(ref _writerThreadStarted, 1, 0) != 0) return;
+        var thread = new Thread(WriterLoop)
         {
-            if (_writer == null)
-                InitLocked();
-            WriteLocked(category, message);
+            IsBackground = true,
+            Name = "VoiceDiagnosticsWriter",
+            Priority = System.Threading.ThreadPriority.BelowNormal,
+        };
+        thread.Start();
+    }
+
+    private static void WriterLoop()
+    {
+        while (true)
+        {
+            try
+            {
+                PendingSignal.WaitOne(1000);
+                if (Pending.IsEmpty) continue;
+                lock (Lock)
+                {
+                    if (_writer == null && IsEnabled)
+                        InitLocked();
+                    if (_writer == null)
+                    {
+                        while (Pending.TryDequeue(out _)) { }
+                        continue;
+                    }
+                    bool wrote = false;
+                    while (Pending.TryDequeue(out var line))
+                    {
+                        _writer.WriteLine(line);
+                        wrote = true;
+                    }
+                    if (wrote) _writer.Flush();
+                }
+            }
+            catch
+            {
+            }
         }
     }
 
@@ -89,8 +142,10 @@ internal static class VoiceDiagnostics
                 AutoFlush = false,
             };
 
-            _mainThreadId = Environment.CurrentManagedThreadId;
-            RefreshMainThreadContextLocked();
+            if (_mainThreadId == -1)
+                _mainThreadId = Environment.CurrentManagedThreadId;
+            if (IsMainThread())
+                RefreshMainThreadContext();
             WriteLocked("diagnostics.start", $"path={_path} pid={pid} utc={StartedUtc:o} version=debug-gated-1");
         }
         catch (Exception ex)
@@ -105,6 +160,8 @@ internal static class VoiceDiagnostics
 
         try
         {
+            while (Pending.TryDequeue(out var line))
+                _writer.WriteLine(line);
             WriteLocked("diagnostics.stop", "debug=false");
             _writer.Flush();
             _writer.Dispose();
@@ -125,31 +182,16 @@ internal static class VoiceDiagnostics
 
         double elapsed = (DateTime.UtcNow - StartedUtc).TotalSeconds;
         if (IsMainThread())
-            RefreshMainThreadContextLocked();
+            RefreshMainThreadContext();
         _writer.WriteLine(
             $"{DateTime.UtcNow:o} +{elapsed:0.000}s frame={_lastFrame} {_lastIdentity} {category} {message}");
-        MaybeFlushLocked(category);
-    }
-
-    private static void MaybeFlushLocked(string category)
-    {
-        if (_writer == null) return;
-
-        var now = DateTime.UtcNow;
-        if (category is "diagnostics.start" or "room.close" or "transition.perf.slowUpdate" or "transition.audio.clip"
-                or "frame.slow" or "frame.window" ||
-            category.StartsWith("audio.buffer.", StringComparison.Ordinal) ||
-            (now - _lastFlushUtc).TotalSeconds >= FlushIntervalSeconds)
-        {
-            _writer.Flush();
-            _lastFlushUtc = now;
-        }
+        _writer.Flush();
     }
 
     private static bool IsMainThread()
         => Volatile.Read(ref _mainThreadId) == Environment.CurrentManagedThreadId;
 
-    private static void RefreshMainThreadContextLocked()
+    private static void RefreshMainThreadContext()
     {
         _lastFrame = ReadMainThreadFrame();
         _lastIdentity = ReadMainThreadIdentity();

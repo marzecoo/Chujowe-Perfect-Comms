@@ -13,6 +13,8 @@ internal enum VoiceProximityReason
     LocalDeadHearsLiving,
     Blackmailed,
     BlackmailedNextRound,
+    VoodooMuted,
+    VoodooMutedNextRound,
     Jailed,
     ParasiteControlled,
     PuppeteerControlled,

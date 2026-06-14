@@ -20,6 +20,7 @@ internal readonly record struct VoicePlayerSnapshot(
     Vector2 Position,
     bool IsLocal,
     bool IsDead,
+    bool IsSpectator,
     bool IsImpostor,
     bool IsVampire,
     bool IsLover,
@@ -53,4 +54,6 @@ internal readonly record struct VoicePlayerSnapshot(
     // Local-player-only control-hearing fields (default None/zero for everyone else).
     VoiceControlHearingMode ControlHearingMode,
     Vector2 ControlledVictimPosition,
-    float ControlledVictimLightRadius);
+    float ControlledVictimLightRadius,
+    bool IsVoodooMuted,
+    bool IsVoodooMutedNextRound);

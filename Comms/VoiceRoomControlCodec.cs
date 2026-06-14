@@ -227,7 +227,9 @@ public static class VoiceRoomControlCodec
             true,
             true,
             true,
-            teamRadioApocalypse).Clamp();
+            teamRadioApocalypse,
+            true,
+            false).Clamp();
         return true;
     }
 

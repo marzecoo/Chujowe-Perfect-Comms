@@ -26,7 +26,8 @@ public class VoiceChatRoom
     private const float MissingPeerRecoveryGraceSeconds = 8f;
     private const float InterstellarSwitchPeerRecoveryGraceSeconds = 2f;
     private const float MissingPeerRecoveryIntervalSeconds = 5f;
-    private const float MissingPeerRecoveryCheckIntervalSeconds = 0.5f;
+    private const float PeerEscalationDeferralRecheckSeconds = 3f;
+    private const int PeerEscalationDeferralMaxConsecutive = 4;
     private const double RadioStateRpcHeartbeatSeconds = 1.0;
     private const float TransitionTraceSeconds = 45f;
     private const float TransitionTraceStateInterval = 0.25f;
@@ -59,6 +60,8 @@ public class VoiceChatRoom
     private InterstellarVoiceBackend? _interstellarVoice;
     private BetterCrewLinkVoiceBackend? _betterCrewLinkVoice;
     private VoiceRoomSettingsSnapshot? _lastSentHostSettings;
+    private DateTime _lastSentHostSettingsUtc = DateTime.MinValue;
+    private const double MinHostSettingsSnapshotIntervalSeconds = 1.0;
     private DateTime _lastHostSettingsRequestUtc = DateTime.MinValue;
     private int _lastObservedHostClientId = -1;
     private bool _hostSettingsResyncPending;
@@ -120,10 +123,11 @@ public class VoiceChatRoom
     // the best mapped count seen, so escalation to a global rebuild is reserved for a real collapse.
     private int _missingPeerRecoveryAttempts;          // consecutive non-improving attempts on the current shortfall (targeted path)
     private int _globalRebuildAttempts;                 // consecutive global/collapse rebuilds (bounds the collapse-path backoff)
-    private int _lastRecoveryMappedPeers = -1;          // mappedPeers observed at the previous attempt
+    private int _lastRecoveryOpenPeers = -1;             // openPeers observed at the previous attempt
     private int _lastHealthyMappedPeers;                // best mappedPeers ever seen this session (diagnostics only)
     private int _lastRecoveryRemoteSignature;           // cheap hash of the expected-remote set at the previous attempt
     private bool _missingPeerRecoveryLatched;           // true once capped; cleared when the set/count changes
+    private int _consecutivePeerEscalationDeferrals;
     private const int MissingPeerRecoveryMaxAttempts = 3;        // non-improving attempts before latching
     private const int MissingPeerRecoveryBackoffShiftCap = 4;    // max backoff doublings (5s base -> ~80s cap on the global path)
     private bool _haveTracePhase;
@@ -468,6 +472,10 @@ public class VoiceChatRoom
         VoiceDiagnostics.Log("voice.refresh.applied",
             $"{sender.ToDiagnosticFields()} nonce={nonce} trigger={trigger} backend={_activeBackend} room={LogSafe(_activeRoomCode ?? "unknown")} region={LogSafe(_activeRegion ?? "unknown")} peers={_voiceBackend?.PeerCount ?? 0}");
 
+        VoiceChatHudState.ShowToast(trigger == "rpc"
+            ? "Host refreshed voice connections"
+            : "You refreshed voice for everyone");
+
         // Rejoin() begins with ClearVoiceUiForLifecycleReset, so the UI teardown runs exactly once.
         StartTransitionTrace($"host voice refresh: {trigger}", snapshot);
         Rejoin("host voice refresh");
@@ -479,6 +487,8 @@ public class VoiceChatRoom
         VoiceDiagnostics.Log("voice.refresh.local.applied",
             $"trigger={trigger} backend={_activeBackend} room={LogSafe(_activeRoomCode ?? "unknown")} region={LogSafe(_activeRegion ?? "unknown")} peers={_voiceBackend?.PeerCount ?? 0}");
 
+        VoiceChatHudState.ShowToast("Voice connection refreshed");
+
         // Rejoin() begins with ClearVoiceUiForLifecycleReset, so the UI teardown runs exactly once.
         StartTransitionTrace($"local voice refresh: {trigger}", snapshot);
         Rejoin("local voice refresh");
@@ -489,13 +499,19 @@ public class VoiceChatRoom
         if (!IsLocalHost() || _voiceBackend == null) return;
 
         var settings = VoiceRoomSettingsSnapshot.FromGameOptions();
-        if (!force && _lastSentHostSettings.HasValue && _lastSentHostSettings.Value.Equals(settings))
-            return;
+        if (!force)
+        {
+            if (_lastSentHostSettings.HasValue && _lastSentHostSettings.Value.Equals(settings))
+                return;
+            if ((DateTime.UtcNow - _lastSentHostSettingsUtc).TotalSeconds < MinHostSettingsSnapshotIntervalSeconds)
+                return;
+        }
 
         // Authority only via authenticated Among Us RPC; the side-channel's self-asserted
         // sender id would let any peer forge host voice settings.
         VoiceRoomSettingsRpc.SendSnapshot(settings);
         _lastSentHostSettings = settings;
+        _lastSentHostSettingsUtc = DateTime.UtcNow;
         VoiceDiagnostics.Log("settings.sent", $"kind=host-snapshot transport={_activeBackend} rpc=true");
     }
 
@@ -648,22 +664,45 @@ _voiceBackend.SetMicrophone(settings?.MicrophoneDevice ?? string.Empty, settings
         if (_voiceBackend == null || snapshot == null)
             return;
 
+        // During a round transition (game ends -> EndGame -> lobby reforms) the local player is briefly
+        // unassigned (PlayerId 255, not yet in the snapshot). While that holds the backend cannot re-announce
+        // its identity to the signaling server (JoinAsync requires a real local playerId), so peers that
+        // survived the transition legitimately read as unmapped. Firing recovery in this window misreads the
+        // settling state as a mesh collapse and forces a destructive global rebuild (new socket) right as the
+        // lobby reforms -- the visible "everyone reconnects a few seconds after returning to the lobby" glitch.
+        // Defer recovery (keep the grace fresh) until the local player resolves; the per-frame re-announce in
+        // the backend Update then remaps the surviving peers in place, with no socket churn.
+        if (!snapshot.TryGetLocalPlayer(out _))
+        {
+            _missingPeerRecoveryReadyTime = Time.time + MissingPeerRecoveryGraceSeconds;
+            return;
+        }
+
         int remotePlayers = CountExpectedRemotePlayers(snapshot);
-        int mappedPeers = _voiceBackend.CountMappedRemotePeers(snapshot);
+        int mappedPeers = _voiceBackend.CountMappedRemotePeers(snapshot);   // telemetry/peak only
+        int openPeers = _voiceBackend.CountPeersWithOpenChannel(snapshot);  // health + collapse decision
+        // Peers whose data channel is physically open even if their clientId isn't mapped to a live snapshot
+        // player yet. On the lobby right after a round, a surviving peer is briefly unmapped (the local roster
+        // hasn't re-listed the remote) while its channel is healthy and audio flows; the mapping self-heals via
+        // the routing's FindTarget. Counting those as healthy here stops recovery from firing a destructive
+        // global rebuild (new socket) ~8s into the lobby. A genuine split-brain (channel NOT open) still fails
+        // this check and recovers, because its channel is closed/never-opened.
+        int openChannelsRaw = _voiceBackend.CountOpenDataChannels();
         if (mappedPeers > _lastHealthyMappedPeers)
             _lastHealthyMappedPeers = mappedPeers; // diagnostics-only peak; NOT used to judge collapse (see IsMeshCollapse)
-        if (remotePlayers == 0 || mappedPeers >= remotePlayers)
+        if (remotePlayers == 0 || openPeers >= remotePlayers || openChannelsRaw >= remotePlayers)
         {
             // Fully healthy (or no remotes). Reset the grace timer AND the storm guard so the next genuine
             // shortfall starts a fresh capped/back-off cycle.
             _missingPeerRecoveryReadyTime = Time.time + MissingPeerRecoveryGraceSeconds;
-            if (_missingPeerRecoveryAttempts != 0 || _missingPeerRecoveryLatched || _globalRebuildAttempts != 0)
+            if (_missingPeerRecoveryAttempts != 0 || _missingPeerRecoveryLatched || _globalRebuildAttempts != 0 || _consecutivePeerEscalationDeferrals != 0)
             {
                 _missingPeerRecoveryAttempts = 0;
                 _globalRebuildAttempts = 0;
                 _missingPeerRecoveryLatched = false;
-                _lastRecoveryMappedPeers = -1;
+                _lastRecoveryOpenPeers = -1;
                 _lastRecoveryRemoteSignature = 0;
+                _consecutivePeerEscalationDeferrals = 0;
             }
             return;
         }
@@ -678,7 +717,7 @@ _voiceBackend.SetMicrophone(settings?.MicrophoneDevice ?? string.Empty, settings
         // actually fires.
         int remoteSignature = HashExpectedRemotePlayers(snapshot);
         bool setChanged = remoteSignature != _lastRecoveryRemoteSignature;
-        bool improved = _lastRecoveryMappedPeers >= 0 && mappedPeers > _lastRecoveryMappedPeers;
+        bool improved = _lastRecoveryOpenPeers >= 0 && openPeers > _lastRecoveryOpenPeers;
         if (setChanged || improved)
         {
             _missingPeerRecoveryLatched = false;
@@ -690,12 +729,12 @@ _voiceBackend.SetMicrophone(settings?.MicrophoneDevice ?? string.Empty, settings
         if (_missingPeerRecoveryLatched)
             return;
 
-        // Escalate to a global rebuild ONLY on a real collapse — no peers mapped at all, or mapped count fell
+        // Classify a real collapse — no peers mapped at all, or mapped count fell
         // below half of the CURRENTLY-expected remote count. A small shortfall (most peers mapped) takes the
         // targeted, non-destructive path so already-open peers keep their channels. The threshold is relative
         // to the live roster (NOT a stale healthy peak) so a roster shrink can't be misread as a collapse and
         // re-fire the destructive global Rejoin on a healthy-but-smaller lobby.
-        bool collapsed = IsMeshCollapse(mappedPeers, remotePlayers);
+        bool collapsed = IsMeshCollapse(openPeers, remotePlayers);
 
         // Exponential backoff between attempts. The targeted path and the global/collapse path use SEPARATE
         // counters so a genuine total collapse (mappedPeers == 0, signaling down) is still bounded instead of
@@ -705,30 +744,48 @@ _voiceBackend.SetMicrophone(settings?.MicrophoneDevice ?? string.Empty, settings
         if (Time.time - _lastMissingPeerRecoveryTime < backoff)
             return;
 
+        bool deferRequested = _betterCrewLinkVoice?.ShouldDeferPeerEscalation == true;
+        if (deferRequested && _consecutivePeerEscalationDeferrals < PeerEscalationDeferralMaxConsecutive)
+        {
+            _consecutivePeerEscalationDeferrals++;
+            _missingPeerRecoveryReadyTime = Time.time + PeerEscalationDeferralRecheckSeconds;
+            VoiceDiagnostics.Log("transport.peer-recovery.deferred",
+                $"backend={_activeBackend} reason=backend-recovery-in-flight remotePlayers={remotePlayers} peers={mappedPeers} open={openPeers} " +
+                $"collapsed={collapsed} recheckSec={PeerEscalationDeferralRecheckSeconds:0.0} deferrals={_consecutivePeerEscalationDeferrals}/{PeerEscalationDeferralMaxConsecutive}");
+            return;
+        }
+        if (deferRequested)
+        {
+            VoiceDiagnostics.Log("transport.peer-recovery.deferred",
+                $"backend={_activeBackend} reason=backend-recovery-in-flight remotePlayers={remotePlayers} peers={mappedPeers} open={openPeers} " +
+                $"collapsed={collapsed} deferred=overridden deferrals={_consecutivePeerEscalationDeferrals}/{PeerEscalationDeferralMaxConsecutive}");
+        }
+        _consecutivePeerEscalationDeferrals = 0;
+
+        bool finalCollapseAttempt = collapsed && (openChannelsRaw == 0 || backoffAttempts + 1 >= MissingPeerRecoveryMaxAttempts);
+
         _lastMissingPeerRecoveryTime = Time.time;
         string remoteSignatureText = DescribeExpectedRemotePlayers(snapshot);
         VoiceDiagnostics.Log("transport.peer-recovery",
-            $"backend={_activeBackend} reason=missing-peer remotePlayers={remotePlayers} peers={mappedPeers} rawPeers={_voiceBackend.PeerCount} " +
-            $"mode={(collapsed ? "global" : "targeted")} attempt={(collapsed ? _globalRebuildAttempts + 1 : _missingPeerRecoveryAttempts + 1)}/{MissingPeerRecoveryMaxAttempts} healthyPeak={_lastHealthyMappedPeers} backoffSec={backoff:0.0} " +
+            $"backend={_activeBackend} reason=missing-peer remotePlayers={remotePlayers} peers={mappedPeers} open={openPeers} rawPeers={_voiceBackend.PeerCount} " +
+            $"mode={(finalCollapseAttempt ? "global" : collapsed ? "collapse-targeted" : "targeted")} attempt={(collapsed ? _globalRebuildAttempts + 1 : _missingPeerRecoveryAttempts + 1)}/{MissingPeerRecoveryMaxAttempts} healthyPeak={_lastHealthyMappedPeers} backoffSec={backoff:0.0} " +
             $"room={_activeRoomCode ?? "unknown"} region={_activeRegion ?? "unknown"} " +
             $"liveClients=[{remoteSignatureText}]");
 
         bool didGlobal = false;
-        if (collapsed)
+        if (finalCollapseAttempt)
         {
             ClearVoiceUiForLifecycleReset("missing peer recovery");
-            if (_activeBackend == VoiceTransportBackend.Interstellar)
-            {
-                // Interstellar's VCRoom.Rejoin only sends RequestReload and never clears the library's
-                // audioInstances, so onConnectClient never re-fires and the cleared peers are never
-                // repopulated (every remote peer stays silent permanently). Force a full backend rebuild
-                // instead, which re-establishes the connection and recreates each peer via onConnectClient.
-                _forceBackendRebuild = true;
-            }
-            else
-            {
-                _voiceBackend.Rejoin();
-            }
+            // Force a full backend rebuild (dispose + reconnect => NEW socket id) rather than the backend's
+            // light Rejoin(), which reuses the socket. Both backends need this on a collapse:
+            //  - Interstellar's VCRoom.Rejoin only sends RequestReload and never clears the library's
+            //    audioInstances, so onConnectClient never re-fires and peers stay silent.
+            //  - BetterCrewLink's Rejoin() keeps the SAME socket id, so a split-brained peer (its channel reads
+            //    'open' while ours never opened) never sees us reconnect, never supersedes its stale connection,
+            //    and the collapse persists (the "two clients can't hear each other until one presses refresh"
+            //    bug). A new socket id forces the remote to supersede and renegotiate clean — exactly what the
+            //    manual voice-refresh keybind does.
+            _forceBackendRebuild = true;
             ResetSettingsSyncState();
             StartBootstrapWindow("missing voice backend peer");
             ForceUpdateLocalProfile();
@@ -742,10 +799,9 @@ _voiceBackend.SetMicrophone(settings?.MicrophoneDevice ?? string.Empty, settings
             if (recovered < 0)
             {
                 ClearVoiceUiForLifecycleReset("missing peer recovery");
-                if (_activeBackend == VoiceTransportBackend.Interstellar)
-                    _forceBackendRebuild = true;
-                else
-                    _voiceBackend.Rejoin();
+                // Same rationale as the collapse path: a full backend rebuild (new socket id) is what clears a
+                // split-brain; the backend's light Rejoin() reuses the socket and cannot.
+                _forceBackendRebuild = true;
                 ResetSettingsSyncState();
                 StartBootstrapWindow("missing voice backend peer");
                 ForceUpdateLocalProfile();
@@ -762,7 +818,7 @@ _voiceBackend.SetMicrophone(settings?.MicrophoneDevice ?? string.Empty, settings
         // non-improving tries it LATCHES so we stop firing on a permanent shortfall. The global/collapse path
         // does NOT latch (a total collapse must keep retrying), but it grows its OWN backoff counter so it
         // can't re-fire a destructive global Rejoin every interval forever — the interval grows to the cap.
-        if (didGlobal)
+        if (didGlobal || collapsed)
         {
             if (_globalRebuildAttempts < int.MaxValue)
                 _globalRebuildAttempts++;
@@ -778,7 +834,7 @@ _voiceBackend.SetMicrophone(settings?.MicrophoneDevice ?? string.Empty, settings
                     $"reason=permanent-shortfall liveClients=[{remoteSignatureText}]");
             }
         }
-        _lastRecoveryMappedPeers = mappedPeers;
+        _lastRecoveryOpenPeers = openPeers;
         _lastRecoveryRemoteSignature = remoteSignature;
     }
 
@@ -1132,10 +1188,11 @@ _voiceBackend.SetMicrophone(settings?.MicrophoneDevice ?? string.Empty, settings
     {
         _missingPeerRecoveryAttempts = 0;
         _globalRebuildAttempts = 0;
-        _lastRecoveryMappedPeers = -1;
+        _lastRecoveryOpenPeers = -1;
         _lastHealthyMappedPeers = 0;
         _lastRecoveryRemoteSignature = 0;
         _missingPeerRecoveryLatched = false;
+        _consecutivePeerEscalationDeferrals = 0;
     }
 
     private void ResetSettingsSyncState()
@@ -1427,11 +1484,13 @@ _voiceBackend.SetMicrophone(settings?.MicrophoneDevice ?? string.Empty, settings
     private static string DescribeGameOptions()
     {
         var o = VoiceChatGameOptions.GetInstance();
+        var roomSettings = VoiceRoomSettingsState.Current;
         return
             $"publicLobby={o.PublicVoiceLobby.Value} maxDistance={o.MaxChatDistance.Value:0.000} falloff={(VoiceFalloffMode)o.FalloffMode.Value} occlusion={(VoiceOcclusionMode)o.OcclusionMode.Value} " +
             $"wallsBlock={o.WallsBlockSound.Value} onlySight={o.OnlyHearInSight.Value} cameraCanHear={o.CameraCanHear.Value} " +
             $"hearInVent={o.HearInVent.Value} ventPrivate={o.VentPrivateChat.Value} commsDisable={o.CommsSabDisables.Value} " +
-            $"impHearGhosts={o.ImpostorHearGhosts.Value} teamRadio={o.TeamRadio.Value} teamRadioImps={o.TeamRadioImpostors.Value} teamRadioVamps={o.TeamRadioVampires.Value} teamRadioLovers={o.TeamRadioLovers.Value} onlyGhosts={o.OnlyGhostsCanTalk.Value} onlyMeetingLobby={o.OnlyMeetingOrLobby.Value}";
+            $"impHearGhosts={o.ImpostorHearGhosts.Value} teamRadio={o.TeamRadio.Value} teamRadioImps={o.TeamRadioImpostors.Value} teamRadioVamps={o.TeamRadioVampires.Value} teamRadioLovers={o.TeamRadioLovers.Value} onlyGhosts={o.OnlyGhostsCanTalk.Value} onlyMeetingLobby={o.OnlyMeetingOrLobby.Value} " +
+            $"muteJailed={roomSettings.MuteJailedInMeetings} jailorCanUnmute={roomSettings.JailorCanUnmuteJailed}";
     }
 
     private static string DescribePlayer(VoicePlayerSnapshot? player)

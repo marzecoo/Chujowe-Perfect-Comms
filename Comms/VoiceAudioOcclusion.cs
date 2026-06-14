@@ -45,7 +45,7 @@ internal static class VoiceAudioOcclusion
         return mode switch
         {
             VoiceFalloffMode.Smooth => 1f - SmoothStep(t),
-            VoiceFalloffMode.VoiceFocused => t < 0.35f ? 1f : MathF.Pow(1f - t, 1.35f),
+            VoiceFalloffMode.VoiceFocused => t < 0.35f ? 1f : MathF.Pow((1f - t) / 0.65f, 1.35f),
             _ => 1f - t,
         };
     }

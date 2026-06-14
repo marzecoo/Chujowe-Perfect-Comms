@@ -18,6 +18,7 @@ public static class VoiceChatPatches
     private static int _lastLocalRefreshFrame = -1;
     private static int _lastHostRefreshFrame = -1;
     private static int _lastRadioChannelCycleFrame = -1;
+    private static int _lastMicModeToggleFrame = -1;
 
     internal static void RegisterKeybindHandlers()
     {
@@ -27,6 +28,7 @@ public static class VoiceChatPatches
         VoiceChatKeybinds.LocalVoiceRefresh.OnActivate(RequestLocalRefreshFromInput);
         VoiceChatKeybinds.HostVoiceRefresh.OnActivate(RequestHostRefreshFromInput);
         VoiceChatKeybinds.CycleTeamRadioChannel.OnActivate(CycleTeamRadioChannelFromInput);
+        VoiceChatKeybinds.ToggleMicMode.OnActivate(ToggleMicModeFromInput);
     }
 
     [HarmonyPostfix, HarmonyPatch(typeof(KeyboardJoystick), nameof(KeyboardJoystick.Update))]
@@ -127,6 +129,13 @@ public static class VoiceChatPatches
         if (!VoiceChatHudState.CanUseTeamRadioInput()) return;
         if (!TryConsumeToggleFrame(ref _lastRadioChannelCycleFrame)) return;
         VoiceChatHudState.CycleTeamRadioChannel();
+    }
+
+    private static void ToggleMicModeFromInput()
+    {
+        if (ShouldIgnoreToggleKeybinds()) return;
+        if (!TryConsumeToggleFrame(ref _lastMicModeToggleFrame)) return;
+        VoiceChatHudState.ToggleMicMode();
     }
 
     private static bool TryConsumeToggleFrame(ref int lastFrame)

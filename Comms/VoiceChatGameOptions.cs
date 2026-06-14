@@ -11,7 +11,7 @@ public class VoiceChatGameOptions : AbstractOptionGroup
 
     public ModdedToggleOption PublicVoiceLobby { get; } = new("Public Voice Lobby", false);
 
-    public ModdedEnumOption VoiceBackend { get; } = new("Voice Backend", (int)VoiceTransportBackend.Interstellar,
+    public ModdedEnumOption VoiceBackend { get; } = new("Voice Backend", (int)VoiceTransportBackend.BetterCrewLink,
         typeof(VoiceTransportBackend), ["BetterCrewLink", "Interstellar"]);
 
     public ModdedEnumOption LobbyBrowserBackend { get; } = new("Lobby Browser Backend", (int)VoiceLobbyBrowserSource.BetterCrewLink,

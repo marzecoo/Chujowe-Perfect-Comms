@@ -50,6 +50,14 @@ internal interface IVoiceBackend : IDisposable
     bool TrySetRemoteVolume(byte playerId, string playerName, float volume);
     int ResetPeerMappingsNoMute();
     int CountMappedRemotePeers(VoiceGameStateSnapshot snapshot);
+    int CountPeersWithOpenChannel(VoiceGameStateSnapshot snapshot);
+
+    // Peers whose underlying data channel is physically OPEN, regardless of whether their clientId is currently
+    // mapped to a live snapshot player. After a round boundary a surviving peer can be briefly unmapped (the
+    // local roster hasn't re-listed the remote yet) while its channel is perfectly healthy and audio is flowing;
+    // the room uses this so it does not misread that self-healing window as a mesh collapse and fire a
+    // destructive global rebuild. Backends that cannot observe a per-peer channel return their live peer count.
+    int CountOpenDataChannels();
 
     // Targeted, non-destructive recovery of ONLY the specific remote clients that are expected but not
     // currently backed by a live/open peer — re-mapping / re-requesting an offer for each missing client
