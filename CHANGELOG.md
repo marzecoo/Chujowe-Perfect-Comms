@@ -3,6 +3,8 @@
 ## Mega Chujowe Perfect Comms v1.0.6
 - Merged with upstream Perfect Comms v2.1.7.
 - Implemented Voodoo role voice mechanics (hidden muting, next-round persistence toggle, mute-in-meeting toggle).
+- Fixed Doppelganger visual bug by clearing active disguise modifier at meeting start so player avatars match their true identity.
+- Set BetterCrewLink as the default voice backend in game options and room settings.
 - Maintained local optimizations (300% max volume, custom names/branding).
 
 This Perfect Comms release is a big audio-quality pass: smoother voice with no clicks or pops, lower delay that adapts to each player's connection, fixed Bluetooth headsets going silent, better quiet-mic handling, and a Jailor unmute that always sticks.
@@ -84,7 +86,6 @@ This Perfect Comms release gives the voice settings menu a cleaner, easier-to-re
 See `docs/release-notes-v2.1.4.md` for the full release notes.
 
 ## Perfect Comms v2.1.3
->>>>>>> upstream/main
 
 Fork release for [Town Of Us Mega Chujowe Extension](https://github.com/HekerB/TownOfUsMegaChujoweExtension).
 
